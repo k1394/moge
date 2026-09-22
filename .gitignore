@@ -1,0 +1,17 @@
+# 虚拟环境不要传上去（体积大，别人自己装就行）
+.venv/
+__pycache__/
+*.pyc
+
+# 数据库文件不传（里面是你自己的素材数据，属于隐私）
+data/*.db
+data/*.sqlite3
+data/*.json
+
+# 编辑器配置
+.vscode/
+.idea/
+
+# 系统文件
+Thumbs.db
+.DS_Store
