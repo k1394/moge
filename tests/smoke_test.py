@@ -8,15 +8,24 @@
     软件里就是"最粗的那一遍检查"——不验证细节逻辑，
     只确认每个功能还活着、能返回结果。
 
-怎么用（需要服务已经在跑）：
+怎么用（不需要先启动墨阁）：
 
-    1. 先双击「启动墨阁.bat」，让服务起来（窗口别关）
-    2. 再开一个命令行窗口，在项目目录下执行：
-           .venv\\Scripts\\python.exe tests\\smoke_test.py
+    cd G:\\docker\\moge
+    .venv\\Scripts\\python.exe tests\\smoke_test.py
 
-它不会用你的真实账号：自己注册两个随机名的测试账号，
-用它们跑完所有检查，最后把这两个账号和它们的素材全部删掉。
-所以你库里的真实素材（以及你的账号）不受任何影响。
+它会自己干这几件事：
+    1. 建一个空的临时数据库（不在你的 data/ 目录里）
+    2. 用这个临时库，在随机端口上起一个自己的墨阁服务
+    3. 在上面注册两个随机名的测试账号，把所有接口跑一遍
+    4. 关掉服务、删掉临时库
+
+也就是说：**你的真实数据从头到尾不会被碰**。
+这一点在下面 verify_isolated() 里还有一道保险 ——
+万一隔离没生效，脚本会直接拒绝运行，而不是硬着头皮测下去。
+
+（高级用法）如果非要测一个已经在跑的服务，设环境变量：
+    MOGE_BASE=http://127.0.0.1:8000
+这种情况脚本就没法替你把关了，后果自负。
 """
 
 import io
@@ -24,21 +33,26 @@ import json
 import os
 import secrets
 import shutil
+import socket
+import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import http.cookiejar
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_DIR)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-BASE = os.environ.get("MOGE_BASE", "http://127.0.0.1:8000")
+# 空字符串 = 脚本自己起一个隔离实例；非空 = 打这个地址（见文件头说明）
+BASE = os.environ.get("MOGE_BASE", "").rstrip("/")
 
 # 一个"带记忆的"请求器：
 # CookieJar 负责记住服务发回来的登录门票，之后每个请求自动带上。
@@ -50,6 +64,81 @@ OPENER = urllib.request.build_opener(
 )
 
 OK = FAIL = 0
+
+
+# ----------------------------------------------------------------------
+# 隔离环境：自己起一个用临时数据库的服务
+#
+# 为什么非要这么麻烦？
+#   接口测试必须通过 HTTP 打服务，而服务连的是哪个数据库，
+#   是由"启动服务的那一刻"决定的。所以光在测试进程里设环境变量没用，
+#   必须由测试自己去启动一个"数据库指向临时目录"的服务。
+# ----------------------------------------------------------------------
+
+def free_port():
+    """向系统要一个当前没人用的端口号，问完马上还回去。"""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def start_server(data_dir, port):
+    """用 data_dir 当数据库目录，在 port 上起一个墨阁服务。
+
+    env 里塞 MOGE_DATA_DIR，db.py 看到它就会把库放到那个目录，
+    而不是项目自己的 data/。这就是隔离的全部秘密。
+    """
+    env = dict(os.environ)
+    env["MOGE_DATA_DIR"] = data_dir
+    env["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "backend.main:app",
+         "--host", "127.0.0.1", "--port", str(port)],
+        cwd=PROJECT_DIR, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def wait_ready(base, timeout=60):
+    """等服务把端口挂起来。进程起来了不等于能收请求，要轮询确认。"""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(base + "/api/health"), timeout=3) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.4)
+    return False
+
+
+def stop_server(proc):
+    """关服务。terminate 是"请你退出"，给它时间自己收尾；不听话再强杀。"""
+    if proc is None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+
+
+def verify_isolated(expected_dir):
+    """最后一道保险：确认这个服务用的数据库确实在临时目录里。
+
+    这一条不能省。之前吃过亏 —— 测试以为自己在临时库上跑，
+    实际删的却是用户的真实素材。宁可不测，也不能删错东西。
+    """
+    h = call("GET", "/api/health")
+    dbp = os.path.abspath(h.get("db", ""))
+    return (os.path.abspath(expected_dir) in dbp), dbp
 
 
 # ----------------------------------------------------------------------
@@ -166,7 +255,8 @@ def main():
         h = call("GET", "/api/health")
     except Exception as e:
         print(f"\n[x] 连不上服务：{e}")
-        print("    先把「启动墨阁.bat」跑起来，再执行这个脚本。")
+        print("    这个脚本通常会自己起一个隔离服务，不该连不上；")
+        print("    如果你设了 MOGE_BASE 指到别处，请确认那个地址有服务在跑。")
         return 1
     check("服务在线", h.get("ok") is True, "数据库 " + h.get("db", ""))
 
@@ -404,6 +494,14 @@ def cleanup():
     """
     from backend import db
 
+    # 保险：这一段是要删数据的，动手前先确认自己连的是临时库。
+    # 临时目录名里带 moge_smoke_ 这个前缀，真实库的路径里不会有它。
+    if "moge_smoke_" not in os.path.abspath(db.DB_PATH):
+        raise RuntimeError(
+            "【已阻止】清理会删数据，但当前连的数据库不像临时库：\n"
+            "    " + db.DB_PATH + "\n"
+            "    为免误删真实素材，清理拒绝执行。")
+
     total = 0
     for name in (USER_A, USER_B):
         u = db.get_user_by_name(name)
@@ -419,5 +517,44 @@ def cleanup():
     return total
 
 
+def run_isolated():
+    """建临时库 → 起服务 → 验隔离 → 跑测试 → 关服务、删临时库。
+
+    注意中间那行 os.environ 赋值：测试进程自己也会 import db（清理数据时），
+    所以必须让**本进程**也把数据库指向临时目录，否则清理阶段就会
+    跑到你的真实库上去删东西。这一处最容易漏。
+    """
+    global BASE
+    data_dir = tempfile.mkdtemp(prefix="moge_smoke_")
+    port = free_port()
+    BASE = "http://127.0.0.1:%d" % port
+    proc = None
+    try:
+        print("正在准备隔离环境（临时库 + 独立端口）…")
+        print("  临时数据库目录：" + data_dir)
+        os.environ["MOGE_DATA_DIR"] = data_dir      # 本进程也指向临时库
+        proc = start_server(data_dir, port)
+        if not wait_ready(BASE):
+            print("[x] 服务没能起来，测试中止。")
+            return 1
+
+        ok, dbp = verify_isolated(data_dir)
+        print("  服务用的数据库：" + dbp)
+        if not ok:
+            print()
+            print("[x] 【拒绝运行】隔离没生效 —— 这个服务用的不是临时库。")
+            print("    再跑下去可能会动到你的真实素材，所以在这里主动停下。")
+            print("    请检查 db.py 里 MOGE_DATA_DIR 那段的逻辑是否被改动。")
+            return 2
+        print("  隔离检查：通过（你的真实数据不会被碰）")
+        print()
+        return main()
+    finally:
+        stop_server(proc)
+        shutil.rmtree(data_dir, ignore_errors=True)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # 没设 MOGE_BASE = 自己起隔离实例（默认，安全）
+    # 设了 MOGE_BASE = 测那个外部地址（高级用法）
+    sys.exit(main() if BASE else run_isolated())
