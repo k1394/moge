@@ -1,0 +1,15 @@
+{
+  // ── 这个文件是给 VS Code 看的，告诉它「本项目用哪个 Python」 ──
+  // 没有这个文件时，VS Code 有时会找不到解释器，点「▶ 运行」就没反应。
+
+  // 用项目自带的 Python（.venv 里那个）。
+  // ${workspaceFolder} 代表「当前打开的文件夹」，所以别人把项目 clone 到别的盘也能直接用。
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+
+  // 打开终端时自动激活 .venv，这样直接敲 python 用的就是项目环境
+  "python.terminal.activateEnvironment": true,
+
+  // 统一按 UTF-8 读写文件，避免中文变乱码
+  "files.encoding": "utf8",
+  "files.autoGuessEncoding": false
+}
