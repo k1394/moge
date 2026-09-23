@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>墨阁 · 素材库</title>
+<style>
+  /* ----------------------------------------------------------------
+     配色：宣纸底 + 墨色字 + 赭石点缀，尽量素净，长时间看不累。
+     ---------------------------------------------------------------- */
+  :root {
+    --bg:      #f6f5f2;
+    --card:    #ffffff;
+    --line:    #e5e2dc;
+    --ink:     #26231f;
+    --ink-2:   #6b665e;
+    --ink-3:   #9c968c;
+    --accent:  #8c5a3c;
+    --accent-2:#f0e7e0;
+    --danger:  #a8443a;
+    --radius:  10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.65 "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, textarea { font: inherit; color: inherit; }
+
+  /* ---------- 顶栏 ---------- */
+  .top {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 14px 22px; background: var(--card);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 19px; font-weight: 700; letter-spacing: 2px; }
+  .brand small {
+    font-weight: 400; font-size: 12px; letter-spacing: 0;
+    color: var(--ink-3); margin-left: 8px;
+  }
+  .stats { display: flex; gap: 16px; margin-left: auto; }
+  .stat { text-align: right; }
+  .stat b { display: block; font-size: 16px; font-weight: 600; }
+  .stat span { font-size: 11px; color: var(--ink-3); }
+
+  /* ---------- 工具栏 ---------- */
+  .bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 22px; background: var(--card);
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 20;
+  }
+  .search {
+    flex: 1 1 260px; min-width: 200px;
+    height: 36px; padding: 0 12px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: #fbfaf8; outline: none;
+  }
+  .search:focus { border-color: var(--accent); background: #fff; }
+  .btn {
+    height: 36px; padding: 0 15px; border-radius: var(--radius);
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+    transition: .15s;
+  }
+  .btn:hover { border-color: var(--ink-3); color: var(--ink); }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.primary:hover { background: #3d3833; }
+  .btn.ghost-danger { color: var(--danger); border-color: #e8d6d3; }
+  .btn.ghost-danger:hover { background: #fdf4f3; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ---------- 主体两栏 ---------- */
+  .wrap { display: flex; align-items: flex-start; gap: 18px; padding: 18px 22px 60px; }
+  .side { width: 190px; flex: 0 0 190px; position: sticky; top: 76px; }
+  .side h3 {
+    margin: 0 0 8px; font-size: 11px; font-weight: 600;
+    letter-spacing: 1px; color: var(--ink-3);
+  }
+  .taglist { display: flex; flex-direction: column; gap: 2px; max-height: 62vh; overflow: auto; }
+  .tag {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 6px 10px; border-radius: 8px; border: none; background: transparent;
+    color: var(--ink-2); text-align: left; width: 100%;
+  }
+  .tag:hover { background: #eeece7; }
+  .tag.on { background: var(--ink); color: #fff; }
+  .tag i {
+    font-style: normal; font-size: 11px; color: var(--ink-3);
+    background: #eeece7; border-radius: 20px; padding: 0 7px;
+  }
+  .tag.on i { background: rgba(255,255,255,.22); color: #fff; }
+  .side .empty-tip { font-size: 12px; color: var(--ink-3); padding: 4px 10px; }
+
+  .main { flex: 1 1 auto; min-width: 0; }
+  .listhead {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; color: var(--ink-3); margin-bottom: 8px; min-height: 20px;
+  }
+  .listhead .clr { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  /* ---------- 素材卡片 ---------- */
+  .card {
+    display: flex; gap: 14px; align-items: flex-start;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 13px 16px; margin-bottom: 9px;
+    transition: .15s;
+  }
+  .card:hover { border-color: #d5d0c8; box-shadow: 0 1px 6px rgba(0,0,0,.04); }
+  .card .body { flex: 1 1 auto; min-width: 0; }
+  .card .title {
+    font-weight: 600; cursor: pointer; word-break: break-all;
+    display: inline-block;
+  }
+  .card .title:hover { color: var(--accent); text-decoration: underline; }
+  .card .meta {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    font-size: 12px; color: var(--ink-3); margin-top: 3px;
+  }
+  .card .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .chip {
+    font-size: 11px; color: var(--accent);
+    background: var(--accent-2); border-radius: 20px; padding: 1px 9px;
+  }
+  .chip.local { color: #7a6a2a; background: #f4efdc; }
+  .chip.warn { color: #8a4a2c; background: #fbeade; }
+  .card .acts { display: flex; gap: 6px; flex: 0 0 auto; }
+  .mini {
+    font-size: 12px; padding: 3px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  }
+  .mini:hover { border-color: var(--ink-3); color: var(--ink); }
+  .mini.d { color: var(--danger); border-color: #ecdcda; }
+  .mini.d:hover { background: #fdf4f3; }
+
+  .blank {
+    text-align: center; color: var(--ink-3);
+    padding: 70px 20px; background: var(--card);
+    border: 1px dashed var(--line); border-radius: var(--radius);
+  }
+  .blank b { display: block; font-size: 15px; color: var(--ink-2); margin-bottom: 6px; }
+
+  /* ---------- 弹窗 ---------- */
+  .mask {
+    position: fixed; inset: 0; background: rgba(38,35,31,.34);
+    display: none; align-items: center; justify-content: center;
+    z-index: 60; padding: 24px;
+  }
+  .mask.on { display: flex; }
+  .modal {
+    background: var(--card); border-radius: 14px; width: 100%;
+    max-width: 620px; max-height: 86vh; display: flex; flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+  }
+  .modal.wide { max-width: 860px; }
+  .modal header {
+    padding: 16px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .modal header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .modal header .x {
+    margin-left: auto; border: none; background: none;
+    font-size: 20px; line-height: 1; color: var(--ink-3); padding: 0 4px;
+  }
+  .modal header .x:hover { color: var(--ink); }
+  .modal .content { padding: 18px 20px; overflow: auto; }
+  .modal footer {
+    padding: 13px 20px; border-top: 1px solid var(--line);
+    display: flex; gap: 10px; align-items: center;
+  }
+  .modal footer .grow { flex: 1 1 auto; }
+  .field { margin-bottom: 13px; }
+  .field label {
+    display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 5px;
+  }
+  .field .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 5px; line-height: 1.6; }
+  .field input[type=text], .field textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 8px; background: #fbfaf8; outline: none; resize: vertical;
+  }
+  .field input:focus, .field textarea:focus { border-color: var(--accent); background: #fff; }
+  .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+
+  .preview { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .preview .row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px; border-bottom: 1px solid #f0eee9; font-size: 13px;
+  }
+  .preview .row:last-child { border-bottom: none; }
+  .preview .row .st {
+    flex: 0 0 40px; font-size: 11px; text-align: center;
+    border-radius: 5px; padding: 1px 0;
+  }
+  .st.new { background: #e8f1e9; color: #3b6b45; }
+  .st.same { background: #f0eee9; color: var(--ink-3); }
+  .st.empty { background: #f6f1e2; color: #8a7330; }
+  .st.fail { background: #fbeceb; color: var(--danger); }
+  .preview .row .nm { flex: 1 1 auto; min-width: 0; word-break: break-all; }
+  .preview .row .ch { flex: 0 0 auto; color: var(--ink-3); font-size: 12px; }
+  .preview .row .tg { flex: 0 0 auto; color: var(--accent); font-size: 11px; }
+  .sumline {
+    display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px;
+    color: var(--ink-2); margin: 12px 0 10px;
+  }
+  .sumline b { font-weight: 600; }
+
+  /* ---------- 详情抽屉 ---------- */
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 92vw);
+    background: var(--card); border-left: 1px solid var(--line);
+    transform: translateX(100%); transition: transform .22s ease;
+    z-index: 70; display: flex; flex-direction: column;
+    box-shadow: -8px 0 34px rgba(0,0,0,.1);
+  }
+  .drawer.on { transform: none; }
+  .drawer header {
+    padding: 15px 60px 15px 22px; border-bottom: 1px solid var(--line);
+    position: relative;
+  }
+  .drawer header .t { font-size: 15px; font-weight: 600; word-break: break-all; }
+  .drawer header .m { font-size: 12px; color: var(--ink-3); margin-top: 3px; }
+  .drawer header .x {
+    position: absolute; top: 12px; right: 16px; border: none; background: none;
+    font-size: 22px; line-height: 1; color: var(--ink-3);
+  }
+  .drawer header .x:hover { color: var(--ink); }
+  .drawer .edits {
+    padding: 12px 22px; border-bottom: 1px solid var(--line); background: #fbfaf8;
+  }
+  .drawer .edits .row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .drawer .edits .row:last-child { margin-bottom: 0; }
+  .drawer .edits label { flex: 0 0 46px; font-size: 12px; color: var(--ink-2); }
+  .drawer .edits input[type=text] {
+    flex: 1 1 auto; padding: 6px 10px; border: 1px solid var(--line);
+    border-radius: 7px; background: #fff; outline: none;
+  }
+  .drawer .text {
+    flex: 1 1 auto; overflow: auto; padding: 18px 22px 40px;
+    white-space: pre-wrap; word-break: break-word; line-height: 1.9;
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(12px);
+    background: #33302c; color: #fff; padding: 10px 18px; border-radius: 9px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: .2s; z-index: 99;
+    max-width: 80vw;
+  }
+  .toast.on { opacity: 1; transform: translateX(-50%); }
+  .toast.bad { background: var(--danger); }
+
+  @media (max-width: 820px) {
+    .wrap { flex-direction: column; }
+    .side { width: 100%; flex: none; position: static; }
+    .taglist { flex-direction: row; flex-wrap: wrap; }
+    .tag { width: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">墨阁<small>写作素材库</small></div>
+  <div class="stats">
+    <div class="stat"><b id="sMat">-</b><span>素材</span></div>
+    <div class="stat"><b id="sChar">-</b><span>总字数</span></div>
+    <div class="stat"><b id="sTag">-</b><span>标签</span></div>
+  </div>
+</div>
+
+<div class="bar">
+  <input id="search" class="search" type="text" placeholder="搜索标题或正文里的词…">
+  <button class="btn primary" id="btnImport">导入文件夹</button>
+  <button class="btn" id="btnPaste">粘贴文本</button>
+  <button class="btn" id="btnUpload">上传文件</button>
+  <input type="file" id="fileInput" multiple hidden
+         accept=".txt,.md,.docx,.pdf,.xlsx,.xlsm">
+</div>
+
+<div class="wrap">
+  <aside class="side">
+    <h3>标签</h3>
+    <div class="taglist" id="tagbar"></div>
+  </aside>
+  <section class="main">
+    <div class="listhead" id="listhead"></div>
+    <div id="list"></div>
+  </section>
+</div>
+
+<!-- ============ 导入文件夹 ============ -->
+<div class="mask" id="mkImport">
+  <div class="modal wide">
+    <header>
+      <h2>导入文件夹</h2>
+      <button class="x" data-close>&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>文件夹或文件路径</label>
+        <input type="text" id="impPath" placeholder="C:\Users\Administrator\Desktop\分类">
+        <div class="hint">
+          把磁盘上的文件夹路径粘进来。取路径的办法：在资源管理器里进到那个文件夹，
+          点一下顶部的地址栏，路径就会变成可复制的文字，Ctrl+C 复制。
+        </div>
+      </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="impRec" checked> 子文件夹也一起导入</label>
+        <label class="check" style="margin-top:8px">
+          <input type="checkbox" id="impLocal"> 标记为「仅本地」
+        </label>
+        <div class="hint">
+          勾上「仅本地」的素材，将来在调用云端大模型时会自动跳过，内容不出你的电脑。
+        </div>
+      </div>
+      <div id="impPreview"></div>
+    </div>
+    <footer>
+      <span class="grow" id="impMsg" style="font-size:12.5px;color:var(--ink-3)"></span>
+      <button class="btn" id="btnScan">扫描预览</button>
+      <button class="btn primary" id="btnRunImport" disabled>确认导入</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 粘贴文本 ============ -->
+<div class="mask" id="mkPaste">
+  <div class="modal">
+    <header>
+      <h2>粘贴文本入库</h2>
+      <button class="x" data-close>&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>标题（留空就用正文前 20 字）</label>
+        <input type="text" id="pTitle">
+      </div>
+      <div class="field">
+        <label>正文</label>
+        <textarea id="pText" rows="11" placeholder="把素材文字贴在这里…"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>标签（用逗号分隔，可留空）</label>
+        <input type="text" id="pTags" placeholder="外貌, 描写">
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" data-close>取消</button>
+      <button class="btn primary" id="btnSavePaste">存入素材库</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材详情 ============ -->
+<div class="mask" id="mkDrawer" style="padding:0;background:rgba(38,35,31,.34)"></div>
+<div class="drawer" id="drawer">
+  <header>
+    <div class="t" id="dTitle"></div>
+    <div class="m" id="dMeta"></div>
+    <button class="x" id="dClose">&times;</button>
+  </header>
+  <div class="edits">
+    <div class="row">
+      <label>标题</label>
+      <input type="text" id="dEditTitle">
+    </div>
+    <div class="row">
+      <label>标签</label>
+      <input type="text" id="dEditTags" placeholder="用逗号分隔">
+      <button class="mini" id="dSave">保存</button>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <label class="check" style="flex:0 0 auto">
+        <input type="checkbox" id="dLocal"> 仅本地（不送云端）
+      </label>
+      <span class="grow" style="flex:1"></span>
+      <button class="mini d" id="dDelete">删除这条素材</button>
+    </div>
+  </div>
+  <div class="text" id="dText"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ==================================================================
+   前端逻辑
+   一句话概括：从后端 API 取数据 → 渲染成 HTML → 用户点了什么 → 再调 API
+   所有状态就存三个变量：当前搜索词、当前标签、当前打开的那条素材。
+   ================================================================== */
+
+const S = { keyword: "", tag: "", current: null };
+
+/* 把用户内容里的尖括号转义，避免素材正文里的 < > 破坏页面结构 */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function toast(msg, bad) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast on" + (bad ? " bad" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.className = "toast"; }, 2600);
+}
+
+/* 统一封装 fetch：出错就抛，调用处只管 catch */
+async function api(url, opt) {
+  const r = await fetch(url, opt);
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = null; }
+  if (!r.ok) {
+    const msg = (data && (data.detail || data.message)) || ("请求失败 " + r.status);
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return data;
+}
+
+function post(url, body) {
+  return api(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+}
+
+function fmtNum(n) {
+  return (n || 0).toLocaleString("zh-CN");
+}
+
+/* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
+   「段落 42 个」这类细节放详情里看，列表上堆着是噪音。 */
+function warnOf(note) {
+  if (!note) return "";
+  if (note.indexOf("扫描件") >= 0) return "图片版·无文字";
+  if (note.indexOf("未提取") >= 0) return "含图片未提取";
+  return "";
+}
+
+/* ---------------- 读取与渲染 ---------------- */
+
+async function loadStats() {
+  try {
+    const s = await api("/api/stats");
+    document.getElementById("sMat").textContent = fmtNum(s.materials);
+    document.getElementById("sChar").textContent = fmtNum(s.chars);
+    document.getElementById("sTag").textContent = fmtNum(s.tags);
+  } catch (e) { /* 统计失败不打断主流程 */ }
+}
+
+async function loadTags() {
+  const box = document.getElementById("tagbar");
+  let items = [], total = 0;
+  try {
+    const r = await api("/api/tags");
+    items = r.items;
+    total = r.total_materials;
+  } catch (e) { }
+
+  let html = '<button class="tag' + (S.tag === "" ? " on" : "") +
+             '" data-tag="">全部 <i>' + total + '</i></button>';
+  for (const t of items) {
+    html += '<button class="tag' + (S.tag === t.name ? " on" : "") +
+            '" data-tag="' + esc(t.name) + '">' + esc(t.name) +
+            ' <i>' + t.count + '</i></button>';
+  }
+  if (!items.length) {
+    html += '<div class="empty-tip">还没有标签，导入素材后会自动生成。</div>';
+  }
+  box.innerHTML = html;
+
+  box.querySelectorAll(".tag").forEach(el => {
+    el.onclick = () => { S.tag = el.dataset.tag; loadTags(); loadList(); };
+  });
+}
+
+async function loadList() {
+  const box = document.getElementById("list");
+  const head = document.getElementById("listhead");
+  box.innerHTML = '<div class="blank">读取中…</div>';
+
+  let data;
+  try {
+    const q = new URLSearchParams({ keyword: S.keyword, tag: S.tag, limit: "200" });
+    data = await api("/api/materials?" + q.toString());
+  } catch (e) {
+    box.innerHTML = '<div class="blank"><b>读取失败</b>' + esc(e.message) + '</div>';
+    return;
+  }
+
+  const bits = ["共 " + data.total + " 条"];
+  if (S.keyword) bits.push('搜索「' + esc(S.keyword) + '」');
+  if (S.tag) bits.push('标签「' + esc(S.tag) + '」');
+  head.innerHTML = bits.join(" · ") +
+    ((S.keyword || S.tag) ? ' <span class="clr" id="clrFilter">清除筛选</span>' : "");
+  const clr = document.getElementById("clrFilter");
+  if (clr) clr.onclick = () => { S.keyword = ""; S.tag = "";
+                                 document.getElementById("search").value = "";
+                                 loadTags(); loadList(); };
+
+  if (!data.items.length) {
+    box.innerHTML = '<div class="blank"><b>这里还没有素材</b>' +
+      '点上面的「导入文件夹」，把桌面「分类」那个文件夹导进来试试。</div>';
+    return;
+  }
+
+  box.innerHTML = data.items.map(m => {
+    const tags = m.tags.map(t => '<span class="chip">' + esc(t) + '</span>').join("");
+    const local = m.local_only ? '<span class="chip local">仅本地</span>' : "";
+    const warn = warnOf(m.note);
+    const warnChip = warn ? '<span class="chip warn">' + esc(warn) + '</span>' : "";
+    const src = m.source_path ? esc(m.source_path.split("\\").pop()) : "";
+    return '<div class="card">' +
+      '<div class="body">' +
+        '<span class="title" data-id="' + m.id + '">' + esc(m.title) + '</span>' +
+        '<div class="meta">' +
+          '<span>' + fmtNum(m.chars) + ' 字</span>' +
+          '<span>' + esc(m.ext || "") + '</span>' +
+          (src ? '<span>' + src + '</span>' : '') +
+          '<span>' + esc(m.created_at) + '</span>' +
+        '</div>' +
+        ((tags || local || warnChip)
+          ? '<div class="tags">' + tags + warnChip + local + '</div>' : '') +
+      '</div>' +
+      '<div class="acts">' +
+        '<button class="mini" data-open="' + m.id + '">查看</button>' +
+        '<button class="mini d" data-del="' + m.id + '">删除</button>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+
+  box.querySelectorAll("[data-open]").forEach(el => {
+    el.onclick = () => openDrawer(+el.dataset.open);
+  });
+  box.querySelectorAll(".title").forEach(el => {
+    el.onclick = () => openDrawer(+el.dataset.id);
+  });
+  box.querySelectorAll("[data-del]").forEach(el => {
+    el.onclick = () => removeMaterial(+el.dataset.del, el);
+  });
+}
+
+/* ---------------- 详情抽屉 ---------------- */
+
+async function openDrawer(id) {
+  try {
+    const m = await api("/api/materials/" + id);
+    S.current = m;
+    document.getElementById("dTitle").textContent = m.title;
+    document.getElementById("dMeta").textContent =
+      fmtNum(m.chars) + " 字 · " + (m.ext || "") + " · 存于 " + m.created_at +
+      (m.note ? " · " + m.note : "");
+    document.getElementById("dEditTitle").value = m.title;
+    document.getElementById("dEditTags").value = m.tags.join("，");
+    document.getElementById("dLocal").checked = !!m.local_only;
+    document.getElementById("dText").textContent = m.content;
+    document.getElementById("drawer").classList.add("on");
+    document.getElementById("mkDrawer").classList.add("on");
+  } catch (e) { toast(e.message, true); }
+}
+
+function closeDrawer() {
+  document.getElementById("drawer").classList.remove("on");
+  document.getElementById("mkDrawer").classList.remove("on");
+  S.current = null;
+}
+
+async function saveDrawer() {
+  if (!S.current) return;
+  const tags = document.getElementById("dEditTags").value
+    .split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+  try {
+    await api("/api/materials/" + S.current.id, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: document.getElementById("dEditTitle").value.trim(),
+        tags: tags,
+        local_only: document.getElementById("dLocal").checked
+      })
+    });
+    toast("已保存");
+    closeDrawer();
+    loadStats(); loadTags(); loadList();
+  } catch (e) { toast(e.message, true); }
+}
+
+function removeMaterial(id, el) {
+  const name = el.closest(".card")?.querySelector(".title")?.textContent || "这条素材";
+  if (!confirm('确定删除「' + name + '」？\n\n这个动作不可撤销。')) return;
+  api("/api/materials/" + id, { method: "DELETE" })
+    .then(() => { toast("已删除"); loadStats(); loadTags(); loadList(); })
+    .catch(e => toast(e.message, true));
+}
+
+/* ---------------- 导入文件夹 ---------------- */
+
+function openMask(id) { document.getElementById(id).classList.add("on"); }
+function closeMask(id) { document.getElementById(id).classList.remove("on"); }
+
+function resetImportPreview() {
+  document.getElementById("impPreview").innerHTML = "";
+  document.getElementById("btnRunImport").disabled = true;
+  document.getElementById("impMsg").textContent = "";
+}
+
+function renderPreview(res) {
+  const s = res.summary;
+  const sum = '<div class="sumline">' +
+    '<span>扫到 <b>' + s.total + '</b> 个文件</span>' +
+    '<span>新入库 <b>' + s.new + '</b></span>' +
+    '<span>已在库里 <b>' + s.same + '</b></span>' +
+    '<span>无文字 <b>' + s.empty + '</b></span>' +
+    '<span>读不出 <b>' + s.fail + '</b></span>' +
+    '<span>合计 <b>' + fmtNum(s.chars) + '</b> 字</span>' +
+    '</div>';
+
+  const rows = res.items.map(it => {
+    const label = { new: "新", same: "重复", empty: "空", fail: "失败" }[it.status];
+    const tg = it.tags.length ? it.tags.join("、") : "";
+    const tip = (it.status === "empty" || it.status === "fail") ? it.message : "";
+    return '<div class="row">' +
+      '<span class="st ' + it.status + '">' + label + '</span>' +
+      '<span class="nm">' + esc(it.name) +
+        (tip ? '<br><span style="font-size:11.5px;color:var(--ink-3)">' + esc(tip) + '</span>' : '') +
+      '</span>' +
+      '<span class="tg">' + esc(tg) + '</span>' +
+      '<span class="ch">' + fmtNum(it.chars) + ' 字</span>' +
+    '</div>';
+  }).join("");
+
+  document.getElementById("impPreview").innerHTML =
+    sum + '<div class="preview">' + rows + '</div>';
+  document.getElementById("btnRunImport").disabled = (s.new === 0);
+  document.getElementById("impMsg").textContent =
+    s.new === 0 ? "没有新东西要导入（内容都在库里了）" : "确认后点右边按钮";
+}
+
+async function doScan() {
+  const path = document.getElementById("impPath").value.trim();
+  if (!path) { toast("先填文件夹路径", true); return; }
+  const btn = document.getElementById("btnScan");
+  btn.disabled = true; btn.textContent = "扫描中…";
+  document.getElementById("impMsg").textContent = "";
+  try {
+    const res = await post("/api/import/scan", {
+      path: path,
+      recursive: document.getElementById("impRec").checked
+    });
+    renderPreview(res);
+  } catch (e) {
+    document.getElementById("impPreview").innerHTML = "";
+    document.getElementById("impMsg").textContent = e.message;
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "扫描预览";
+  }
+}
+
+async function doImport() {
+  const path = document.getElementById("impPath").value.trim();
+  const btn = document.getElementById("btnRunImport");
+  btn.disabled = true; btn.textContent = "导入中…";
+  try {
+    const res = await post("/api/import/run", {
+      path: path,
+      recursive: document.getElementById("impRec").checked,
+      local_only: document.getElementById("impLocal").checked
+    });
+    const s = res.summary;
+    toast("导入完成：新增 " + s.new + " 条，跳过重复 " + s.same + " 条");
+    renderPreview(res);
+    document.getElementById("btnRunImport").disabled = true;
+    document.getElementById("impMsg").textContent = "导入完成。关掉这个窗口看列表。";
+    loadStats(); loadTags(); loadList();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.textContent = "确认导入";
+  }
+}
+
+/* ---------------- 粘贴文本 ---------------- */
+
+async function savePaste() {
+  const content = document.getElementById("pText").value;
+  if (!content.trim()) { toast("正文是空的", true); return; }
+  const tags = document.getElementById("pTags").value
+    .split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+  try {
+    const r = await post("/api/materials", {
+      title: document.getElementById("pTitle").value,
+      content: content,
+      tags: tags
+    });
+    toast(r.message || "已存入");
+    closeMask("mkPaste");
+    document.getElementById("pTitle").value = "";
+    document.getElementById("pText").value = "";
+    document.getElementById("pTags").value = "";
+    loadStats(); loadTags(); loadList();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 上传文件 ---------------- */
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  let ok = 0, skip = 0, bad = [];
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await api("/api/upload", { method: "POST", body: fd });
+      if (r.status === "new") ok++; else skip++;
+    } catch (e) { bad.push(f.name + "：" + e.message); }
+  }
+  let msg = "上传完成：新增 " + ok + " 条，重复 " + skip + " 条";
+  if (bad.length) msg += "，失败 " + bad.length + " 条";
+  toast(msg, bad.length > 0);
+  if (bad.length) console.warn("上传失败明细：", bad);
+  loadStats(); loadTags(); loadList();
+}
+
+/* ---------------- 事件绑定 ---------------- */
+
+let searchTimer = null;
+document.getElementById("search").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { S.keyword = e.target.value.trim(); loadList(); }, 280);
+});
+
+document.getElementById("btnImport").onclick = () => {
+  resetImportPreview();
+  document.getElementById("impPath").value = "C:\\Users\\Administrator\\Desktop\\分类";
+  openMask("mkImport");
+};
+document.getElementById("btnScan").onclick = doScan;
+document.getElementById("btnRunImport").onclick = doImport;
+
+document.getElementById("btnPaste").onclick = () => openMask("mkPaste");
+document.getElementById("btnSavePaste").onclick = savePaste;
+
+document.getElementById("btnUpload").onclick = () =>
+  document.getElementById("fileInput").click();
+document.getElementById("fileInput").onchange = e => {
+  uploadFiles(e.target.files);
+  e.target.value = "";
+};
+
+document.getElementById("dClose").onclick = closeDrawer;
+document.getElementById("mkDrawer").onclick = closeDrawer;
+document.getElementById("dSave").onclick = saveDrawer;
+document.getElementById("dDelete").onclick = () => {
+  if (!S.current) return;
+  const id = S.current.id, name = S.current.title;
+  if (!confirm('确定删除「' + name + '」？\n\n这个动作不可撤销。')) return;
+  api("/api/materials/" + id, { method: "DELETE" })
+    .then(() => { toast("已删除"); closeDrawer();
+                  loadStats(); loadTags(); loadList(); })
+    .catch(e => toast(e.message, true));
+};
+
+document.querySelectorAll("[data-close]").forEach(el => {
+  el.onclick = () => closeMask(el.closest(".mask").id);
+});
+document.querySelectorAll(".mask").forEach(mk => {
+  if (mk.id === "mkDrawer") return;
+  mk.addEventListener("click", e => { if (e.target === mk) closeMask(mk.id); });
+});
+
+/* 拖文件到页面上也能上传 */
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
+
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    closeDrawer();
+    document.querySelectorAll(".mask.on").forEach(m => m.classList.remove("on"));
+  }
+});
+
+/* ---------------- 启动 ---------------- */
+loadStats();
+loadTags();
+loadList();
+</script>
+</body>
+</html>

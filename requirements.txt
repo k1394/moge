@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+python-multipart   # 让 FastAPI 能接收浏览器上传的文件
 
 # 素材解析（都是本地库，不联网、不调用云服务）
 python-docx      # 读 .docx
