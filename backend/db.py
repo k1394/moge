@@ -39,12 +39,30 @@ from datetime import datetime
 # 本项目根目录（backend 的上一层）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 数据库目录与文件
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# 数据库目录与文件。
+# 允许用环境变量 MOGE_DATA_DIR 改写 —— 这是给测试留的后门：
+# 测试脚本把它指到临时目录，就能在"另一个空数据库"上随便折腾，
+# 绝不会碰到你真实的素材库。
+# （这条是有血泪教训的：曾经有测试直接跑在真实库上，
+#   结果把测试账号名下的素材全删了 —— 而那里面混着真实素材。）
+DATA_DIR = os.environ.get("MOGE_DATA_DIR") or os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "moge.db")
 
-# 现阶段只有本机一个用户。将来接入登录后，这里换成真实用户 ID。
+# 素材归属谁的标记。加了账号系统之后：
+#   注册前用命令行导入的素材，owner_id 是 'local'（还没有任何人）
+#   注册后导入的素材，owner_id 是 '__u<用户id>'，比如 '__u1'
+# 第一个账号注册时会自动"认领" local 名下的素材，所以那些东西不会丢。
 DEFAULT_OWNER = "local"
+
+
+def owner_of(user_id):
+    """把用户 id 变成素材表里用的归属标记。
+
+    为什么要加 '__u' 前缀，不直接用 "1"：
+    数据库中"1"这种裸数字肉眼看不出含义，而 'local' 又是个词。
+    加前缀后，翻数据库时一眼能分清「这是第 1 号用户的」还是「这是没归属的」。
+    """
+    return "__u%d" % int(user_id)
 
 
 # ----------------------------------------------------------------------
@@ -92,8 +110,32 @@ CREATE TABLE IF NOT EXISTS material_tags (
     PRIMARY KEY (material_id, tag_id)
 );
 
+-- users：账号。一个账号一行。
+--   password_hash 存的不是密码本身，是密码"搅碎"之后的结果（见 auth.py）。
+--   数据库管理员（也就是将来接手你代码的人）看到这张表，
+--   也还原不出任何人的原始密码。这是密码存储的底线。
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE,
+    password_hash TEXT    NOT NULL,
+    salt          TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL,
+    last_login_at TEXT    NOT NULL DEFAULT ''
+);
+
+-- sessions：登录凭证。你登录成功后，服务给你发一张"门票"，
+--   浏览器每次请求都带着它，服务就知道"这是谁"。
+--   token 是随机字符串，本身就是凭证 —— 所以它等于密码，绝不能泄露。
+CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT    PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL,
+    expires_at TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_materials_owner ON materials(owner_id);
 CREATE INDEX IF NOT EXISTS idx_material_tags_tag ON material_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
 
@@ -429,6 +471,187 @@ def delete_material(mid, owner=DEFAULT_OWNER):
 
 
 # ----------------------------------------------------------------------
+# 用户
+#
+# 注意这一层不知道"密码"是什么 —— 它只负责把别人算好的
+# password_hash 和 salt 存进去。密码怎么搅碎是 auth.py 的事。
+# 这么分是为了：想换加密算法时，只改 auth.py，数据库这层不用动。
+# ----------------------------------------------------------------------
+
+def count_users():
+    """现在一共有几个账号"""
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+
+
+def create_user(username, password_hash, salt):
+    """建一个账号。用户名重复会返回 None（不抛异常，让上层决定怎么提示）。"""
+    username = (username or "").strip()
+    if not username:
+        return None
+
+    with connect() as conn:
+        old = conn.execute(
+            "SELECT id FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if old:
+            return None
+
+        cur = conn.execute(
+            """INSERT INTO users (username, password_hash, salt, created_at, last_login_at)
+               VALUES (?, ?, ?, ?, '')""",
+            (username, password_hash, salt, now_str()),
+        )
+        return {"id": cur.lastrowid, "username": username,
+                "created_at": now_str()}
+
+
+def get_user_by_name(username):
+    """按用户名查账号（登录时用）。返回带 password_hash 和 salt 的完整行。"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?", ((username or "").strip(),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user(user_id):
+    """按 id 查账号（不带密码信息，可以放心返回给前端）"""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, username, created_at, last_login_at FROM users WHERE id = ?",
+            (int(user_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def touch_last_login(user_id):
+    """记一下"他刚登录过" """
+    with connect() as conn:
+        conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?",
+                     (now_str(), int(user_id)))
+
+
+def adopt_owner(old_owner, new_owner):
+    """把 old_owner 名下的素材和标签全部转给 new_owner。
+
+    用途：第一个账号注册时，把之前用命令行导入的 'local' 素材交接过去。
+    限制：只有新账号名下一份素材都没有时才搬 ——
+          否则两边的素材可能撞车（同一个内容指纹撞唯一约束），
+          与其做复杂的合并，不如干脆不动，更安全。
+    返回：搬过去的素材条数（0 表示什么都没搬）。
+    """
+    with connect() as conn:
+        n_new = conn.execute(
+            "SELECT COUNT(*) AS n FROM materials WHERE owner_id = ?", (new_owner,)
+        ).fetchone()["n"]
+        if n_new > 0:
+            return 0
+
+        n_old = conn.execute(
+            "SELECT COUNT(*) AS n FROM materials WHERE owner_id = ?", (old_owner,)
+        ).fetchone()["n"]
+        if n_old == 0:
+            return 0
+
+        # 素材：直接改归属
+        conn.execute("UPDATE materials SET owner_id = ? WHERE owner_id = ?",
+                     (new_owner, old_owner))
+
+        # 标签：先看新账号有没有同名标签，有就把关联改指过去，没有就整条改归属
+        for t in conn.execute("SELECT id, name FROM tags WHERE owner_id = ?",
+                              (old_owner,)).fetchall():
+            exist = conn.execute(
+                "SELECT id FROM tags WHERE owner_id = ? AND name = ?",
+                (new_owner, t["name"]),
+            ).fetchone()
+            if exist:
+                conn.execute(
+                    "UPDATE OR IGNORE material_tags SET tag_id = ? WHERE tag_id = ?",
+                    (exist["id"], t["id"]),
+                )
+                conn.execute("DELETE FROM material_tags WHERE tag_id = ?", (t["id"],))
+                conn.execute("DELETE FROM tags WHERE id = ?", (t["id"],))
+            else:
+                conn.execute("UPDATE tags SET owner_id = ? WHERE id = ?",
+                             (new_owner, t["id"]))
+
+        # 收尾：清掉没素材在用的空标签
+        conn.execute(
+            """DELETE FROM tags WHERE owner_id = ?
+               AND id NOT IN (SELECT DISTINCT tag_id FROM material_tags)""",
+            (old_owner,),
+        )
+        return n_old
+
+
+# ----------------------------------------------------------------------
+# 登录凭据（会话）
+#
+# 流程：
+#   登录成功 → 服务生成一串随机 token → 存进 sessions 表 + 塞进浏览器 Cookie
+#   之后的每次请求 → 浏览器自动带回 token → 服务拿 token 查表 → 知道你是谁
+#
+# token 就是"门票"，它本身等价于密码。所以：
+#   1. 用 secrets 生成（密码学安全的随机数），不是 random
+#   2. 带有效期，过期自动失效
+#   3. Cookie 设成 HttpOnly，网页里的 JS 读不到它（防脚本偷票）
+# ----------------------------------------------------------------------
+
+def create_session(token, user_id, expires_at):
+    """发一张门票"""
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO sessions (token, user_id, created_at, expires_at)
+               VALUES (?, ?, ?, ?)""",
+            (token, int(user_id), now_str(), expires_at),
+        )
+
+
+def get_session(token):
+    """拿门票换人。门票不存在或已过期，都返回 None。"""
+    token = (token or "").strip()
+    if not token:
+        return None
+
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT s.token, s.user_id, s.created_at, s.expires_at,
+                      u.username
+               FROM sessions s
+               JOIN users u ON u.id = s.user_id
+               WHERE s.token = ?""",
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+
+        # 时间都是 "2026-09-23 21:30:00" 这种固定格式，
+        # 这种格式下字符串比大小 = 时间比先后，不用转成日期对象。
+        if row["expires_at"] <= now_str():
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            return None
+
+        return {"token": row["token"], "user_id": row["user_id"],
+                "username": row["username"], "expires_at": row["expires_at"]}
+
+
+def delete_session(token):
+    """退出登录：作废这张门票"""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM sessions WHERE token = ?",
+                           ((token or "").strip(),))
+        return cur.rowcount > 0
+
+
+def purge_expired_sessions():
+    """清掉过期的门票（每次有人登录时顺手做一次，表不会越积越大）"""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_str(),))
+        return cur.rowcount
+
+
+# ----------------------------------------------------------------------
 # 命令行自测：python backend/db.py
 # ----------------------------------------------------------------------
 
@@ -444,3 +667,5 @@ if __name__ == "__main__":
     print("统计：", stats())
     print("标签：", list_tags())
     print("素材条数：", list_materials(limit=5)["total"])
+    print("账号数：", count_users())
+    print("尚未归属任何账号的素材：", stats(owner=DEFAULT_OWNER)["materials"], "条")

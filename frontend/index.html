@@ -29,6 +29,7 @@
   }
   button { font: inherit; cursor: pointer; }
   input, textarea { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
 
   /* ---------- 顶栏 ---------- */
   .top {
@@ -45,6 +46,19 @@
   .stat { text-align: right; }
   .stat b { display: block; font-size: 16px; font-weight: 600; }
   .stat span { font-size: 11px; color: var(--ink-3); }
+
+  /* 右上角的账号区 */
+  .userbox {
+    display: flex; align-items: center; gap: 9px;
+    padding-left: 16px; border-left: 1px solid var(--line);
+  }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent-2); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600;
+  }
+  .uname { font-size: 13px; font-weight: 600; }
 
   /* ---------- 工具栏 ---------- */
   .bar {
@@ -63,7 +77,7 @@
   .btn {
     height: 36px; padding: 0 15px; border-radius: var(--radius);
     border: 1px solid var(--line); background: #fff; color: var(--ink-2);
-    transition: .15s;
+    transition: .15s; white-space: nowrap;
   }
   .btn:hover { border-color: var(--ink-3); color: var(--ink); }
   .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
@@ -176,13 +190,44 @@
     display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 5px;
   }
   .field .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 5px; line-height: 1.6; }
-  .field input[type=text], .field textarea {
+  .field input[type=text], .field input[type=password], .field textarea {
     width: 100%; padding: 9px 11px; border: 1px solid var(--line);
     border-radius: 8px; background: #fbfaf8; outline: none; resize: vertical;
   }
   .field input:focus, .field textarea:focus { border-color: var(--accent); background: #fff; }
   .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
 
+  /* ---------- 登录 / 注册 ---------- */
+  .mask.auth { z-index: 90; background: rgba(38,35,31,.5); }
+  .modal.login { max-width: 400px; }
+  .modal.login header { padding: 24px 26px 18px; border-bottom: none; }
+  .modal.login header h2 { font-size: 20px; letter-spacing: 2px; }
+  .modal.login header p {
+    margin: 6px 0 0; font-size: 12.5px; color: var(--ink-3); font-weight: 400;
+  }
+  .modal.login .content { padding: 4px 26px 8px; }
+  .modal.login footer { padding: 16px 26px 22px; border-top: none; }
+  .authnote {
+    font-size: 11.5px; color: var(--ink-3); line-height: 1.7;
+    background: #fbfaf8; border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; margin-top: 2px;
+  }
+  .authmsg {
+    font-size: 12.5px; color: var(--danger); min-height: 18px; padding-top: 2px;
+    line-height: 1.5;
+  }
+  .tabsw {
+    display: flex; gap: 3px; background: #f0eee9; border-radius: 9px;
+    padding: 3px; margin-bottom: 16px;
+  }
+  .tabsw button {
+    flex: 1 1 0; border: none; background: transparent; color: var(--ink-2);
+    padding: 7px 0; border-radius: 7px; font-size: 13px;
+  }
+  .tabsw button.on { background: #fff; color: var(--ink); font-weight: 600;
+                     box-shadow: 0 1px 3px rgba(0,0,0,.07); }
+
+  /* ---------- 预览表（导入 / 上传共用） ---------- */
   .preview { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
   .preview .row {
     display: flex; align-items: center; gap: 10px;
@@ -206,15 +251,33 @@
   }
   .sumline b { font-weight: 600; }
 
+  /* ---------- 拖放区 ---------- */
+  .drop {
+    border: 2px dashed var(--line); border-radius: 12px;
+    padding: 34px 20px; text-align: center; color: var(--ink-2);
+    background: #fbfaf8; transition: .15s; margin-bottom: 4px; cursor: pointer;
+  }
+  .drop:hover, .drop.over {
+    border-color: var(--accent); background: var(--accent-2); color: var(--accent);
+  }
+  .drop b { display: block; font-size: 15px; margin-bottom: 5px; }
+  .drop span { font-size: 12px; color: var(--ink-3); }
+  .drop em { font-style: normal; color: var(--accent); }
+
   /* ---------- 详情抽屉 ---------- */
   .drawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 92vw);
     background: var(--card); border-left: 1px solid var(--line);
-    transform: translateX(100%); transition: transform .22s ease;
+    transform: translateX(100%); transition: transform .22s ease, visibility .22s;
     z-index: 70; display: flex; flex-direction: column;
     box-shadow: -8px 0 34px rgba(0,0,0,.1);
+    /* visibility:hidden 不是多余的一笔：
+       translateX(100%) 只是把它"挪"到屏幕外，它仍然存在于页面上，
+       窄窗口或某些渲染环境下会漏出来一条边，屏幕阅读器也还会读到里面的内容。
+       关着的时候干脆整个不可见、不可点，更干净。 */
+    visibility: hidden; pointer-events: none;
   }
-  .drawer.on { transform: none; }
+  .drawer.on { transform: none; visibility: visible; pointer-events: auto; }
   .drawer header {
     padding: 15px 60px 15px 22px; border-bottom: 1px solid var(--line);
     position: relative;
@@ -255,6 +318,8 @@
     .side { width: 100%; flex: none; position: static; }
     .taglist { flex-direction: row; flex-wrap: wrap; }
     .tag { width: auto; }
+    .stats { order: 3; margin-left: 0; }
+    .userbox { border-left: none; padding-left: 0; margin-left: auto; }
   }
 </style>
 </head>
@@ -267,13 +332,18 @@
     <div class="stat"><b id="sChar">-</b><span>总字数</span></div>
     <div class="stat"><b id="sTag">-</b><span>标签</span></div>
   </div>
+  <div class="userbox" id="userbox" hidden>
+    <div class="avatar" id="uAvatar">墨</div>
+    <span class="uname" id="uname"></span>
+    <button class="mini" id="btnLogout">退出</button>
+  </div>
 </div>
 
 <div class="bar">
   <input id="search" class="search" type="text" placeholder="搜索标题或正文里的词…">
-  <button class="btn primary" id="btnImport">导入文件夹</button>
+  <button class="btn primary" id="btnUpload">上传文件</button>
+  <button class="btn" id="btnImport">导入文件夹</button>
   <button class="btn" id="btnPaste">粘贴文本</button>
-  <button class="btn" id="btnUpload">上传文件</button>
   <input type="file" id="fileInput" multiple hidden
          accept=".txt,.md,.docx,.pdf,.xlsx,.xlsm">
 </div>
@@ -287,6 +357,63 @@
     <div class="listhead" id="listhead"></div>
     <div id="list"></div>
   </section>
+</div>
+
+<!-- ============ 登录 / 注册 ============ -->
+<div class="mask auth on" id="mkAuth">
+  <div class="modal login">
+    <header>
+      <h2 id="authTitle">登录墨阁</h2>
+      <p id="authSub">用你自己的账号进来</p>
+    </header>
+    <div class="content">
+      <div class="tabsw" id="authTabs">
+        <button data-mode="login" class="on">登录</button>
+        <button data-mode="register">注册新账号</button>
+      </div>
+      <div class="field">
+        <label>用户名</label>
+        <input type="text" id="aName" autocomplete="username" placeholder="2 到 20 个字符">
+      </div>
+      <div class="field">
+        <label>密码</label>
+        <input type="password" id="aPwd" autocomplete="current-password" placeholder="至少 6 位">
+      </div>
+      <div class="authmsg" id="aMsg"></div>
+      <label class="check" id="aAdoptWrap" hidden
+             style="margin:2px 0 10px;align-items:flex-start">
+        <input type="checkbox" id="aAdopt" checked style="margin-top:4px">
+        <span id="aAdoptText" style="font-size:12.5px;line-height:1.6"></span>
+      </label>
+      <div class="authnote" id="aNote"></div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn primary" id="aSubmit">登录</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 上传文件 ============ -->
+<div class="mask" id="mkUpload">
+  <div class="modal wide">
+    <header>
+      <h2>上传素材文件</h2>
+      <button class="x" data-close>&times;</button>
+    </header>
+    <div class="content">
+      <div class="drop" id="dropZone">
+        <b>把文件拖到这里</b>
+        <span>支持 txt / md / docx / pdf / xlsx，可以一次拖好几个</span>
+      </div>
+      <div id="upPreview"></div>
+    </div>
+    <footer>
+      <span class="grow" id="upMsg" style="font-size:12.5px;color:var(--ink-3)"></span>
+      <button class="btn" id="upClear">清空结果</button>
+      <button class="btn primary" id="btnPickFiles">选择文件</button>
+    </footer>
+  </div>
 </div>
 
 <!-- ============ 导入文件夹 ============ -->
@@ -303,6 +430,7 @@
         <div class="hint">
           把磁盘上的文件夹路径粘进来。取路径的办法：在资源管理器里进到那个文件夹，
           点一下顶部的地址栏，路径就会变成可复制的文字，Ctrl+C 复制。
+          <br>这种方式会<b>自动用文件夹名当标签</b>，比一个个上传省事。
         </div>
       </div>
       <div class="field">
@@ -388,10 +516,11 @@
 /* ==================================================================
    前端逻辑
    一句话概括：从后端 API 取数据 → 渲染成 HTML → 用户点了什么 → 再调 API
-   所有状态就存三个变量：当前搜索词、当前标签、当前打开的那条素材。
+   所有状态就存四个变量：当前搜索词、当前标签、当前打开的那条素材、当前账号。
    ================================================================== */
 
 const S = { keyword: "", tag: "", current: null };
+const A = { mode: "login", user: null, firstTime: false, unclaimed: 0, busy: false };
 
 /* 把用户内容里的尖括号转义，避免素材正文里的 < > 破坏页面结构 */
 function esc(s) {
@@ -408,11 +537,23 @@ function toast(msg, bad) {
   t._h = setTimeout(() => { t.className = "toast"; }, 2600);
 }
 
-/* 统一封装 fetch：出错就抛，调用处只管 catch */
+/* 统一封装 fetch：出错就抛，调用处只管 catch
+
+   里面那段 401 的处理是整个前端"最省事"的一处设计：
+   登录过期后，任何一个请求都会走到这里，自动弹回登录页。
+   于是每个具体的功能（列表、导入、上传、删除…）都不用自己写
+   "如果没登录该怎么办"。这叫把重复逻辑收到一个地方。 */
 async function api(url, opt) {
   const r = await fetch(url, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { data = null; }
+
+  if (r.status === 401) {
+    // 登录接口自己返回 401 是"密码不对"，不该再弹一次登录框
+    if (url.indexOf("/api/auth/") !== 0) showAuth("登录已过期，请重新登录");
+    const d = (data && data.detail) || "还没登录";
+    throw new Error(typeof d === "string" ? d : "还没登录");
+  }
   if (!r.ok) {
     const msg = (data && (data.detail || data.message)) || ("请求失败 " + r.status);
     throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
@@ -439,6 +580,154 @@ function warnOf(note) {
   if (note.indexOf("扫描件") >= 0) return "图片版·无文字";
   if (note.indexOf("未提取") >= 0) return "含图片未提取";
   return "";
+}
+
+/* ================== 登录 / 注册 ================== */
+
+function setUser(u) {
+  A.user = u;
+  const box = document.getElementById("userbox");
+  if (u) {
+    box.hidden = false;
+    document.getElementById("uname").textContent = u.username;
+    document.getElementById("uAvatar").textContent = u.username.slice(0, 1);
+  } else {
+    box.hidden = true;
+  }
+}
+
+function setAuthMode(mode) {
+  A.mode = mode;
+  document.querySelectorAll("#authTabs button").forEach(b => {
+    b.classList.toggle("on", b.dataset.mode === mode);
+  });
+  const isReg = mode === "register";
+  document.getElementById("authTitle").textContent = isReg ? "创建账号" : "登录墨阁";
+  document.getElementById("aSubmit").textContent = isReg ? "注册并进入" : "登录";
+  document.getElementById("aPwd").setAttribute(
+    "autocomplete", isReg ? "new-password" : "current-password");
+
+  /* "接收之前导入的素材"这个选项只在注册时出现，而且真的有东西可接才出现。
+     素材是早期用命令行导入的，那会儿还没有账号，所以它们暂时没有归属。 */
+  const wrap = document.getElementById("aAdoptWrap");
+  if (isReg && A.unclaimed > 0) {
+    wrap.hidden = false;
+    document.getElementById("aAdoptText").textContent =
+      "把之前导入的 " + A.unclaimed + " 条素材转到这个账号名下（不勾就仍留在未分配状态）";
+  } else {
+    wrap.hidden = true;
+  }
+
+  document.getElementById("aNote").innerHTML = isReg
+    ? "账号只存在你自己电脑上的数据库里（data/moge.db），不会上传到任何地方。<br>" +
+      "用户名 2–20 个字符，可用中文；密码至少 6 位。"
+    : "素材是分账号存放的，每个账号只能看到自己的东西。";
+  aMsg("");
+}
+
+function aMsg(text) {
+  document.getElementById("aMsg").textContent = text || "";
+}
+
+function showAuth(reason) {
+  document.getElementById("mkAuth").classList.add("on");
+  if (reason) aMsg(reason);
+  setAuthMode(A.firstTime ? "register" : A.mode);
+  setTimeout(() => {
+    const el = document.getElementById(A.firstTime ? "aName" : "aName");
+    if (el) el.focus();
+  }, 80);
+}
+
+function hideAuth() {
+  document.getElementById("mkAuth").classList.remove("on");
+  aMsg("");
+  document.getElementById("aPwd").value = "";
+}
+
+async function submitAuth() {
+  if (A.busy) return;
+  const name = document.getElementById("aName").value.trim();
+  const pwd = document.getElementById("aPwd").value;
+  const isReg = A.mode === "register";
+
+  if (!name) { aMsg("请填写用户名"); return; }
+  if (!pwd) { aMsg("请填写密码"); return; }
+
+  A.busy = true;
+  const btn = document.getElementById("aSubmit");
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = isReg ? "注册中…" : "登录中…";
+  aMsg("");
+  try {
+    const body = { username: name, password: pwd };
+    if (isReg) {
+      const wrap = document.getElementById("aAdoptWrap");
+      body.adopt_mine = !wrap.hidden &&
+                        document.getElementById("aAdopt").checked;
+    }
+    const r = await post(isReg ? "/api/auth/register" : "/api/auth/login", body);
+    setUser(r.user);
+    hideAuth();
+    document.getElementById("aName").value = "";
+    document.getElementById("aPwd").value = "";
+
+    if (isReg && r.adopted > 0) {
+      toast("账号已创建，并接收了之前导入的 " + r.adopted + " 条素材");
+    } else {
+      toast(isReg ? "账号已创建，欢迎使用墨阁" : "欢迎回来，" + r.user.username);
+    }
+    startApp();
+  } catch (e) {
+    aMsg(e.message);
+  } finally {
+    A.busy = false;
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+async function doLogout() {
+  if (!confirm("确定退出登录？素材不会丢，重新登录就能看到。")) return;
+  try { await post("/api/auth/logout"); } catch (e) { /* 退出失败也照样清前台 */ }
+  setUser(null);
+  S.keyword = ""; S.tag = "";
+  document.getElementById("search").value = "";
+  document.getElementById("list").innerHTML = "";
+  document.getElementById("tagbar").innerHTML = "";
+  document.getElementById("listhead").innerHTML = "";
+  ["sMat", "sChar", "sTag"].forEach(id => document.getElementById(id).textContent = "-");
+  A.firstTime = false;
+  setAuthMode("login");
+  showAuth("已退出登录");
+}
+
+async function boot() {
+  // 先问服务几件事：有人注册过吗？有没有还没归属的素材？我现在是谁？
+  try {
+    const h = await api("/api/health");
+    A.firstTime = (h.users || 0) === 0;
+    A.unclaimed = h.unclaimed || 0;
+  } catch (e) {
+    aMsg("连不上后端服务：" + e.message);
+  }
+  try {
+    const me = await api("/api/auth/me");
+    if (me.logged_in) {
+      setUser(me.user);
+      hideAuth();
+      startApp();
+      return;
+    }
+  } catch (e) { /* 未登录会走到这里，正常 */ }
+
+  if (A.firstTime) {
+    setAuthMode("register");
+    document.getElementById("authSub").textContent = "第一次使用，先给自己建一个账号";
+    aMsg("");
+  } else {
+    setAuthMode("login");
+    showAuth("");
+  }
 }
 
 /* ---------------- 读取与渲染 ---------------- */
@@ -504,7 +793,8 @@ async function loadList() {
 
   if (!data.items.length) {
     box.innerHTML = '<div class="blank"><b>这里还没有素材</b>' +
-      '点上面的「导入文件夹」，把桌面「分类」那个文件夹导进来试试。</div>';
+      '点上面的「上传文件」，把你的 txt / docx 拖进来试试。</div>';
+    maybeOfferAdopt();
     return;
   }
 
@@ -542,6 +832,34 @@ async function loadList() {
   box.querySelectorAll("[data-del]").forEach(el => {
     el.onclick = () => removeMaterial(+el.dataset.del, el);
   });
+}
+
+/* 素材库空着、但库里还有"没归属的素材"时，给一个一键接收的入口。
+   这些素材是你早期用命令行导入的，注册账号时如果没勾选"接收"，就会留在这儿。 */
+async function maybeOfferAdopt() {
+  try {
+    const h = await api("/api/health");
+    if (!h.unclaimed) return;
+    const blank = document.querySelector("#list .blank");
+    if (!blank) return;
+
+    const wrap = document.createElement("div");
+    wrap.style.marginTop = "14px";
+    const btn = document.createElement("button");
+    btn.className = "mini";
+    btn.textContent = "接收之前导入的 " + h.unclaimed + " 条素材";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const r = await post("/api/auth/adopt");
+        toast(r.message);
+        A.unclaimed = 0;
+        loadStats(); loadTags(); loadList();
+      } catch (e) { toast(e.message, true); btn.disabled = false; }
+    };
+    wrap.appendChild(btn);
+    blank.appendChild(wrap);
+  } catch (e) { /* 拿不到就算了，不影响主流程 */ }
 }
 
 /* ---------------- 详情抽屉 ---------------- */
@@ -597,21 +915,17 @@ function removeMaterial(id, el) {
     .catch(e => toast(e.message, true));
 }
 
-/* ---------------- 导入文件夹 ---------------- */
+/* ---------------- 弹窗开关 ---------------- */
 
 function openMask(id) { document.getElementById(id).classList.add("on"); }
 function closeMask(id) { document.getElementById(id).classList.remove("on"); }
 
-function resetImportPreview() {
-  document.getElementById("impPreview").innerHTML = "";
-  document.getElementById("btnRunImport").disabled = true;
-  document.getElementById("impMsg").textContent = "";
-}
+/* ---------------- 结果预览（导入文件夹与上传共用一套渲染） ---------------- */
 
-function renderPreview(res) {
+function previewHtml(res) {
   const s = res.summary;
   const sum = '<div class="sumline">' +
-    '<span>扫到 <b>' + s.total + '</b> 个文件</span>' +
+    '<span>共 <b>' + s.total + '</b> 个文件</span>' +
     '<span>新入库 <b>' + s.new + '</b></span>' +
     '<span>已在库里 <b>' + s.same + '</b></span>' +
     '<span>无文字 <b>' + s.empty + '</b></span>' +
@@ -621,7 +935,7 @@ function renderPreview(res) {
 
   const rows = res.items.map(it => {
     const label = { new: "新", same: "重复", empty: "空", fail: "失败" }[it.status];
-    const tg = it.tags.length ? it.tags.join("、") : "";
+    const tg = (it.tags || []).length ? it.tags.join("、") : "";
     const tip = (it.status === "empty" || it.status === "fail") ? it.message : "";
     return '<div class="row">' +
       '<span class="st ' + it.status + '">' + label + '</span>' +
@@ -633,8 +947,53 @@ function renderPreview(res) {
     '</div>';
   }).join("");
 
-  document.getElementById("impPreview").innerHTML =
-    sum + '<div class="preview">' + rows + '</div>';
+  return sum + '<div class="preview">' + rows + '</div>';
+}
+
+/* ---------------- 上传文件 ---------------- */
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  openMask("mkUpload");
+
+  const list = Array.from(files);
+  document.getElementById("upMsg").textContent =
+    "正在解析 " + list.length + " 个文件…";
+  const box = document.getElementById("upPreview");
+  box.innerHTML = '<div class="sumline">解析中，请稍候…</div>';
+
+  const fd = new FormData();
+  list.forEach(f => fd.append("files", f));
+
+  try {
+    const res = await api("/api/upload", { method: "POST", body: fd });
+    box.innerHTML = previewHtml(res);
+    const s = res.summary;
+    document.getElementById("upMsg").textContent =
+      "新增 " + s.new + " 条，重复 " + s.same + " 条" +
+      (s.fail + s.empty ? "，未成功 " + (s.fail + s.empty) + " 条" : "");
+    if (s.new) toast("已入库 " + s.new + " 条素材");
+    else if (s.same) toast("这些内容库里都有了，没有重复存");
+    else toast("没有能入库的内容", true);
+    loadStats(); loadTags(); loadList();
+  } catch (e) {
+    box.innerHTML = "";
+    document.getElementById("upMsg").textContent = e.message;
+    toast(e.message, true);
+  }
+}
+
+/* ---------------- 导入文件夹 ---------------- */
+
+function resetImportPreview() {
+  document.getElementById("impPreview").innerHTML = "";
+  document.getElementById("btnRunImport").disabled = true;
+  document.getElementById("impMsg").textContent = "";
+}
+
+function renderImportPreview(res) {
+  const s = res.summary;
+  document.getElementById("impPreview").innerHTML = previewHtml(res);
   document.getElementById("btnRunImport").disabled = (s.new === 0);
   document.getElementById("impMsg").textContent =
     s.new === 0 ? "没有新东西要导入（内容都在库里了）" : "确认后点右边按钮";
@@ -651,7 +1010,7 @@ async function doScan() {
       path: path,
       recursive: document.getElementById("impRec").checked
     });
-    renderPreview(res);
+    renderImportPreview(res);
   } catch (e) {
     document.getElementById("impPreview").innerHTML = "";
     document.getElementById("impMsg").textContent = e.message;
@@ -673,7 +1032,7 @@ async function doImport() {
     });
     const s = res.summary;
     toast("导入完成：新增 " + s.new + " 条，跳过重复 " + s.same + " 条");
-    renderPreview(res);
+    renderImportPreview(res);
     document.getElementById("btnRunImport").disabled = true;
     document.getElementById("impMsg").textContent = "导入完成。关掉这个窗口看列表。";
     loadStats(); loadTags(); loadList();
@@ -706,26 +1065,6 @@ async function savePaste() {
   } catch (e) { toast(e.message, true); }
 }
 
-/* ---------------- 上传文件 ---------------- */
-
-async function uploadFiles(files) {
-  if (!files || !files.length) return;
-  let ok = 0, skip = 0, bad = [];
-  for (const f of files) {
-    const fd = new FormData();
-    fd.append("file", f);
-    try {
-      const r = await api("/api/upload", { method: "POST", body: fd });
-      if (r.status === "new") ok++; else skip++;
-    } catch (e) { bad.push(f.name + "：" + e.message); }
-  }
-  let msg = "上传完成：新增 " + ok + " 条，重复 " + skip + " 条";
-  if (bad.length) msg += "，失败 " + bad.length + " 条";
-  toast(msg, bad.length > 0);
-  if (bad.length) console.warn("上传失败明细：", bad);
-  loadStats(); loadTags(); loadList();
-}
-
 /* ---------------- 事件绑定 ---------------- */
 
 let searchTimer = null;
@@ -733,6 +1072,22 @@ document.getElementById("search").addEventListener("input", e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { S.keyword = e.target.value.trim(); loadList(); }, 280);
 });
+
+document.getElementById("btnUpload").onclick = () => {
+  document.getElementById("upPreview").innerHTML = "";
+  document.getElementById("upMsg").textContent = "";
+  openMask("mkUpload");
+};
+document.getElementById("btnPickFiles").onclick = () =>
+  document.getElementById("fileInput").click();
+document.getElementById("upClear").onclick = () => {
+  document.getElementById("upPreview").innerHTML = "";
+  document.getElementById("upMsg").textContent = "";
+};
+document.getElementById("fileInput").onchange = e => {
+  uploadFiles(e.target.files);
+  e.target.value = "";
+};
 
 document.getElementById("btnImport").onclick = () => {
   resetImportPreview();
@@ -744,13 +1099,6 @@ document.getElementById("btnRunImport").onclick = doImport;
 
 document.getElementById("btnPaste").onclick = () => openMask("mkPaste");
 document.getElementById("btnSavePaste").onclick = savePaste;
-
-document.getElementById("btnUpload").onclick = () =>
-  document.getElementById("fileInput").click();
-document.getElementById("fileInput").onchange = e => {
-  uploadFiles(e.target.files);
-  e.target.value = "";
-};
 
 document.getElementById("dClose").onclick = closeDrawer;
 document.getElementById("mkDrawer").onclick = closeDrawer;
@@ -765,32 +1113,74 @@ document.getElementById("dDelete").onclick = () => {
     .catch(e => toast(e.message, true));
 };
 
+/* ---- 登录卡片 ---- */
+document.querySelectorAll("#authTabs button").forEach(b => {
+  b.onclick = () => { aMsg(""); setAuthMode(b.dataset.mode); };
+});
+document.getElementById("aSubmit").onclick = submitAuth;
+["aName", "aPwd"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") submitAuth();
+  });
+});
+document.getElementById("btnLogout").onclick = doLogout;
+
+/* ---- 其他弹窗 ---- */
 document.querySelectorAll("[data-close]").forEach(el => {
   el.onclick = () => closeMask(el.closest(".mask").id);
 });
 document.querySelectorAll(".mask").forEach(mk => {
-  if (mk.id === "mkDrawer") return;
+  if (mk.id === "mkDrawer" || mk.id === "mkAuth") return;   // 这两个不许点空白关掉
   mk.addEventListener("click", e => { if (e.target === mk) closeMask(mk.id); });
 });
 
-/* 拖文件到页面上也能上传 */
+/* ---- 拖放上传 ---- */
+const dropZone = document.getElementById("dropZone");
+dropZone.onclick = () => document.getElementById("fileInput").click();
+
+["dragenter", "dragover"].forEach(ev =>
+  dropZone.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.add("over");
+  }));
+["dragleave", "drop"].forEach(ev =>
+  dropZone.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.remove("over");
+  }));
+dropZone.addEventListener("drop", e => {
+  const fs = e.dataTransfer && e.dataTransfer.files;
+  if (fs && fs.length) uploadFiles(fs);
+});
+
+/* 拖到页面其它地方也算上传（省得用户必须瞄准那个小框） */
 document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", e => {
   e.preventDefault();
-  if (e.dataTransfer && e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+  if (document.getElementById("mkAuth").classList.contains("on")) return;
+  const fs = e.dataTransfer && e.dataTransfer.files;
+  if (fs && fs.length) uploadFiles(fs);
 });
 
 window.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     closeDrawer();
-    document.querySelectorAll(".mask.on").forEach(m => m.classList.remove("on"));
+    document.querySelectorAll(".mask.on").forEach(m => {
+      if (m.id === "mkAuth") return;             // 登录框不能被 ESC 关掉
+      m.classList.remove("on");
+    });
   }
 });
 
 /* ---------------- 启动 ---------------- */
-loadStats();
-loadTags();
-loadList();
+
+function startApp() {
+  loadStats();
+  loadTags();
+  loadList();
+}
+
+boot();
 </script>
 </body>
 </html>
