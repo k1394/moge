@@ -52,7 +52,7 @@ print("=" * 40)
 
 # 【照抄这段】
 site_name = "墨阁"
-print(f"欢迎来到{site_name}")
+print(f"{site_name},我来了")
 
 # 【改一处】改成 print(f"{site_name}，我来啦")，运行看效果
 
@@ -64,12 +64,11 @@ print("=" * 40)
 
 # 【照抄这段】
 a = 27
-b = 5
-print(f"a + b = {a + b}")
-print(f"a - b = {a - b}")
-print(f"a * b = {a * b}")
-print(f"a / b = {a / b}")
-
+b = 2
+print(f"a + b = {a+b}")
+print(f"a-b={a-b}")
+print(f"a*b={a*b}")
+print(f"a/b={a/b}")
 # 【改一处】把 b 改成 2，运行，看 a / b 的结果变成什么
 # 想一想：为什么 a / b 有小数点，但 a * b 没有？
 
@@ -80,11 +79,11 @@ print("练习 4：字符串的常用动作")
 print("=" * 40)
 
 # 【照抄这段】
-text = "  老九门 二月红  "
-print(f"原样：[{text}]")
-print(f"去掉空格后：[{text.strip()}]")
-print(f"按空格切开后：{text.split()}")
-print(f"一共几个字：{len(text)}")
+text = " 老九门 陈皮阿四 "
+print(f"原样: [{text}]")
+print(f"去掉空格后: [{text.strip()}]")
+print(f"按空格切开后: {text.split()}")
+print(f"一共几个字:{len(text)}")
 
 # 【改一处】把 text 改成 "  陈皮阿四  ", 运行看三个结果分别变成什么
 
@@ -95,11 +94,11 @@ print("练习 5：列表（一排东西）")
 print("=" * 40)
 
 # 【照抄这段】
-titles = ["九门旧事", "二月红传", "陈皮阿四"]
-print(f"全部：{titles}")
-print(f"第一个：{titles[0]}")
+titles = ["九门旧事","二月红传","陈皮阿四","长沙夜雨"]
+print(f"全部: {titles}")
+print(f"第一个:{titles[0]}")
 print(f"最后一个：{titles[-1]}")
-print(f"前两个：{titles[0:2]}")
+print(f"前两个:{titles[0:2]}")
 
 # 【改一处】往列表里再加一个书名，比如 "长沙夜雨"，运行看结果
 
@@ -111,14 +110,14 @@ print("=" * 40)
 
 # 【照抄这段】
 material = {
-    "标题": "九门旧事",
-    "类型": "同人短篇",
-    "来源": "九门资料库",
-    "标签": ["民国", "师徒"],
+    "标题":"111",
+    "类型":"同人短篇",
+    "来源":"九门资料库",
+    "标签":["民国","师徒"],
 }
 print(f"整个字典：{material}")
-print(f"只看标题：{material['标题']}")
-print(f"只看标签：{material['标签']}")
+print(f"只看标题:{material['标题']}")
+print(f"只看标签:{material['标签']}")
 
 # 【改一处】把 "标题" 的值改成你自己写的某篇的名字，运行看结果
 # 想一想：列表和字典的区别 —— 列表靠位置找，字典靠名字找
@@ -132,8 +131,8 @@ print("=" * 40)
 # 【照抄这段】
 import datetime
 
-today = datetime.date.today()
-print(f"今天是 {today}")
+today = datetime.date(2026,10,1)
+print(f"今天是{today}")
 
 # 【改一处】把 today 换成 datetime.date(2026, 10, 1)，运行看输出
 
