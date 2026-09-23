@@ -1,2 +1,10 @@
 fastapi
 uvicorn[standard]
+
+# 素材解析（都是本地库，不联网、不调用云服务）
+python-docx      # 读 .docx
+pdfplumber       # 读 .pdf
+openpyxl         # 读 .xlsx / .xlsm
+
+# 可选：只有要生成 PDF（比如导出细纲）时才需要
+# fpdf2
