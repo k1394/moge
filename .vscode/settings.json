@@ -1,15 +1,52 @@
 {
-  // ── 这个文件是给 VS Code 看的，告诉它「本项目用哪个 Python」 ──
-  // 没有这个文件时，VS Code 有时会找不到解释器，点「▶ 运行」就没反应。
+  // ══════════════════════════════════════════════════════════════
+  //  墨阁 · VS Code 配置
+  //
+  //  作用：让右上角的「▶ 运行」按钮真的能跑起来。
+  //  每一段为什么这么写，下面都写了原因。
+  //  ${workspaceFolder} 代表「当前打开的文件夹」，所以别人把项目
+  //  clone 到别的盘也能直接用，没有本机绝对路径。
+  // ══════════════════════════════════════════════════════════════
 
-  // 用项目自带的 Python（.venv 里那个）。
-  // ${workspaceFolder} 代表「当前打开的文件夹」，所以别人把项目 clone 到别的盘也能直接用。
+
+  // ── 1. 用哪个 Python ──────────────────────────────────────────
+  // 项目自带的 .venv 里那个（Python 3.13），依赖都装在它里面。
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
 
-  // 打开终端时自动激活 .venv，这样直接敲 python 用的就是项目环境
+
+  // ── 2. 关掉「一律优先用 uv」—— 这就是「点 ▶ 没反应」的根源 ──
+  // 新版 Python 环境扩展(ms-python.vscode-python-envs)默认 alwaysUseUv = true，
+  // 意思是「只要机器上有 uv，就用 uv 来管所有虚拟环境」，
+  // 它宁可用 uv 也不认你现成的 .venv。
+  //
+  // 而 uv 装在 C:\Users\Administrator\.local\bin，不在终端 PATH 里，
+  // 于是扩展先去跑安装脚本、装完又说「uv 装了但当前终端用不了，请重启 VS Code」，
+  // 运行这件事就一直没轮上 —— 表现就是点了没反应 / 冒出安装日志。
+  //
+  // 改成 false 之后，uv 只负责「它自己建的」环境，不会再来抢本项目。
+  "python-envs.alwaysUseUv": false,
+
+
+  // ── 3. 把本项目明确钉死在「venv + pip」上 ────────────────────
+  // 不写这段，扩展会自己去猜、去推荐新建环境。
+  // 写死之后就照现成的 .venv 用，不再弹任何创建/安装提示。
+  "python-envs.pythonProjects": [
+    {
+      "path": ".",
+      "envManager": "ms-python.python:venv",
+      "packageManager": "ms-python.python:pip"
+    }
+  ],
+
+  // 在项目根目录的 .venv 里找解释器（这是默认值，写出来防止将来被改掉）
+  "python-envs.workspaceSearchPaths": [".venv", "*/.venv"],
+
+
+  // ── 4. 打开终端时自动激活 .venv ──────────────────────────────
   "python.terminal.activateEnvironment": true,
 
-  // 统一按 UTF-8 读写文件，避免中文变乱码
+
+  // ── 5. 统一按 UTF-8 读写文件，避免中文变乱码 ─────────────────
   "files.encoding": "utf8",
   "files.autoGuessEncoding": false
 }
