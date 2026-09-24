@@ -297,7 +297,11 @@ def http_tests():
                 ("/api/classification-runs", "GET"),
                 ("/api/classification-runs/1", "GET"),
                 ("/api/classification-runs/1/items", "GET"),
-                ("/api/classification-states", "GET")]:
+                ("/api/classification-states", "GET"),
+                ("/api/prompt-library", "GET"),
+                ("/api/prompt-library", "POST"),
+                ("/api/prompt-library/1", "PATCH"),
+                ("/api/prompt-library/1", "DELETE")]:
             code, _ = probe.call(method, path)
             check("未登录 %s %s → 401" % (method, path), code == 401,
                   "HTTP %s" % code)
@@ -504,6 +508,161 @@ def http_tests():
 
         A.ok("POST", "/api/classify-prompt", {"content": ""})
         check("能清空", A.ok("GET", "/api/classify-prompt")["content"] == "", True)
+
+        # ---- 【3.7】提示词库 ---------------------------------------------
+        #
+        # 她要的：能创建提示词、存下来、下次在「快捷选项」里挑；
+        # 能选公开/不公开。
+        # 最要紧的一条是她自己定的规矩 ——
+        #   **公开 = 别人可以拿去用，但永远看不到内容。**
+        # 这一条反直觉，所以下面用"整个响应体里搜不到原文"来硬验，
+        # 而不是只看某个字段存不存在。
+        print("\n【3.7】提示词库（创建 / 挑选 / 公开但内容私密）")
+        SECRET = "SECRET-AI-CONTENT-12345"
+        lib = A.ok("GET", "/api/prompt-library")
+        check("一开始我的库里是空的", lib["mine"] == [], str(lib["mine"]))
+        check("一开始也没有别人的公开条目", lib["public"] == [], str(lib["public"]))
+        check("接口把各字段上限一起报出来（界面要显示 0/30 这种）",
+              (lib["max"]["name"], lib["max"]["content"],
+               lib["max"]["usage_note"], lib["max"]["summary"])
+              == (30, 5000, 50, 6000), str(lib["max"]))
+
+        r = A.ok("POST", "/api/prompt-library",
+                 {"name": "我的风格", "content": "少用形容词，多写动作",
+                  "usage_note": "直接使用", "summary": "给打斗戏用的"})
+        mine1 = r["item"]
+        check("新建成功，拿回一条带 id 的", bool(mine1.get("id")), str(mine1)[:90])
+        check("默认是私有的", mine1["visibility"] == "private", mine1["visibility"])
+        check("自己的条目**带内容**（界面要能编辑）",
+              mine1["content"] == "少用形容词，多写动作", repr(mine1.get("content")))
+
+        pub1 = A.ok("POST", "/api/prompt-library",
+                    {"name": "公开的判据", "content": SECRET,
+                     "visibility": "public"})["item"]
+        check("能建公开条目", pub1["visibility"] == "public", pub1["visibility"])
+
+        code, d = A.call("POST", "/api/prompt-library",
+                         {"name": "空的", "content": ""})
+        check("内容为空不许建（建了也是个点不动的东西）",
+              code == 400 and "内容" in str(d), "%s %s" % (code, str(d)[:70]))
+        code, d = A.call("POST", "/api/prompt-library",
+                         {"name": "名" * 31, "content": "x"})
+        check("名称超过 30 字被拒", code == 400 and "30" in str(d),
+              "%s %s" % (code, str(d)[:70]))
+        code, d = A.call("POST", "/api/prompt-library",
+                         {"name": "我的风格", "content": "撞名"})
+        check("同名不许覆盖，要报错（覆盖会静默毁掉之前那份）",
+              code == 400 and "已经有一条" in str(d), "%s %s" % (code, str(d)[:70]))
+
+        # ---- 关键：别人那条能看见名字，拿不到内容 ----
+        blib = B.ok("GET", "/api/prompt-library")
+        check("别人看不到我私有的那条",
+              all(x["name"] != "我的风格" for x in blib["public"]),
+              str([x["name"] for x in blib["public"]]))
+        check("别人能看到我公开的那条",
+              any(x["name"] == "公开的判据" for x in blib["public"]), True)
+        pubrow = [x for x in blib["public"] if x["name"] == "公开的判据"][0]
+        check("★ 公开条目的字典里**没有 content 这个字段**",
+              "content" not in pubrow, sorted(pubrow.keys()))
+        check("★ 整个响应体里搜不到提示词原文（内容真的没出去）",
+              SECRET not in json.dumps(blib, ensure_ascii=False),
+              "原文 %d 字" % len(SECRET))
+        check("但能看到是谁写的（好判断敢不敢用）",
+              bool(pubrow.get("owner_label")), str(pubrow.get("owner_label")))
+        check("也能看到字数（字数不是内容）",
+              pubrow["content_length"] == len(SECRET), str(pubrow["content_length"]))
+        check("别人自己的那栏里没有我的条目",
+              all(x["name"] != "我的风格" for x in blib["mine"]),
+              str([x["name"] for x in blib["mine"]]))
+
+        # ---- 私有条目：别人连用都不许用 ----
+        bm = B.ok("POST", "/api/materials",
+                  {"title": "B 的稿", "content": "第一行\n\n第二行\n\n第三行"})
+        bmid = bm["id"]
+        code, d = B.call("POST", "/api/materials/%d/auto-classify" % bmid,
+                         {"classifier": "placeholder", "prompt_id": mine1["id"]})
+        check("★ 别人拿我私有的提示词跑分类 → 被拒",
+              code == 400 and ("私有" in str(d) or "用不了" in str(d)),
+              "%s %s" % (code, str(d)[:80]))
+        code, d = B.call("POST", "/api/materials/%d/auto-classify" % bmid,
+                         {"classifier": "placeholder", "prompt_id": 999999})
+        check("引用一条不存在的提示词 → 被拒",
+              code == 400 and "不存在" in str(d), "%s %s" % (code, str(d)[:80]))
+
+        # ---- 别人用我公开的那条：能用，但内容不许留在他的任务记录里 ----
+        rb = B.ok("POST", "/api/materials/%d/auto-classify" % bmid,
+                  {"classifier": "placeholder", "prompt_id": pub1["id"]})
+        check("★ 别人可以直接用我公开的那条（这才叫「公开」）",
+              rb.get("ok") is True and rb.get("prompt_from_library") is True,
+              str(rb)[:120])
+        check("返回里带了那条的名字（界面要显示「用了哪条」）",
+              rb.get("prompt_name") == "公开的判据", str(rb.get("prompt_name")))
+        check("★ 返回体里**没有**提示词内容",
+              SECRET not in json.dumps(rb, ensure_ascii=False),
+              "原文 %d 字" % len(SECRET))
+
+        brun = B.ok("GET", "/api/classification-runs/%d" % rb["run_id"])
+        check("★ 别人的任务记录里也搜不到内容（存了快照，但被抹掉）",
+              SECRET not in json.dumps(brun, ensure_ascii=False),
+              "原文 %d 字" % len(SECRET))
+        check("被抹掉了要说一声（界面才不会以为是空提示词）",
+              brun.get("prompt_masked") is True, str(brun.get("prompt_masked")))
+        check("抹掉之后仍看得出「当初带了东西」（只给长度）",
+              brun.get("user_prompt_len") == len(SECRET),
+              str(brun.get("user_prompt_len")))
+        check("任务记录里留着那条的名字，历史可追溯",
+              brun.get("prompt_name") == "公开的判据", str(brun.get("prompt_name")))
+
+        # 我自己的任务记录当然要能看到自己的内容。
+        # 用一份**单独的素材**，不碰 mid —— mid 后面【4】还要用，
+        # 提前在上面跑一个任务会把那一段的断言搅乱。
+        am = A.ok("POST", "/api/materials",
+                  {"title": "A 的另一份稿", "content": "甲行\n\n乙行\n\n丙行"})
+        amid = am["id"]
+        arun = A.ok("POST", "/api/materials/%d/auto-classify" % amid,
+                    {"classifier": "placeholder", "prompt_id": pub1["id"]})
+        arun_d = A.ok("GET", "/api/classification-runs/%d" % arun["run_id"])
+        check("本人看自己的任务记录，内容还在（不被误抹）",
+              arun_d.get("user_prompt") == SECRET,
+              repr(arun_d.get("user_prompt"))[:40])
+        check("本人这条不算脱敏", arun_d.get("prompt_masked") is False,
+              str(arun_d.get("prompt_masked")))
+
+        # ---- 改 / 删 ----
+        r = A.ok("PATCH", "/api/prompt-library/%d" % mine1["id"],
+                 {"name": "我的风格 v2"})
+        check("能改名", r["item"]["name"] == "我的风格 v2", r["item"]["name"])
+        check("只传名字时，正文没被清掉（没传的字段不动）",
+              r["item"]["content"] == "少用形容词，多写动作",
+              repr(r["item"]["content"]))
+        code, d = A.call("PATCH", "/api/prompt-library/%d" % mine1["id"],
+                         {"name": "公开的判据"})
+        check("改成跟另一条重名 → 被拒",
+              code == 400 and "已经有一条" in str(d), "%s %s" % (code, str(d)[:70]))
+        code, d = A.call("PATCH", "/api/prompt-library/%d" % pub1["id"], {})
+        check("空 patch 等于什么都没改（不是报错）", code == 200,
+              "%s %s" % (code, str(d)[:70]))
+        code, d = B.call("PATCH", "/api/prompt-library/%d" % pub1["id"],
+                         {"name": "我改别人的"})
+        check("★ 别人改不了我的条目 → 404", code == 404, "%s %s" % (code, str(d)[:70]))
+        code, d = B.call("DELETE", "/api/prompt-library/%d" % pub1["id"])
+        check("★ 别人删不了我的条目 → 404", code == 404, "%s %s" % (code, str(d)[:70]))
+
+        A.ok("DELETE", "/api/prompt-library/%d" % pub1["id"])
+        check("删掉之后自己的清单里没了",
+              all(x["id"] != pub1["id"] for x in A.ok("GET", "/api/prompt-library")["mine"]),
+              True)
+        check("删掉之后别人也看不到了",
+              all(x["id"] != pub1["id"] for x in B.ok("GET", "/api/prompt-library")["public"]),
+              True)
+        code, d = A.call("POST", "/api/materials/%d/auto-classify" % mid,
+                         {"classifier": "placeholder", "prompt_id": pub1["id"]})
+        check("删掉之后再引用它 → 被拒（不是静默不带提示词）",
+              code == 400 and "不存在" in str(d), "%s %s" % (code, str(d)[:80]))
+        r = A.ok("POST", "/api/prompt-library",
+                 {"name": "公开的判据", "content": "重新建一条同名的"})
+        check("删掉之后能重新用同一个名字建（老条目腾开了 UNIQUE 位）",
+              r["item"]["name"] == "公开的判据", str(r["item"])[:80])
 
         # ---- 提交任务 -----------------------------------------------
         print("\n【4】提交任务：立刻返回，不阻塞")

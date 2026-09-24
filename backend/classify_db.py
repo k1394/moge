@@ -44,8 +44,10 @@
 
 import json
 import os
+import shutil
 import sqlite3
 import secrets
+import time
 from datetime import datetime
 
 try:
@@ -66,20 +68,37 @@ def new_group_id():
 
 
 # ----------------------------------------------------------------------
-# 八个正式主类（v2）
+# 十一个正式主类（v2）
 #
 # 【为什么有 v1 / v2 两版】
 #   v1 是「按文本类型切」的一套学术分类（人物描写 / 场景氛围 / 语言表达…），
 #   那套是错的 —— 它不是她的分类，是别人替她发明的分类。
-#   v2 是她自己定的八类，来源是她手上那批素材文件的名字
+#   v2 是她自己定的，来源是她手上那批素材文件的名字
 #   （外貌 / 神态 / 梗 / 好磕 / 车 / 难过动心 / 搞笑…）。
 #   v1 不删，只是标成停用：万一想退回去，定义还在。
+#
+# 【2026-09-24 晚：她看过分类结果，说准确率不错，加了 3 类】
+#   原来 8 类 → 11 类，新增「动作 / 打斗 / 环境」。
+#   ⚠️ set_version 仍然留着 "v2"，**没有**升 v3。原因：
+#     迁移是 ON CONFLICT(set_version, name) DO UPDATE，
+#     名字没变的那 8 条_id 不变_（她库里 630 张卡指着这些 id），
+#     新的 3 条按名字插进去。升版本会让老 8 条被标停用，
+#     她那些卡的 category_id 立刻变成"停用类"，白折腾一趟。
 #
 # 【判据怎么写】
 #   主类回答的是「这段素材我以后拿它来干嘛」—— 是取材意图，不是文本类型学。
 #   描述（description）不是装饰，是给人和 AI 看的判断依据：
 #   两个类打架的时候，就看这段描述站哪边。所以判据要照她的用法写，
 #   别自己发明一套。她也随时能改（界面上能改）。
+#
+# 【加类最难的不是加，是划边界】
+#   新增的 3 类天然跟老的 3 类抢地盘，所以这一版**同时改写了 3 条老描述**，
+#   在两边都写明分界（不是只在新类里说"我不包括什么"）：
+#     神态 ↔ 动作    一瞬 vs 一段过程
+#     动作 ↔ 打斗    没有对手 vs 有对手
+#     打斗 ↔ 情节    怎么打的 vs 打完之后怎么了
+#     环境 ↔ 外貌    写地 vs 写人
+#   AI 只看得到描述，边界不写清它就自己编，一类多了另一类就空了。
 #
 # 【括号里的副标签】
 #   只是"这类常用到这些"的建议，用来在界面里排前头，**不是约束**。
@@ -97,11 +116,41 @@ CATEGORIES_SEED = [
      ["直接描写", "侧面描写", "气质"]),
 
     ("神态",
-     "外面看得见的反应：表情变化、眼神、小动作、身体反应（脸红、手抖、僵住）。"
+     "外面看得见的**一瞬**反应：表情变化、眼神、小动作、身体反应（脸红、手抖、僵住）。"
      "判断依据：这一秒他脸上、身上在发生什么，旁边的人看得见。"
      "和「心理」的分界 —— 神态看得见，心理看不见"
-     "（心里怎么想，只能靠叙述交代，外边一点动静都没有）。",
+     "（心里怎么想，只能靠叙述交代，外边一点动静都没有）。"
+     "和「动作」的分界 —— 神态是**掐住的一秒**（他手抖了一下），"
+     "动作是**一段能讲出先后的过程**（他伸手、点火、把烟递过去）。",
      ["心动", "难过"]),
+
+    ("动作",
+     "一个人身体在做的一连串事情本身：招式、身法、走位、攀爬、翻墙、"
+     "开门、点烟、递东西、穿衣解衣、骑马赶路这类肢体过程。"
+     "判断依据：这段的价值在「他是怎么动的」，把动作换成另一套动作，"
+     "事情走向不变，变的只是好不好看。"
+     "和「神态」的分界 —— 神态是一瞬间看得见的反应，动作是一段有始有终的过程。"
+     "和「打斗」的分界 —— **没有对手**、就是自己（或跟物件）在动，是动作；"
+     "一旦有对手、有攻防意图，进「打斗」。",
+     ["招式", "身法"]),
+
+    ("打斗",
+     "双方或多方对抗：交手、对招、厮杀、群架、追杀、械斗、比试。"
+     "判断依据：**有对手，有攻防**，这段的价值在「这一架是怎么打的」"
+     "（你来我往、招式交接、见血受伤）。"
+     "和「动作」的分界 —— 一个人自己动是动作，两个人过招才是打斗。"
+     "和「情节」的分界 —— 打斗写的是**怎么打的**；"
+     "情节写的是**打这一架导致了什么**（谁死了、谁逃了、关系变了）。"
+     "两者都有的时候，看这段的重心压在哪边。",
+     ["交手", "群架", "追杀"]),
+
+    ("环境",
+     "这是哪儿、这时是什么样：天气、光线、时辰、地形、山水、建筑、"
+     "屋内陈设、气味、声音、景物、以及整体氛围。"
+     "判断依据：**把人物全拿掉，这段照样成立** —— 它写的是场景本身。"
+     "和「外貌」的分界 —— 外貌写人，环境写地。"
+     "和「情节」的分界 —— 环境可以一动不动地存在，情节必须有事情发生。",
+     ["景物", "氛围"]),
 
     ("梗",
      "可以单独拎出来玩的梗：网络梗、作品梗、语言梗、设定梗，"
@@ -133,8 +182,12 @@ CATEGORIES_SEED = [
      []),
 
     ("情节",
-     "发生了什么事。冲突、反转、打斗、追杀、和解、牺牲、事件推进。"
-     "判断依据：这段能独立成立成一个「事件」，不依赖某两个人的关系。",
+     "发生了什么事。冲突的起因与结果、反转、和解、牺牲、身份揭露、"
+     "误会、抉择、事件推进。"
+     "判断依据：这段能独立成立成一个「事件」，不依赖某两个人的关系。"
+     "和「打斗」的分界 —— 情节写「打这一架导致了什么」，"
+     "打斗写「这一架怎么打的」。"
+     "（注意：打斗本身不归这里 —— 只是「打了个架」这件事的结果归这里。）",
      []),
 ]
 
@@ -150,6 +203,10 @@ SUB_TAGS_SEED = [
     "直接描写", "侧面描写", "气质",
     "吻", "舔狗痴汉", "小三文学", "吃醋",
     "纯搞笑", "好笑且好磕",
+    # 2026-09-24 晚补：跟着新增的「动作 / 打斗 / 环境」三类一起加的建议副标签。
+    # 加进 SUB_TAGS_SEED 是为了它们能真的被建出来（suggested_tags 只是界面提示，
+    # 不在这个清单里的话，界面会显示一个点不出来的标签名）。
+    "招式", "身法", "交手", "群架", "追杀", "景物", "氛围",
 ]
 
 # ----------------------------------------------------------------------
@@ -277,8 +334,19 @@ CREATE TABLE IF NOT EXISTS card_tags (
 --   只是给界面排序用的建议（选了「外貌」就先显示直接描写/侧面描写/气质），
 --   **不是约束** —— 副标签本身是全局共享的，同一个标签能被多个主类用
 --   （「心动」在「神态」和「心理」下面都出现，这是故意的）。
+-- 主类（分类体系）。
+--
+-- owner_id = ''  ←→ 系统自带的，所有人共用（那 11 个）
+-- owner_id = 别的 ←→ 某个账号自己建的主类，只有他自己看得见、用得上
+--
+-- 【UNIQUE 为什么带 owner_id】
+--   老结构是 UNIQUE(set_version, name)，也就是全站只许有一个「情感」。
+--   她要求"用户能自己建主类"之后，这条约束就成了：别人建过的名字我建不了，
+--   而且我还看不见那一条 —— 报错会说"已经有一条叫这个名字的了"，我却找不到它。
+--   带上 owner_id 之后，每个账号各有一份自己的命名空间，互不打扰。
 CREATE TABLE IF NOT EXISTS categories (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id       TEXT    NOT NULL DEFAULT '',
     set_version    TEXT    NOT NULL DEFAULT 'v1',
     name           TEXT    NOT NULL,
     description    TEXT    NOT NULL DEFAULT '',
@@ -287,7 +355,7 @@ CREATE TABLE IF NOT EXISTS categories (
     parent_id      INTEGER DEFAULT NULL,
     sort           INTEGER NOT NULL DEFAULT 0,
     active         INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (set_version, name)
+    UNIQUE (owner_id, set_version, name)
 );
 
 -- 来源集合 → 建议主类 的对照表（可编辑，但必须人工确认才执行）
@@ -356,6 +424,81 @@ def _columns(conn, table):
     return {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table).fetchall()}
 
 
+def _backup_db(reason):
+    """动手改结构之前，先把整个库复制一份。返回备份文件名（失败返回 None）。
+
+    为什么连"只是加一列"也要备份：她写的小说素材全在这个库里，
+    而备份的代价只是一次文件复制。真出事的时候，这一份就是全部的退路。
+    """
+    try:
+        if not os.path.exists(db.DB_PATH):
+            return None
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = "%s.bak-%s-%s" % (db.DB_PATH, reason, stamp)
+        shutil.copy2(db.DB_PATH, dest)
+        return os.path.basename(dest)
+    except Exception:                                        # pragma: no cover
+        return None
+
+
+def _rebuild_categories_if_needed():
+    """老库的 categories 表要整容成"带 owner_id"的新结构。返回备份文件名或 None。
+
+    【为什么必须整容，不能只补列】
+    SQLite 能 ALTER TABLE ADD COLUMN，但**改不了已经写死的 UNIQUE 约束**。
+    老表的 UNIQUE(set_version, name) 意味着全站只许有一个「情感」——
+    换成"每个账号能建自己的主类"之后，这条约束就成了拦路虎。
+    所以只能按官方那套办法：建新表 → 搬数据 → 删旧表 → 改名。
+
+    【为什么敢在她的真库上做】
+    没有任何一张表用外键指向 categories：卡片上那个 primary_category_id
+    只是个普通整数列（不是 REFERENCES），来源映射表里的 category_id 同样。
+    而且 id 是**原样搬过去**的 —— 卡片上指着 8 的那个数字，搬完还是 8。
+    动手前还会先把整个库复制一份（见 _backup_db）。
+    """
+    if not os.path.exists(db.DB_PATH):
+        return None                                  # 全新的库：交给 SCHEMA 直接建新结构
+    with db.connect() as conn:
+        row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                           "AND name='categories'").fetchone()
+        if not row:
+            return None
+        if "owner_id" in _columns(conn, "categories"):
+            return None                              # 已经是新结构，什么都不做
+
+    # 到这里说明是老结构。先备份，再动。
+    bak = _backup_db("categories")
+    with db.connect() as conn:
+        conn.executescript("""
+CREATE TABLE categories__new (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id       TEXT    NOT NULL DEFAULT '',
+    set_version    TEXT    NOT NULL DEFAULT 'v1',
+    name           TEXT    NOT NULL,
+    description    TEXT    NOT NULL DEFAULT '',
+    aliases        TEXT    NOT NULL DEFAULT '',
+    suggested_tags TEXT    NOT NULL DEFAULT '[]',
+    parent_id      INTEGER DEFAULT NULL,
+    sort           INTEGER NOT NULL DEFAULT 0,
+    active         INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (owner_id, set_version, name)
+);
+INSERT INTO categories__new
+    (id, owner_id, set_version, name, description, aliases,
+     suggested_tags, parent_id, sort, active)
+    SELECT id, '', set_version, name, description, aliases,
+           suggested_tags, parent_id, sort, active
+      FROM categories;
+DROP TABLE categories;
+ALTER TABLE categories__new RENAME TO categories;
+""")
+        # AUTOINCREMENT 的计数器跟着旧表名走了，得搬回来 ——
+        # 不搬的话下一条主类的 id 会从 1 重新数，跟卡片上存的数字撞车。
+        conn.execute("UPDATE sqlite_sequence SET name='categories' "
+                     "WHERE name='categories__new'")
+    return bak
+
+
 def migrate(verbose=False):
     """建表 + 补列 + 播种初始数据。反复调用是安全的。
 
@@ -369,8 +512,17 @@ def migrate(verbose=False):
     """
     report = {"tables": [], "added_columns": [], "categories": 0,
               "retired_categories": 0,
-              "sub_tags": 0, "source_mappings": 0, "tagged_source": 0}
+              "sub_tags": 0, "source_mappings": 0, "tagged_source": 0,
+              "categories_rebuilt": None, "backup": None}
     db.init_db()
+
+    # 老库先把 categories 整容成"带 owner_id"的新结构（新库自动跳过）。
+    # 必须在 executescript(SCHEMA) 之前做：SCHEMA 里那句是 CREATE TABLE IF NOT
+    # EXISTS，表已经存在时它什么都不干，整容不能指望它。
+    bak = _rebuild_categories_if_needed()
+    if bak:
+        report["categories_rebuilt"] = "categories"
+        report["backup"] = bak
 
     with db.connect() as conn:
         conn.executescript(SCHEMA)
@@ -402,19 +554,24 @@ def migrate(verbose=False):
         # 已有同名的不覆盖 description？不，要覆盖 ——
         # 因为描述可能会修订（规格要求"主类描述以后可以修订"），
         # 而这里就是"系统默认描述"的唯一来源。
+        # active=1 也要一起写回：万一某条被标成停用（迁移中途崩过、手动改过库），
+        # 光靠 INSERT 是补不回来的，那一类就会凭空消失、看着像没加成功。
+        # 当前界面上没有"停用主类"的入口，所以这里强制启用不会盖掉她的选择。
         for i, (name, desc, sug) in enumerate(CATEGORIES_SEED):
             conn.execute(
                 """INSERT INTO categories
-                       (set_version, name, description, suggested_tags, sort, active)
-                   VALUES (?, ?, ?, ?, ?, 1)
-                   ON CONFLICT(set_version, name)
+                       (owner_id, set_version, name, description,
+                        suggested_tags, sort, active)
+                   VALUES ('', ?, ?, ?, ?, ?, 1)
+                   ON CONFLICT(owner_id, set_version, name)
                    DO UPDATE SET description=excluded.description,
                                  suggested_tags=excluded.suggested_tags,
-                                 sort=excluded.sort""",
+                                 sort=excluded.sort,
+                                 active=1""",
                 (CATEGORY_SET_VERSION, name, desc,
                  json.dumps(sug, ensure_ascii=False), i))
         report["categories"] = conn.execute(
-            "SELECT COUNT(*) FROM categories WHERE set_version=?",
+            "SELECT COUNT(*) FROM categories WHERE set_version=? AND owner_id=''",
             (CATEGORY_SET_VERSION,)).fetchone()[0]
 
         # ---- 旧版本的主类标停用（v1 那 9 个 → active=0）----
@@ -424,7 +581,8 @@ def migrate(verbose=False):
         #   看起来像"数据丢了"，其实只是名字没了。留着就能查出来，只是不再出现在
         #   新建卡片的可选项里。
         cur = conn.execute(
-            "UPDATE categories SET active=0 WHERE set_version<>? AND active=1",
+            "UPDATE categories SET active=0 WHERE set_version<>? AND active=1"
+            " AND owner_id=''",
             (CATEGORY_SET_VERSION,))
         report["retired_categories"] = cur.rowcount
 
@@ -497,23 +655,35 @@ def _seed_owner(conn, owner):
 # 主类 / 副标签 / 来源映射：读
 # ----------------------------------------------------------------------
 
-def list_categories(include_inactive=False):
-    """当前版本的主类清单（界面上那个"选主类"的下拉框就用这个）。
+def list_categories(owner=None, include_inactive=False):
+    """我能用的主类清单 = 系统自带的（所有人共用）+ 这个账号自己建的。
+
+    【owner 不传会怎样】
+    只给系统那套。老调用点（概览统计之类）要的就是"全站统一的那 11 个"，
+    带上别人的私有类反而会让数字对不上。要她自己那套就老老实实传 owner。
 
     suggested_tags 存在库里是 JSON 字符串，出门前解回数组 ——
     前端拿到的是 list，不用自己再 JSON.parse 一次。
     """
+    sql = "SELECT * FROM categories WHERE set_version=?"
+    args = [CATEGORY_SET_VERSION]
+    if owner:
+        sql += " AND (owner_id='' OR owner_id=?)"
+        args.append(owner)
+    else:
+        sql += " AND owner_id=''"
+    if not include_inactive:
+        sql += " AND active=1"
+    sql += " ORDER BY sort, id"
     with db.connect() as conn:
-        sql = ("SELECT * FROM categories WHERE set_version=?"
-               + ("" if include_inactive else " AND active=1")
-               + " ORDER BY sort, id")
         out = []
-        for r in conn.execute(sql, (CATEGORY_SET_VERSION,)).fetchall():
+        for r in conn.execute(sql, args).fetchall():
             d = dict(r)
             try:
                 d["suggested_tags"] = json.loads(d.get("suggested_tags") or "[]")
             except Exception:                                # pragma: no cover
                 d["suggested_tags"] = []
+            d["mine"] = bool(d.get("owner_id"))     # 界面上要区分"我建的"和"系统的"
             out.append(d)
         return out
 
@@ -558,6 +728,177 @@ def list_sub_tags(owner, active_only=False):
     with db.connect() as conn:
         rows = conn.execute(sql, (owner,)).fetchall()
         return [dict(r) for r in rows]
+
+
+# ----------------------------------------------------------------------
+# 主类 / 副标签：她自己加的那几个
+#
+# 【为什么允许她自己建】
+#   那 11 个主类是我照着她手上素材的名字拟的，属于"我替她猜的一版"。
+#   她实际写着写着一定会冒出新类（比如「打斗」当时就是她后加的）。
+#   与其每次都来改代码，不如让她自己在界面上加。
+#
+# 【加出来的类是"只有我自己"的】
+#   owner_id 存的是她的账号，别人看不到、也选不到。理由：分类体系是
+#   一个人的私人语法 —— 她的「梗」和别人的「梗」未必是同一件事。
+#   系统自带的那 11 个仍是全站共用，谁都能用。
+# ----------------------------------------------------------------------
+
+CATEGORY_NAME_MAX = 20     # 主类名要短：界面上是个小圆钮，太长会把那一行撑爆
+CATEGORY_DESC_MAX = 300    # 判据：一两句话说清"什么时候算这一类"
+SUB_TAG_NAME_MAX = 20      # 副标签同样是圆钮，同样怕长
+
+
+def _find_category(conn, owner, name, include_inactive=True):
+    """按名字找一条**我的**主类（不含系统的）。"""
+    sql = ("SELECT * FROM categories WHERE owner_id=? AND set_version=? AND name=?"
+           + ("" if include_inactive else " AND active=1"))
+    return conn.execute(sql, (owner, CATEGORY_SET_VERSION, name)).fetchone()
+
+
+def create_category(owner, name, description, suggested_tags=None):
+    """建一个只有我自己能用的主类。返回那一条（新建或复活）。
+
+    【三种会当场拒绝的情况 —— 都是为了让"拒绝了"是件能看懂的事】
+      1. 名字跟系统自带的那 11 个撞：允许的话界面上会出现两个「外貌」，
+         一个全站共用、一个只有你看得见，判据还可能不一样 ——
+         她分完卡自己都说不清归到了哪个。
+      2. 名字跟自己已有的撞：直接告诉她去改那一条，别悄悄建第二条。
+      3. 判据空着：AI 判类时**只看这段判据**。空着它就只能照名字猜，
+         分出来的东西对不对全凭运气，而她还以为"自己建的类不管用"。
+
+    已经停用过的同名类会被**复活**（而不是新建）：历史卡片上挂的是老那条的
+    id，复活它，那些卡上的类名就跟着回来了；新建一条只会留下一堆查不到名字的孤儿。
+    """
+    name = (name or "").strip()
+    description = (description or "").strip()
+    if not name:
+        raise ValueError("主类名不能空着。")
+    if len(name) > CATEGORY_NAME_MAX:
+        raise ValueError("主类名最长 %d 个字，现在 %d 个 —— 界面上那一行放不下。"
+                         % (CATEGORY_NAME_MAX, len(name)))
+    if not description:
+        raise ValueError("判据得写一句 —— AI 判类时只看这段说明，空着它就只能猜。"
+                         "例如「这一段能独立成立成一个事件」。")
+    if len(description) > CATEGORY_DESC_MAX:
+        raise ValueError("判据最长 %d 个字，现在 %d 个。"
+                         % (CATEGORY_DESC_MAX, len(description)))
+    sug = [s.strip() for s in (suggested_tags or []) if (s or "").strip()]
+    ts = now_str()
+    with db.connect() as conn:
+        sysrow = conn.execute(
+            "SELECT name FROM categories WHERE set_version=? AND owner_id='' AND name=?",
+            (CATEGORY_SET_VERSION, name)).fetchone()
+        if sysrow:
+            raise ValueError("系统里已经有「%s」这一类了，直接用它就行，不用新建。"
+                             % name)
+        mine = _find_category(conn, owner, name)
+        if mine and mine["active"]:
+            raise ValueError("你已经有一条叫「%s」的主类了。要改就去改那一条，"
+                             "或者换个名字。" % name)
+        if mine:
+            conn.execute(
+                "UPDATE categories SET description=?, suggested_tags=?, active=1"
+                " WHERE id=?", (description, json.dumps(sug, ensure_ascii=False),
+                                mine["id"]))
+            cid = mine["id"]
+        else:
+            # sort 排到所有系统类后面：新加的类出现在清单末尾、挨着「＋新建」按钮，
+            # 一眼就能找到，也不会把她天天用的那几类挤走位。
+            mx = conn.execute(
+                "SELECT COALESCE(MAX(sort), 0) FROM categories WHERE set_version=?",
+                (CATEGORY_SET_VERSION,)).fetchone()[0]
+            cur = conn.execute(
+                """INSERT INTO categories
+                       (owner_id, set_version, name, description,
+                        suggested_tags, sort, active)
+                   VALUES (?,?,?,?,?,?,1)""",
+                (owner, CATEGORY_SET_VERSION, name, description,
+                 json.dumps(sug, ensure_ascii=False), mx + 1))
+            cid = cur.lastrowid
+        row = conn.execute("SELECT * FROM categories WHERE id=?", (cid,)).fetchone()
+        d = dict(row)
+        d["suggested_tags"] = sug
+        d["mine"] = True
+        return d
+
+
+def set_category_active(owner, category_id, active):
+    """停用/恢复一个**我自己建的**主类。返回更新后的那一条，不是我的返回 None。
+
+    【为什么只让动自己的】
+    系统那 11 个是迁移脚本的管辖范围（每次启动都会把它们写回 active=1）。
+    允许她停用的话，重启一次就被悄悄恢复了 —— 那还不如一开始就不给这个口子。
+    【为什么是停用不是删除】
+    卡片上存着 primary_category_id。物理删掉的话那些卡的主类会显示成空白，
+    看着像数据丢了。停用只是不再出现在"选主类"的清单里，老卡片照样认得出它。
+    """
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM categories WHERE id=? AND owner_id=?",
+                           (category_id, owner)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE categories SET active=? WHERE id=?",
+                     (1 if active else 0, category_id))
+        d = dict(row)
+        d["active"] = 1 if active else 0
+        try:
+            d["suggested_tags"] = json.loads(d.get("suggested_tags") or "[]")
+        except Exception:                                    # pragma: no cover
+            d["suggested_tags"] = []
+        d["mine"] = True
+        return d
+
+
+def create_sub_tag(owner, name):
+    """加一个小标签。返回那一条 + 是不是"复活"的老标签。
+
+    【注意：接口层没有直接用这个函数】
+    小标签的新增/改名/停用/合并早就有一条现成的接口（POST /api/sub-tags，
+    带 action 参数），那边是这个函数的等价实现。这里留着一份，
+    是给命令行、脚本和测试用的（tests/test_custom_categories.py 就靠它）。
+    两边行为要保持一致：同名标签不新建，而是把停用过的那条复活 ——
+    新建会撞 UNIQUE(owner_id, name)，而且老卡片上挂的是老那条的 id，
+    复活它，那些卡上的标签就跟着回来了。
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("标签名不能空着。")
+    if len(name) > SUB_TAG_NAME_MAX:
+        raise ValueError("标签名最长 %d 个字，现在 %d 个。"
+                         % (SUB_TAG_NAME_MAX, len(name)))
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM sub_tags WHERE owner_id=? AND name=?",
+                           (owner, name)).fetchone()
+        if row:
+            if row["active"]:
+                raise ValueError("已经有一个叫「%s」的标签了。" % name)
+            conn.execute("UPDATE sub_tags SET active=1 WHERE id=?", (row["id"],))
+            d = dict(row)
+            d["active"] = 1
+            d["revived"] = True
+            return d
+        cur = conn.execute(
+            "INSERT INTO sub_tags (owner_id, name, active, created_at) VALUES (?,?,1,?)",
+            (owner, name, now_str()))
+        d = dict(conn.execute("SELECT * FROM sub_tags WHERE id=?",
+                              (cur.lastrowid,)).fetchone())
+        d["revived"] = False
+        return d
+
+
+def set_sub_tag_active(owner, tag_id, active):
+    """停用/恢复一个小标签。只能动自己的。返回更新后的那一条或 None。"""
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM sub_tags WHERE id=? AND owner_id=?",
+                           (tag_id, owner)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE sub_tags SET active=? WHERE id=?",
+                     (1 if active else 0, tag_id))
+        d = dict(row)
+        d["active"] = 1 if active else 0
+        return d
 
 
 def list_source_mappings(owner):
@@ -984,7 +1325,19 @@ def list_cards(owner, material_id=None, category_id=None, sub_tag=None,
         "updated": "c.updated_at DESC, c.id DESC",
         "chars": "c.end_offset - c.start_offset DESC",
         "created": "c.id DESC",
+        # 按主分类分段。段的先后顺序跟着 categories.sort 走 ——
+        # 也就是界面上那排圆钮的顺序（外貌 → 神态 → 动作…），
+        # 不是按 id（id 是插入顺序，看着是乱的）。
+        # 未分类捆在最后：它是"还没归置的尾巴"，不是一类；
+        # 真要单独看它，点「未分类」那个圆钮就行。
+        "category": ("CASE WHEN c.primary_category_id IS NULL THEN 1 ELSE 0 END,"
+                     " COALESCE(cat.sort, 9999), cat.id,"
+                     " c.material_id, c.start_offset"),
     }.get(order, "c.material_id, c.start_offset")
+
+    # 只有"按主分类分段"这一档才需要连 categories。
+    join_cat = (" LEFT JOIN categories cat ON cat.id = c.primary_category_id"
+                if order == "category" else "")
 
     with db.connect() as conn:
         # ---- 两个"算出来才知道"的筛选项 ----
@@ -1044,7 +1397,7 @@ def list_cards(owner, material_id=None, category_id=None, sub_tag=None,
             " (SELECT COUNT(*) FROM cards x WHERE x.material_id = c.material_id"
             "  AND x.owner_id = c.owner_id AND x.status <> ?"
             "  AND x.start_offset < c.start_offset) + 1 AS seq_no"
-            " FROM cards c JOIN materials m ON m.id = c.material_id"
+            " FROM cards c JOIN materials m ON m.id = c.material_id" + join_cat +
             " WHERE " + " AND ".join(where) +
             " ORDER BY " + order_sql + " LIMIT ? OFFSET ?",
             [sg.STATUS_EXCLUDED] + params + [limit, offset]).fetchall()
@@ -1851,7 +2204,7 @@ if __name__ == "__main__":
     print()
     print("表：", rep["tables"])
     print()
-    print("九个主类：")
+    print("系统自带的主类：")
     for c in list_categories():
         print("  %-8s %s" % (c["name"], c["description"][:44]))
     print()

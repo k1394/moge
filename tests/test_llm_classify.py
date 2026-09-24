@@ -106,13 +106,14 @@ def main():
     check("切出 %d 张卡片" % LINES, n_cards, LINES)
 
     cats = cls.list_categories()
-    check("当前是 v2 那 8 个主类", len(cats), 8)
+    check("当前是 v2 那 11 个主类", len(cats), 11)
     check("主类名是她的那套",
           [c["name"] for c in cats],
-          ["外貌", "神态", "梗", "暧昧拉扯", "心理", "搞笑情节", "对话台词", "情节"])
+          ["外貌", "神态", "动作", "打斗", "环境", "梗", "暧昧拉扯",
+           "心理", "搞笑情节", "对话台词", "情节"])
 
     # ------------------------------------------------------------------
-    print("\n【A】提示词：她的 8 类判据有没有真的发出去")
+    print("\n【A】提示词：她的 11 类判据有没有真的发出去")
     # ------------------------------------------------------------------
     # 素材名一律用假的。她的真实稿件名不能出现在 tests/ 里 ——
     # tests/ 在同步白名单里，写在这里等于把稿名送到公开仓库去
@@ -123,7 +124,7 @@ def main():
     sysmsg = msgs[0]["content"]
     usermsg = msgs[1]["content"]
 
-    check("8 个主类名都在", all(c["name"] in sysmsg for c in cats), True)
+    check("11 个主类名都在", all(c["name"] in sysmsg for c in cats), True)
     check("判据原文也发了（不是光发类名）",
           all((c["description"] or "")[:16] in sysmsg for c in cats), True)
     check("「神态 / 心理」的分界那句话发过去了",
@@ -210,6 +211,130 @@ def main():
     check("存进去的能读回来", auto.get_user_prompt(owner), MINE)
     auto.set_user_prompt(owner, "")
     check("清空之后就没了", auto.get_user_prompt(owner), "")
+
+    # ------------------------------------------------------------------
+    print("\n【A4】提示词库：能攒、能挑、**公开但内容私密**")
+    # ------------------------------------------------------------------
+    # 这一段的重点是最后一条。她的规矩是反直觉的：
+    #   公开 = 别人可以拿它去跑分类，但**永远看不到里面写了什么**。
+    # 所以这里不验"某个字段在不在"，而是验**整个响应体里搜不到原文** ——
+    # 只要内容从任何一条缝里漏出去，那一条断言就会红。
+    SECRET = "SECRET-LIB-CONTENT-99887"
+
+    # 造一个"别人"。
+    # 注意 owner 是 db.owner_of(1)（见上面 main 的开头），
+    # 所以得先占住 id=1，再建第二个账号才拿得到**不同**的归属 ——
+    # 第一次写这段时没占住，结果"别人"跟自己是同一个 owner，
+    # "改不了别人的条目"那条就成了假绿。
+    db.create_user("测试甲账号", "x", "y")            # id=1
+    u2 = db.create_user("测试乙账号", "x", "y")        # id=2
+    owner2 = db.owner_of(u2["id"])
+    check("两个账号的归属确实不一样（不然这段测试全是白测）",
+          owner2 == owner, False)
+
+    check("上限：名称 30 / 使用方法 50 / 介绍 6000",
+          (auto.PROMPT_NAME_MAX, auto.PROMPT_USAGE_MAX,
+           auto.PROMPT_SUMMARY_MAX), (30, 50, 6000))
+    check("正文上限跟补充提示词一致（都得每批重发）",
+          auto.PROMPT_CONTENT_MAX, auto.USER_PROMPT_MAX)
+
+    mine_row = auto.create_library_prompt(
+        owner, "我的私货", "只有我能看", visibility=auto.VIS_PRIVATE)
+    pub_row = auto.create_library_prompt(
+        owner2, "别人公开的", SECRET, usage_note="直接使用",
+        visibility=auto.VIS_PUBLIC)
+    check("默认可见性是私有",
+          auto.create_library_prompt(owner, "默认私有", "x")["visibility"],
+          auto.VIS_PRIVATE)
+
+    mylist = auto.list_my_library_prompts(owner)
+    check("我的清单里只有我自己的",
+          sorted(x["name"] for x in mylist), ["我的私货", "默认私有"])
+    check("我的清单里**带内容**（界面要能编辑）",
+          all("content" in x for x in mylist), True)
+
+    publist = auto.list_public_library_prompts(owner)
+    check("公开清单里没有我自己的条目",
+          all(x["name"] != "我的私货" for x in publist), True)
+    check("公开清单里能看到别人公开的那条",
+          any(x["name"] == "别人公开的" for x in publist), True)
+    check("★ 公开清单的每一条都**不带 content 字段**",
+          all("content" not in x for x in publist), True)
+    check("★ 公开清单整个 json 里搜不到原文",
+          SECRET not in json.dumps(publist, ensure_ascii=False), True)
+    check("但给了字数（字数不算内容）",
+          [x["content_length"] for x in publist
+           if x["name"] == "别人公开的"], [len(SECRET)])
+    check("也给了作者名",
+          [x["owner_label"] for x in publist
+           if x["name"] == "别人公开的"], ["测试乙账号"])
+    check("匿名归属显示成「未归属」而不是空白",
+          auto._owner_label("local"), "未归属")
+    check("查不到的账号原样返回，不瞎猜",
+          auto._owner_label("__u999999"), "__u999999")
+
+    # ---- 用：我自己的 + 别人公开的 ----
+    _rid, name, content, _ro, is_mine = auto.resolve_prompt_for_use(
+        owner, mine_row["id"])
+    check("取自己的条目：内容、归属都对",
+          (name, content, is_mine), ("我的私货", "只有我能看", True))
+    _rid, name, content, _ro, is_mine = auto.resolve_prompt_for_use(
+        owner, pub_row["id"])
+    check("★ 取别人公开的条目：内容能拿到（要用它去发请求）",
+          (content, is_mine), (SECRET, False))
+    try:
+        auto.resolve_prompt_for_use(owner2, mine_row["id"])
+        check("★ 别人取我私有的条目 → 必须拒绝", "居然拿到了", "应该被拒")
+    except ValueError as e:
+        check("★ 别人取我私有的条目 → 拒绝，且说清是私有",
+              "私有" in str(e), True)
+    try:
+        auto.resolve_prompt_for_use(owner, 999999)
+        check("取不存在的条目 → 拒绝", "居然拿到了", "应该被拒")
+    except ValueError as e:
+        check("取不存在的条目 → 拒绝", "不存在" in str(e), True)
+
+    # ---- 改 / 删 ----
+    check("只传 name 时正文不动",
+          auto.update_library_prompt(owner, mine_row["id"],
+                                     {"name": "改名了"})["content"],
+          "只有我能看")
+    try:
+        auto.create_library_prompt(owner, "改名了", "撞名")
+        check("同名不许覆盖", "居然建成功了", "应该被拒")
+    except ValueError as e:
+        check("同名不许覆盖，且提示怎么改", "换个名字" in str(e), True)
+    check("改不了别人的条目（返回 None = 不是我的一律不动）",
+          auto.update_library_prompt(owner, pub_row["id"], {"name": "我改"}),
+          None)
+    check("删不了别人的条目",
+          auto.delete_library_prompt(owner, pub_row["id"]), False)
+    check("删自己的能删掉",
+          auto.delete_library_prompt(owner, mine_row["id"]), True)
+    check("删掉之后我的清单里没了",
+          all(x["id"] != mine_row["id"]
+              for x in auto.list_my_library_prompts(owner)), True)
+    try:
+        auto.resolve_prompt_for_use(owner, mine_row["id"])
+        check("删掉之后取它 → 拒绝（不是静默返回空内容）",
+              "居然拿到了", "应该被拒")
+    except ValueError:
+        check("删掉之后取它 → 拒绝（不是静默返回空内容）", True, True)
+
+    # 删掉之后同名能重建：软删的老条目会先把自己的名字让开。
+    # 不让开的话 UNIQUE(owner_id,kind,name) 会一直挡着，
+    # 她"删了想重写一遍"就会莫名其妙报"已经有一条叫这个名字的了"。
+    again = auto.create_library_prompt(owner, "改名了", "重写一遍")
+    check("删掉之后同名能重建（老条目让开了 UNIQUE 位）",
+          (again["name"], again["content"]), ("改名了", "重写一遍"))
+
+    # 历史记录查得到名字：软删之后老条目还在库里
+    with db.connect() as conn:
+        gone = conn.execute(
+            "SELECT name, active FROM prompt_library WHERE id=?",
+            (mine_row["id"],)).fetchone()
+    check("软删（active=0）而不是物理删 —— 历史任务还认得出它",
+          gone is not None and gone["active"] == 0, True)
 
     # ------------------------------------------------------------------
     print("\n【B】模型返回的各种脏格式都要能读")

@@ -270,11 +270,15 @@ def main():
         # ---- 选项菜单 ---------------------------------------------
         print("\n【3】主类 / 状态 / 规则清单")
         opt = A.ok("GET", "/api/categories")
-        # v2 那 8 个（她自己定的那套，换过一版了）。
+        # v2 那套（她自己定的那套，换过一版了；2026-09-24 晚加了动作/打斗/环境）。
         # 数量写死在这儿是有意的：主类数目变了就该有人注意到 ——
         # 前端那个"选主类"的下拉框、以及所有按类筛的界面都跟着它走。
-        check("8 个正式主类", len(opt["categories"]) == 8,
+        check("11 个正式主类", len(opt["categories"]) == 11,
               "得到 %d" % len(opt["categories"]))
+        check("新加的三类都在",
+              all(n in [c["name"] for c in opt["categories"]]
+                  for n in ("动作", "打斗", "环境")),
+              str([c["name"] for c in opt["categories"]]))
         check("每个主类都带判据说明",
               all(c.get("description") for c in opt["categories"]))
         check("6 个状态（含自动分类新增的「分类失败」）",

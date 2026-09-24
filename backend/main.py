@@ -689,12 +689,12 @@ def api_cls_sources(user: dict = Depends(auth.current_user)):
 
 @app.get("/api/categories")
 def api_categories(user: dict = Depends(auth.current_user)):
-    """八个正式主类 + 判据 + 副标签 + 状态清单 + 切分规则说明。
+    """十一个正式主类 + 判据 + 副标签 + 状态清单 + 切分规则说明。
 
     一次全给前端：这三样都是"选项菜单"，页面初始化时取一次就够。
     """
     return {
-        "categories": cls.list_categories(),
+        "categories": cls.list_categories(user["owner"]),
         "set_version": cls.CATEGORY_SET_VERSION,
         "sub_tags": cls.list_sub_tags(user["owner"], active_only=True),
         "sub_tags_all": cls.list_sub_tags(user["owner"]),
@@ -705,6 +705,67 @@ def api_categories(user: dict = Depends(auth.current_user)):
         "norm_version": sg.NORM_VERSION,
         "rule_version": sg.RULE_VERSION,
     }
+
+
+# ----------------------------------------------------------------------
+# 主类 / 副标签：她自己加的那几个
+#
+# 【为什么给这个口子】
+#   那 11 个主类是照着她手上素材的名字拟的 —— 本质是"我替她猜的一版"。
+#   她写着写着一定会冒出新类（「打斗」就是她后加的），与其每次都来改代码，
+#   不如让她自己加。
+#
+# 【加出来的类只有她自己看得见】
+#   owner_id 存她的账号。别人的下拉框、别人的提示词里都不会出现 ——
+#   分类体系是一个人的私人语法，她的「梗」和别人的「梗」未必是同一件事。
+#   系统自带的那 11 个仍是全站共用。
+#
+# 【两个 delete 都是"停用"不是"删除"】
+#   卡片上存着主类 id。物理删掉的话那些卡的主类会显示成空白，看着像数据丢了。
+#   停用只是不再出现在"选主类"的清单里，老卡片照样认得出它，重新加同名还能复活。
+# ----------------------------------------------------------------------
+
+class CategoryIn(BaseModel):
+    name: str
+    description: str = ""
+    suggested_tags: List[str] = []
+
+
+@app.post("/api/categories")
+def api_create_category(req: CategoryIn, user: dict = Depends(auth.current_user)):
+    """自己加一个主类。
+
+    判据（description）是必填的，这不是形式主义：AI 判类时**只看这段说明**。
+    空着它就只能照着名字猜 —— 分错了她还以为是"自己建的类不管用"。
+    """
+    try:
+        cat = cls.create_category(user["owner"], req.name, req.description,
+                                  req.suggested_tags)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "category": cat,
+            # 顺手把整份清单回给前端：加完那一屏要立刻多出一个圆钮，
+            # 不用再发一次请求（少一次请求就少一次"点了没反应"的机会）。
+            "categories": cls.list_categories(user["owner"]),
+            "message": "「%s」加好了" % cat["name"]}
+
+
+@app.delete("/api/categories/{cid}")
+def api_disable_category(cid: int, user: dict = Depends(auth.current_user)):
+    """停用一个自己建的主类（系统自带的动不了）。"""
+    cat = cls.set_category_active(user["owner"], cid, False)
+    if not cat:
+        raise HTTPException(status_code=404,
+                            detail="没有这个主类，或者它不是你自己建的"
+                                   "（系统自带的那几个不能停用）")
+    return {"ok": True, "categories": cls.list_categories(user["owner"]),
+            "message": "已停用「%s」" % cat["name"]}
+
+
+# 小标签的新增/改名/停用/合并**本来就有**一条接口：POST /api/sub-tags
+# （带 action 参数，见下面那一段）。所以这里不再另开一条 ——
+# 曾经新开过一条同路径的，结果把老那条整个盖掉了（FastAPI 取先注册的那个），
+# 连带把 SubTagIn 的定义也覆盖了。被 tests/test_classify_api.py 当场抓住。
 
 
 @app.get("/api/material-classification/materials/{mid}/split-preview")
@@ -984,6 +1045,13 @@ def api_sub_tags(req: SubTagIn, user: dict = Depends(auth.current_user)):
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="标签名不能是空的")
+    if len(name) > cls.SUB_TAG_NAME_MAX:
+        # 上限跟"自己建主类"那套对齐：标签在界面上是个小圆钮，
+        # 200 个字的名字会把归类面板那一行整个撑爆。
+        raise HTTPException(
+            status_code=400,
+            detail="标签名最长 %d 个字，现在 %d 个。"
+                   % (cls.SUB_TAG_NAME_MAX, len(name)))
 
     with db.connect() as conn:
         row = conn.execute(
@@ -1082,10 +1150,19 @@ class ClassifyIn(BaseModel):
                 为什么请求里也带一份：她在分类页写完那几句，
                 最自然的动作是直接点「开始分类」，而不是先点保存再点开始。
                 带上来的同时会替她存下来，下次进来还在。
+
+    prompt_id   改用「提示词库」里的哪一条（快捷选项里挑的）。
+                传了它就**以它为准**，user_prompt 会被忽略 ——
+                见 classification.create_run 的 docstring。
+                可以是别人公开出来的条目：那种情况下服务端自己取内容，
+                前端全程拿不到原文（"公开但私密"）。
+
+    两个都不传 = 不用补充提示词（空跑）。
     """
     classifier: Optional[str] = None
     model_key: Optional[str] = None
     user_prompt: Optional[str] = None
+    prompt_id: Optional[int] = None
 
 
 @app.post("/api/materials/{mid}/auto-classify")
@@ -1095,8 +1172,12 @@ def api_auto_classify(mid: int, req: Optional[ClassifyIn] = None,
     req = req or ClassifyIn()
     # 她带上来的补充提示词：先存下来（下次进来还在），再拿这一份去建任务。
     # 顺序不能反 —— 先建任务再存的话，任务用的是旧的那份。
+    #
+    # 注意：这次是"选了提示词库里的某一条"时不存 ——
+    # 那条内容可能是**别人的**，存进"我的补充提示词"会把别人的东西
+    # 变成她自己的默认值，下次空跑就偷偷带着别人的提示词发出去了。
     user_prompt = req.user_prompt
-    if user_prompt is not None:
+    if user_prompt is not None and not req.prompt_id:
         try:
             user_prompt = auto.set_user_prompt(user["owner"], user_prompt)
         except ValueError as e:
@@ -1107,6 +1188,7 @@ def api_auto_classify(mid: int, req: Optional[ClassifyIn] = None,
             classifier_name=req.classifier or auto.LlmClassifier.name,
             model_key=req.model_key,
             user_prompt=user_prompt,
+            prompt_id=req.prompt_id,
             background=True)
     except ValueError as e:
         # 「没填 API Key」「没有这个模型」这类"配置还没弄好"的错，
@@ -1285,6 +1367,110 @@ def api_set_classify_prompt(req: PromptIn,
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "content": content, "chars": len(content),
             "max": auto.USER_PROMPT_MAX}
+
+
+# ======================================================================
+# 提示词库
+# ======================================================================
+#
+# 【和上面那个「补充提示词」什么关系】
+#   上面那个是**一个框**：她随手敲的几句，一对一的（一个账号一份）。
+#   这里是**一个库**：她攒下来的成句提示词，能反复用、能改名、
+#   能公开给别人用。快捷选项里挑的就是这里的东西。
+#   两者不冲突：挑了库里的某条，就用那条；没挑，就用框里那几句。
+#
+# 【最要紧的一条约定，改这里的代码前先读三遍】
+#   公开 ≠ 内容可见。
+#   公开 = **别人可以拿它去跑分类，但永远看不到里面写了什么**。
+#   所以：
+#     · 自己的清单（GET /api/prompt-library 的 mine）—— 带 content
+#     · 别人的公开清单（同接口的 public）—— **不带 content**
+#     · 用时由服务端按 id 取内容直接塞进任务（create_run(prompt_id=...)）
+#   谁要是想在这个文件里给 public 那批补一个 content 字段，
+#   先回答一句："凭什么让别人看见她写的东西？"
+
+class PromptLibIn(BaseModel):
+    """新建 / 修改一条提示词。
+
+    name        名称，≤30 字。快捷选项里就靠它认人。
+    content     提示词正文（真正发给模型的那段），≤5000 字。
+    usage_note  使用方法，≤50 字，一句话。
+    summary     介绍，≤6000 字。
+    visibility  private / public。public 的含义见上面那段注释 ——
+                **不是**"内容公开"。
+    """
+    name: Optional[str] = None
+    content: Optional[str] = None
+    usage_note: Optional[str] = None
+    summary: Optional[str] = None
+    visibility: Optional[str] = None
+
+
+@app.get("/api/prompt-library")
+def api_prompt_library(user: dict = Depends(auth.current_user)):
+    """我的全部 + 别人公开的那批（后者**不带内容**）。
+
+    一次全给：快捷选项那个下拉要同时显示"我的"和"可以借用的"，
+    分成两个请求只会让界面闪两下。
+    """
+    mine = auto.list_my_library_prompts(user["owner"])
+    pub = auto.list_public_library_prompts(user["owner"])
+    return {
+        "mine": mine,
+        "public": pub,
+        "max": {"name": auto.PROMPT_NAME_MAX,
+                "content": auto.PROMPT_CONTENT_MAX,
+                "usage_note": auto.PROMPT_USAGE_MAX,
+                "summary": auto.PROMPT_SUMMARY_MAX},
+        # 前端要拿这个数去提示"还能写多少字"，别在 JS 里再抄一份常量
+        "visibilities": list(auto.VISIBILITIES),
+    }
+
+
+@app.post("/api/prompt-library")
+def api_create_prompt(req: PromptLibIn,
+                      user: dict = Depends(auth.current_user)):
+    """新建一条。同名会被拒（不覆盖）—— 覆盖会静默毁掉她之前写的那份。"""
+    try:
+        item = auto.create_library_prompt(
+            user["owner"], req.name, req.content,
+            usage_note=req.usage_note or "", summary=req.summary or "",
+            visibility=req.visibility or auto.VIS_PRIVATE)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "item": item}
+
+
+@app.patch("/api/prompt-library/{pid}")
+def api_update_prompt(pid: int, req: PromptLibIn,
+                      user: dict = Depends(auth.current_user)):
+    """改一条。请求里**没出现的字段不动** —— 跟模型设置那边一个规矩。
+
+    为什么不能让"字段传空"等于"清空"：
+    界面上保存时是把整个表单发上来的，清空和"这个字段没填"分不清。
+    想清空就显式传空串（""），不传（None）才是不动。
+    靠 _body_dict(sent_only=True) 把"没传"和"传了空"分开，
+    不然她只改个名字，介绍和正文会被一起抹掉。
+    """
+    patch = _body_dict(req, sent_only=True)
+    patch = {k: v for k, v in patch.items() if v is not None}
+    try:
+        item = auto.update_library_prompt(user["owner"], pid, patch)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not item:
+        raise HTTPException(status_code=404,
+                            detail="没有这条提示词，或者它不是你的")
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/prompt-library/{pid}")
+def api_delete_prompt(pid: int, user: dict = Depends(auth.current_user)):
+    """删一条（软删）。历史任务记录里还引用着它，物理删掉就查不到名字了。"""
+    if not auto.delete_library_prompt(user["owner"], pid):
+        raise HTTPException(status_code=404,
+                            detail="没有这条提示词，或者它不是你的")
+    return {"ok": True}
 
 
 # ======================================================================

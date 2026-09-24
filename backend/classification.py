@@ -106,7 +106,7 @@ MODEL_VERSION_PLACEHOLDER = "placeholder-rules-v1"
 # 一次任务每批处理多少条卡片。
 #
 # 为什么是 25：token 预算和"出错代价"之间的平衡。
-#   - 太小：8 类判据要跟着每一批发一遍，白花钱还慢
+#   - 太小：11 类判据要跟着每一批发一遍，白花钱还慢
 #   - 太大：一批里只要有一条返回格式坏掉，整批都得重来
 #          （见 _execute 里"整批拒收"那段），代价跟着变大
 #   25 条 × 平均 87 字 ≈ 2200 字正文，加上判据约 3500 字，一次请求很轻。
@@ -262,6 +262,43 @@ CREATE TABLE IF NOT EXISTS user_prompts (
     updated_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (owner_id, kind)
 );
+
+-- 「提示词库」：她攒下来的成句提示词。能反复用，也能选择公开给别人用。
+--
+-- 【本文件最反直觉的一条约定，改代码前先读懂】
+--   公开 ≠ 内容可见。
+--   公开 = **别人可以拿它去跑分类，但永远看不到里面写了什么**。
+--   所以两个方向要分开守：
+--     · 读内容 —— 只有 owner 本人（get_library_prompt / list_my_library_prompts）
+--     · 让别人"能用" —— 服务端按 id 自己取内容、直接塞进任务，**不经过前端**
+--   硬保证：所有"给别人看"的出口（list_public_library_prompts /
+--   _lib_dict(row, with_content=False) / resolve_prompt_for_use 的返回值）
+--   一律**不带 content**。将来加新接口要返回 content 时，
+--   先问自己一句"凭什么让别人看见她写的东西"。
+--
+-- 为什么软删（active=0）而不是 DELETE：
+--   任务记录里存着 prompt_ref_id，物理删掉之后翻历史只剩一个查不到名字的数字。
+--
+-- 为什么 kind 跟 user_prompts 一样按用途分：
+--   以后内化、大纲生成也会有自己的提示词库。
+--   加新用途就是加一个 kind，不用再建表。
+CREATE TABLE IF NOT EXISTS prompt_library (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id   TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'classify',
+    name       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    usage_note TEXT NOT NULL DEFAULT '',
+    summary    TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'private',
+    use_count  INTEGER NOT NULL DEFAULT 0,
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    UNIQUE (owner_id, kind, name)
+);
+CREATE INDEX IF NOT EXISTS idx_plib_own ON prompt_library(owner_id, kind, active);
+CREATE INDEX IF NOT EXISTS idx_plib_pub ON prompt_library(visibility, kind, active);
 CREATE INDEX IF NOT EXISTS idx_crun_owner ON classification_runs(owner_id, id);
 CREATE INDEX IF NOT EXISTS idx_crun_mat   ON classification_runs(material_id, status);
 CREATE INDEX IF NOT EXISTS idx_citem_run  ON classification_items(run_id);
@@ -355,6 +392,33 @@ def migrate(verbose=False):
             conn.execute("ALTER TABLE classification_runs "
                          "ADD COLUMN prompt_source TEXT NOT NULL DEFAULT ''")
             report["added_columns"].append("classification_runs.prompt_source")
+        # 这次用的是「提示词库」里的哪一条（0 = 没用库里的，走自由文本或空）。
+        #
+        # 【为什么既存 id 又存名字】
+        #   id 是给程序用的（"这个任务用的是哪条"），
+        #   name 是给人看的（任务记录里直接显示「祛AI味」而不是「#7」）。
+        #   名字存快照：那条提示词后来被改名或删掉，历史记录照样看得懂，
+        #   不会变成一个查不到名字的数字。
+        if "prompt_ref_id" not in rcols:
+            conn.execute("ALTER TABLE classification_runs "
+                         "ADD COLUMN prompt_ref_id INTEGER NOT NULL DEFAULT 0")
+            report["added_columns"].append("classification_runs.prompt_ref_id")
+        if "prompt_name" not in rcols:
+            conn.execute("ALTER TABLE classification_runs "
+                         "ADD COLUMN prompt_name TEXT NOT NULL DEFAULT ''")
+            report["added_columns"].append("classification_runs.prompt_name")
+        # 这条提示词**是谁的**（空 = 没用库里的，是自由文本）。
+        #
+        # 【为什么非得单独存这一个字段：这是"公开但私密"的防漏点】
+        #   假如乙用甲公开出来的那条提示词跑了一次分类，
+        #   那么乙这条任务记录里的 user_prompt 就是**甲写的内容**。
+        #   而 /api/classification-runs 是会把任务原样返回的 ——
+        #   乙一翻历史就看到了甲的私货，她的"内容永远私密"当场作废。
+        #   存下 owner，_run_dict 才能在序列化时把这种内容抹掉（见那里的注释）。
+        if "prompt_owner" not in rcols:
+            conn.execute("ALTER TABLE classification_runs "
+                         "ADD COLUMN prompt_owner TEXT NOT NULL DEFAULT ''")
+            report["added_columns"].append("classification_runs.prompt_owner")
 
     if verbose:
         print("[分类任务] 新建表：%s" % (report["tables"] or "无"))
@@ -712,6 +776,257 @@ def set_user_prompt(owner, content, kind=USER_PROMPT_KIND_CLASSIFY):
     return content
 
 
+# ----------------------------------------------------------------------
+# 提示词库
+#
+# 【再强调一遍全项目最反直觉的约定】
+#   visibility='public' 的意思是「别人可以拿它去用」，
+#   **不是**「别人可以拿去看内容」。
+#   所以这个模块里只有两个"出口"允许带 content：
+#     · list_my_library_prompts(owner)      —— 我自己的
+#     · get_library_prompt(owner, pid)      —— 我自己的
+#   其余出口（公开清单、任务详情、任何给别人的地方）一律不带。
+# ----------------------------------------------------------------------
+
+PROMPT_NAME_MAX = 30        # 名称，够写「江南（建议搭配全能风格食用）」
+PROMPT_USAGE_MAX = 50       # 使用方法，一句话
+PROMPT_SUMMARY_MAX = 6000   # 介绍，可以写长一点（她那边原产品也是 6000）
+PROMPT_CONTENT_MAX = USER_PROMPT_MAX   # 正文跟"补充提示词"同一个上限，理由见上文
+
+VIS_PRIVATE = "private"
+VIS_PUBLIC = "public"
+VISIBILITIES = (VIS_PRIVATE, VIS_PUBLIC)
+
+PROMPT_KIND_CLASSIFY = USER_PROMPT_KIND_CLASSIFY
+
+
+def _owner_label(owner):
+    """归属标记（`__u<数字>` / `local`）→ 给人看的名字。
+
+    查不到就原样返回，绝不编 —— 界面上宁可显示 `__u99` 这种丑东西，
+    也不能显示一个错的人名（"这是谁写的"会直接影响她敢不敢用）。
+    """
+    owner = owner or ""
+    if owner == "local":
+        return "未归属"
+    if owner.startswith("__u"):
+        try:
+            uid = int(owner[3:])
+        except ValueError:
+            return owner
+        u = db.get_user(uid)
+        if u:
+            return u["username"]
+    return owner or "未知"
+
+
+def _lib_dict(row, with_content):
+    """提示词的一条 → 给前端的字典。
+
+    with_content=False 时**绝不**带上 content 字段 —— 这是"公开但私密"的实现点，
+    不是可选优化。改这个默认值之前先读模块顶部那段注释。
+    """
+    d = {
+        "id": row["id"],
+        "name": row["name"],
+        "kind": row["kind"],
+        "usage_note": row["usage_note"] or "",
+        "summary": row["summary"] or "",
+        "visibility": row["visibility"],
+        "use_count": row["use_count"],
+        "owner": row["owner_id"],
+        "owner_label": _owner_label(row["owner_id"]),
+        # 字数不是内容，可以给 —— 界面要显示「约 320 字」帮她判断值不值得用。
+        "content_length": len(row["content"] or ""),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    if with_content:
+        d["content"] = row["content"] or ""
+    return d
+
+
+def _check_prompt_fields(name, content, usage_note, summary, visibility):
+    """把字段洗一遍并校验。返回洗好的元组。错就抛 ValueError（接口那层转 400）。"""
+    name = (name or "").strip()
+    content = (content or "").strip()
+    usage_note = (usage_note or "").strip()
+    summary = (summary or "").strip()
+    visibility = (visibility or VIS_PRIVATE).strip()
+
+    if not name:
+        raise ValueError("提示词得有个名字，不然下次在快捷选项里认不出它")
+    if len(name) > PROMPT_NAME_MAX:
+        raise ValueError("名称最长 %d 字，你写了 %d 字"
+                         % (PROMPT_NAME_MAX, len(name)))
+    if not content:
+        raise ValueError("提示词内容是空的 —— 只填名字的话，点「开始分类」没东西可发")
+    if len(content) > PROMPT_CONTENT_MAX:
+        raise ValueError("提示词内容最长 %d 字，你写了 %d 字，超了 %d 字"
+                         % (PROMPT_CONTENT_MAX, len(content),
+                            len(content) - PROMPT_CONTENT_MAX))
+    if len(usage_note) > PROMPT_USAGE_MAX:
+        raise ValueError("使用方法最长 %d 字，你写了 %d 字"
+                         % (PROMPT_USAGE_MAX, len(usage_note)))
+    if len(summary) > PROMPT_SUMMARY_MAX:
+        raise ValueError("介绍最长 %d 字，你写了 %d 字"
+                         % (PROMPT_SUMMARY_MAX, len(summary)))
+    if visibility not in VISIBILITIES:
+        raise ValueError("公开设置只能是 %s 或 %s"
+                         % (VIS_PRIVATE, VIS_PUBLIC))
+    return name, content, usage_note, summary, visibility
+
+
+def list_my_library_prompts(owner, kind=PROMPT_KIND_CLASSIFY):
+    """我自己攒的提示词，**带内容**。只有本人调得到这个函数。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM prompt_library"
+            " WHERE owner_id=? AND kind=? AND active=1"
+            " ORDER BY updated_at DESC, id DESC", (owner, kind)).fetchall()
+    return [_lib_dict(r, True) for r in rows]
+
+
+def list_public_library_prompts(viewer, kind=PROMPT_KIND_CLASSIFY):
+    """**别人**公开出来的提示词，**不带内容**。
+
+    自己的那批故意排除（它在"我的"那一栏里，带内容）——
+    同一个东西同时出现在两个列表、一个看得见内容一个看不见，只会让人困惑。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM prompt_library"
+            " WHERE visibility=? AND kind=? AND active=1 AND owner_id<>?"
+            " ORDER BY use_count DESC, updated_at DESC, id DESC",
+            (VIS_PUBLIC, kind, viewer)).fetchall()
+    return [_lib_dict(r, False) for r in rows]
+
+
+def get_library_prompt(owner, pid, kind=PROMPT_KIND_CLASSIFY):
+    """按 id 取**我自己的**一条（带内容）。不是我的 → None。
+
+    注意是 None 不是抛错：接口那层要能区分
+    "这条不存在 / 不是你的"（404/403）和"参数写错了"（400）。
+    """
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM prompt_library"
+            " WHERE id=? AND owner_id=? AND kind=? AND active=1",
+            (int(pid), owner, kind)).fetchone()
+    return _lib_dict(row, True) if row else None
+
+
+def resolve_prompt_for_use(viewer, pid, kind=PROMPT_KIND_CLASSIFY):
+    """要拿某条提示词去跑分类：可以是"我自己的"，也可以是"别人公开的"。
+
+    返回 (prompt_id, name, content, owner_id, is_mine)。
+
+    **这是唯一一处"别人的内容"被取出来的地方，取出来直接交给任务，
+    绝不回给前端。** 所以它返回的是元组而不是字典 —— 免得有人顺手
+    jsonify 一下就发出去了。
+    """
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM prompt_library WHERE id=? AND kind=? AND active=1",
+            (int(pid), kind)).fetchone()
+    if not row:
+        raise ValueError("这条提示词不存在，或者已经被删了")
+
+    mine = (row["owner_id"] == viewer)
+    if not mine and row["visibility"] != VIS_PUBLIC:
+        # 说清楚是"没公开"而不是"不存在" —— 她自己是作者时能立刻明白
+        raise ValueError("这条提示词是别人私有的，用不了")
+    return (row["id"], row["name"], row["content"] or "",
+            row["owner_id"], mine)
+
+
+def create_library_prompt(owner, name, content, usage_note="", summary="",
+                          visibility=VIS_PRIVATE, kind=PROMPT_KIND_CLASSIFY):
+    """新建一条。同名直接拒绝（不覆盖）—— 覆盖会静默毁掉她之前写的那份。"""
+    name, content, usage_note, summary, visibility = _check_prompt_fields(
+        name, content, usage_note, summary, visibility)
+    ts = now_str()
+    with db.connect() as conn:
+        dup = conn.execute(
+            "SELECT id FROM prompt_library"
+            " WHERE owner_id=? AND kind=? AND name=? AND active=1",
+            (owner, kind, name)).fetchone()
+        if dup:
+            raise ValueError("你已经有一条叫「%s」的了，换个名字"
+                             "（或者在原来那条上改）" % name)
+        # 之前删过的同名条目还占着 UNIQUE 位，先把它的名字腾出来
+        conn.execute(
+            "UPDATE prompt_library SET name = name || '（已删除' || id || '）'"
+            " WHERE owner_id=? AND kind=? AND name=? AND active=0",
+            (owner, kind, name))
+        cur = conn.execute(
+            "INSERT INTO prompt_library"
+            " (owner_id, kind, name, content, usage_note, summary,"
+            "  visibility, use_count, active, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,0,1,?,?)",
+            (owner, kind, name, content, usage_note, summary,
+             visibility, ts, ts))
+        pid = cur.lastrowid
+    return get_library_prompt(owner, pid, kind)
+
+
+def update_library_prompt(owner, pid, patch):
+    """改一条。patch 里"字段在不在"决定改不改 —— 跟别的接口一个规矩。
+
+    content 允许为空串吗？不允许（跟新建一致），否则会留下一条点不动的东西。
+    """
+    cur = get_library_prompt(owner, pid)
+    if not cur:
+        return None
+    merged = {
+        "name": cur["name"],
+        "content": cur["content"],
+        "usage_note": cur["usage_note"],
+        "summary": cur["summary"],
+        "visibility": cur["visibility"],
+    }
+    for k in merged:
+        if k in patch and patch[k] is not None:
+            merged[k] = patch[k]
+    name, content, usage_note, summary, visibility = _check_prompt_fields(
+        merged["name"], merged["content"], merged["usage_note"],
+        merged["summary"], merged["visibility"])
+    with db.connect() as conn:
+        dup = conn.execute(
+            "SELECT id FROM prompt_library"
+            " WHERE owner_id=? AND kind=? AND name=? AND active=1 AND id<>?",
+            (owner, cur["kind"], name, int(pid))).fetchone()
+        if dup:
+            raise ValueError("你已经有一条叫「%s」的了" % name)
+        conn.execute(
+            "UPDATE prompt_library SET name=?, content=?, usage_note=?,"
+            " summary=?, visibility=?, updated_at=?"
+            " WHERE id=? AND owner_id=?",
+            (name, content, usage_note, summary, visibility,
+             now_str(), int(pid), owner))
+    return get_library_prompt(owner, pid)
+
+
+def delete_library_prompt(owner, pid):
+    """软删（active=0）。任务记录里还引用着它，物理删掉历史就查不到名字了。"""
+    with db.connect() as conn:
+        c = conn.execute(
+            "UPDATE prompt_library SET active=0, updated_at=?"
+            " WHERE id=? AND owner_id=? AND active=1",
+            (now_str(), int(pid), owner))
+        return c.rowcount > 0
+
+
+def bump_prompt_use(pid):
+    """用一次就记一笔。纯计数，失败了也不影响分类，所以不抛错。"""
+    try:
+        with db.connect() as conn:
+            conn.execute("UPDATE prompt_library SET use_count=use_count+1"
+                         " WHERE id=?", (int(pid),))
+    except Exception:                                        # pragma: no cover
+        pass
+
+
 def build_messages(categories, sub_tags, material_title, items,
                    user_prompt="", template=None, src=None, warn=None):
     """拼这次要发出去的提示词。返回 (messages, 来源, 警告语)。
@@ -870,7 +1185,7 @@ class LlmClassifier(object):
     """真·大模型分类器。
 
     这一层只干三件事：
-        1. 把「她的 8 类判据 + 副标签 + 这一批正文」拼成提示词
+        1. 把「她的 11 类判据 + 副标签 + 这一批正文」拼成提示词
         2. 通过 llm.py 发出去（用哪个模型由任务指定）
         3. 把模型说的话读成结构化结果，交给 _validate_suggestions 校验
 
@@ -1154,13 +1469,31 @@ RUN_FIELDS = ("status", "segment_run_id", "retry_of_run_id", "rule",
               "total_items", "done_items",
               "failed_items", "created_cards", "skipped_items",
               "cancel_requested", "error", "note", "created_at", "started_at",
-              "finished_at", "heartbeat_at", "user_prompt")
+              "finished_at", "heartbeat_at", "user_prompt",
+              "prompt_ref_id", "prompt_name", "prompt_owner")
 
 
 def _run_dict(row):
     d = dict(row)
     d["status_text"] = RUN_STATUS_TEXT.get(d["status"], d["status"])
     d["active"] = d["status"] in RUN_ACTIVE
+
+    # ---- 「公开但私密」的脱敏点 ----
+    # 这次用的提示词要是**别人**库里的那条，就把 user_prompt 抹掉。
+    # 理由：任务记录会原样返回给发起人（/api/classification-runs），
+    # 而"发起人"不等于"提示词的作者" —— 不抹的话，
+    # 乙用甲公开的提示词跑一次，翻一下任务历史就拿到甲写的内容了。
+    #
+    # 做在这一层（序列化）而不是各个接口里，是为了让**所有出口自动安全**：
+    # 将来新加一个"导出任务记录"之类的接口，也不会漏。
+    p_owner = d.get("prompt_owner") or ""
+    if p_owner and p_owner != (d.get("owner_id") or ""):
+        d["user_prompt_len"] = len(d.get("user_prompt") or "")
+        d["user_prompt"] = ""
+        d["prompt_masked"] = True
+    else:
+        d["prompt_masked"] = False
+
     total = d["total_items"] or 0
     d["progress"] = 0.0 if not total else round(
         min(1.0, (d["done_items"] + d["failed_items"]) / float(total)), 4)
@@ -1343,12 +1676,26 @@ def target_preview(owner, material_id):
 # ----------------------------------------------------------------------
 
 def create_run(owner, material_id, classifier_name=None, model_key=None,
-               retry_of_run_id=None, background=True, user_prompt=None):
+               retry_of_run_id=None, background=True, user_prompt=None,
+               prompt_id=None):
     """建一个分类任务。返回 (结果字典, run_id)。
 
     classifier_name  用哪种方法：留空/placeholder = 本地规则，llm = 大模型
     model_key        用哪个模型（只有大模型才看这一项，比如 qwen-plus）
     user_prompt      作者这次写的补充提示词；None = 用她存的那份
+    prompt_id        用「提示词库」里的哪一条（可以是别人公开出来的那些）。
+
+    【prompt_id 和 user_prompt 的关系】
+      两个都传时 **prompt_id 说了算**，user_prompt 被忽略。
+      理由是"她刚从快捷选项里挑了一条"是个明确得多的意图，
+      而输入框里可能还留着上一次敲的半句话。
+      所以前端挑中库里某条之后，要负责把输入框清掉（不然她会以为两个都发了）。
+
+    【prompt_id 最要紧的一条：别人的内容不许外泄】
+      这条提示词可能是**别人公开出来的**。我们要用它的内容去发请求，
+      但**绝不能把内容回给前端**（公开 = 她能用，不是她能看到）。
+      所以下面解析出来的 content 只落在 user_prompt 这个字段里直接进库，
+      返回值里只带 name，不带 content。
 
     background=True  → 起一个后台线程跑，立刻返回（给接口用）
     background=False → 当场跑完再返回（给测试和命令行用）
@@ -1363,9 +1710,22 @@ def create_run(owner, material_id, classifier_name=None, model_key=None,
     clf, prompt_version, model_version, model_key, prompt_src = _resolve_engine(
         classifier_name, model_key)
 
+    # ---- 提示词：库里的某一条，优先于自由文本 ----
+    ref_id, ref_name, ref_owner, ref_owner_mine = 0, "", "", True
+    if prompt_id:
+        try:
+            ref_id, ref_name, lib_content, ref_owner, ref_owner_mine = \
+                resolve_prompt_for_use(owner, prompt_id)
+        except ValueError as e:
+            return {"ok": False, "reason": "bad_prompt",
+                    "message": str(e)}, None
+        user_prompt = lib_content
+
     # 补充提示词：**存快照**，不存"她当前写着什么"。
     # 她跑完一轮会去改这句再跑第二轮，回头必须还能答出"第一轮到底怎么问的"。
-    if user_prompt is None:
+    if prompt_id:
+        pass          # 上面已经从库里取了内容，别再被 get_user_prompt 覆盖
+    elif user_prompt is None:
         user_prompt = get_user_prompt(owner)
     user_prompt = (user_prompt or "").strip()
     if len(user_prompt) > USER_PROMPT_MAX:
@@ -1427,15 +1787,21 @@ def create_run(owner, material_id, classifier_name=None, model_key=None,
                    (owner_id, material_id, retry_of_run_id, status,
                     category_set_version, prompt_version, model_version,
                     classifier, model_key, prompt_source, user_prompt,
+                    prompt_ref_id, prompt_name, prompt_owner,
                     total_items, created_at, heartbeat_at, note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (owner, material_id, retry_of_run_id, RUN_QUEUED,
                  cls.CATEGORY_SET_VERSION, prompt_version, model_version,
                  clf.name, model_key, prompt_src, user_prompt,
+                 ref_id, ref_name, ref_owner,
                  len(card_ids), now, now,
                  "这个文件还没有切分记录，任务开始时自动切了一次"
                  if will_split else ""))
             run_id = cur.lastrowid
+
+    # 用了一次就记一笔（在锁外面做，计数失败不影响分类）。
+    if ref_id:
+        bump_prompt_use(ref_id)
 
     if background:
         th = threading.Thread(target=_run_worker, args=(run_id, owner,
@@ -1447,6 +1813,8 @@ def create_run(owner, material_id, classifier_name=None, model_key=None,
                 "will_split_first": will_split,
                 "classifier": clf.name, "classifier_label": clf.label,
                 "model_key": model_key, "model_version": model_version,
+                "prompt_ref_id": ref_id, "prompt_name": ref_name,
+                "prompt_from_library": bool(ref_id),
                 "message": ("这份文件还没有切分记录，任务会先切一次再分类，"
                             "后台正在跑。" if will_split
                             else "任务已创建（共 %d 张卡片），后台正在跑。"
@@ -1457,7 +1825,9 @@ def create_run(owner, material_id, classifier_name=None, model_key=None,
     return {"ok": True, "run_id": run_id, "total_items": len(card_ids),
             "will_split_first": will_split, "background": False,
             "classifier": clf.name, "classifier_label": clf.label,
-            "model_key": model_key, "model_version": model_version}, run_id
+            "model_key": model_key, "model_version": model_version,
+            "prompt_ref_id": ref_id, "prompt_name": ref_name,
+            "prompt_from_library": bool(ref_id)}, run_id
 
 
 # ----------------------------------------------------------------------
@@ -1615,7 +1985,9 @@ def _execute(run_id, owner, classifier_name, card_ids):
                 " VALUES (?,?,?,?,?,?)",
                 (run_id, cid, i, ITEM_PENDING, ts, ts))
 
-    cats = cls.list_categories()
+    # 带上 owner：她自己加的主类也要进这一轮的判据清单。
+    # 不加的话，她新建的类 AI 永远判不出来，她还以为是模型不行。
+    cats = cls.list_categories(owner)
     cat_names = [c["name"] for c in cats]
     cat_id_by_name = {c["name"]: c["id"] for c in cats}
 
@@ -2021,6 +2393,11 @@ def retry_run(material_id, owner, classifier_name=None, model_key=None):
             # 理由和沿用模型一样：中途换掉的话，同一份素材里一半是按
             # 上一次的要求判的、一半按新的判的，她看不出这个区别。
             up = last.get("user_prompt") or ""
+            # 库里那条的引用也一起沿用（0/空 = 上次没用库里的）。
+            # 内容已经在 up 里了，所以这里只是为了让历史记录认得出名字。
+            last_ref = last.get("prompt_ref_id") or 0
+            last_ref_name = last.get("prompt_name") or ""
+            last_ref_owner = last.get("prompt_owner") or ""
 
             now = now_str()
             cur = conn.execute(
@@ -2028,11 +2405,13 @@ def retry_run(material_id, owner, classifier_name=None, model_key=None):
                    (owner_id, material_id, retry_of_run_id, status,
                     category_set_version, prompt_version, model_version,
                     classifier, model_key, prompt_source, user_prompt,
+                    prompt_ref_id, prompt_name, prompt_owner,
                     total_items, created_at, heartbeat_at, note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (owner, material_id, last["id"], RUN_QUEUED,
                  cls.CATEGORY_SET_VERSION, prompt_version, model_version,
                  clf.name, mk, prompt_src, up,
+                 last_ref, last_ref_name, last_ref_owner,
                  len(card_ids), now, now,
                  "重试任务 #%d%s" % (last["id"],
                                      "（只重跑上次失败的部分）" if only else "")))
@@ -2123,7 +2502,7 @@ def material_state(owner, material_id):
                        "created_at", "finished_at", "error", "note",
                        "retry_of_run_id", "classifier", "model_key",
                        "heartbeat_at", "stale_seconds", "prompt_version",
-                       "prompt_source")}
+                       "prompt_source", "prompt_ref_id", "prompt_name")}
         out["progress"] = d["progress"]
         out["status_text"] = d["status_text"]
         mapping = {RUN_QUEUED: "running", RUN_RUNNING: "running",
