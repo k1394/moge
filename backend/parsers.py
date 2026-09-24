@@ -22,7 +22,7 @@
     }
 
 单独试一个文件：
-    python backend/parsers.py "C:\\Users\\Administrator\\Desktop\\分类\\打斗.docx"
+    python backend/parsers.py "D:\\素材\\分类\\打斗.docx"
 """
 
 import os

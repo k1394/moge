@@ -19,7 +19,7 @@
   // 意思是「只要机器上有 uv，就用 uv 来管所有虚拟环境」，
   // 它宁可用 uv 也不认你现成的 .venv。
   //
-  // 而 uv 装在 C:\Users\Administrator\.local\bin，不在终端 PATH 里，
+  // 而 uv 通常装在 %USERPROFILE%\.local\bin，不在终端 PATH 里，
   // 于是扩展先去跑安装脚本、装完又说「uv 装了但当前终端用不了，请重启 VS Code」，
   // 运行这件事就一直没轮上 —— 表现就是点了没反应 / 冒出安装日志。
   //

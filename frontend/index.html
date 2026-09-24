@@ -249,6 +249,29 @@
   }
   .chip.local { color: #7a6a2a; background: #f4efdc; }
   .chip.warn { color: #8a4a2c; background: #fbeade; }
+  .chip.ok { color: #2c7a4e; background: #e9f4ec; }
+
+  /* ---- 自动分类：文档卡片上的状态条 ---- */
+  /* 说明行：必须让"现在用的是本地占位规则、没联网"一直看得见。
+     这行字不是装饰，是诚信问题 —— 不能让人以为这是大模型判的。 */
+  .clshint {
+    font-size: 12px; color: var(--ink-3); line-height: 1.7;
+    margin: -2px 0 12px;
+    /* 文字占满、按钮固定宽 —— 按布局铁律来：
+       灵活的给 flex:1 1 auto，固定的给 flex:0 0 auto，别用 margin-left:auto */
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .clshint .clshintxt { flex: 1 1 auto; }
+  .clshint .btn { flex: 0 0 auto; white-space: nowrap; }
+  .clsbar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+  .clsbar .chip { font-size: 11px; }
+  .clsbar .why {
+    font-size: 11px; color: var(--ink-3); flex: 1 1 100%; line-height: 1.6;
+  }
+  .mini.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .mini[disabled] { opacity: .5; cursor: default; }
   .card .acts { display: flex; gap: 6px; flex: 0 0 auto; }
   .mini {
     font-size: 12px; padding: 3px 9px; border-radius: 7px;
@@ -283,6 +306,13 @@
     display: flex; align-items: center; gap: 10px;
   }
   .modal header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  /* 标题 + 一行说明要竖着排。
+     直接往 header 里放 <p> 会和 h2 并排（header 是 flex 横排），
+     所以套一层 .htitle 做纵向。 */
+  .modal header .htitle { flex: 1 1 auto; min-width: 0; }
+  .modal header .htitle p {
+    margin: 3px 0 0; font-size: 12px; color: var(--ink-3); line-height: 1.6;
+  }
   .modal header .x {
     margin-left: auto; border: none; background: none;
     font-size: 20px; line-height: 1; color: var(--ink-3); padding: 0 4px;
@@ -443,6 +473,284 @@
   @media (max-width: 560px) {
     .vacts .btn { flex: 1 1 auto; }
   }
+
+  /* ==================== 素材分类（素材分类库） ====================
+     左边一列文件，右边是"切分面板 + 卡片流"。
+     这一层的最小单位是「一条卡片」（= 原文里的一个连续区间），
+     所以卡片列表要能一眼看清一条一条，并且每条都能改、能勾、能回溯。 */
+  .clbody { align-items: flex-start; }
+  .clside { flex: 0 0 250px; width: 250px; min-width: 0; }
+  .clside h3 {
+    margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-3);
+  }
+  .clsrc {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .clsrcitem {
+    display: block; width: 100%; text-align: left; border: none;
+    background: transparent; padding: 9px 12px;
+    border-bottom: 1px solid var(--line-2); color: var(--ink-2);
+  }
+  .clsrcitem:last-child { border-bottom: none; }
+  .clsrcitem:hover { background: var(--line-2); }
+  .clsrcitem.on { background: var(--accent-2); color: var(--ink); }
+  .clsrcitem .nm {
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 600; font-size: 13px; word-break: break-all;
+  }
+  .clsrcitem .nm .dot {
+    flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--line); border: 1px solid var(--line);
+  }
+  .clsrcitem .nm .dot.done { background: #6f9a6f; border-color: #6f9a6f; }
+  .clsrcitem .sub { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+
+  .clmain { flex: 1 1 auto; min-width: 0; }
+  .clpanel {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 13px 16px; margin-bottom: 12px;
+  }
+  .clpanel h3 { margin: 0 0 6px; font-size: 14px; }
+  .clpanel .why {
+    font-size: 12.5px; color: var(--ink-2); background: var(--line-2);
+    border-radius: 8px; padding: 8px 11px; line-height: 1.75;
+  }
+  .clrules { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .clrule {
+    flex: 1 1 210px; text-align: left; border: 1px solid var(--line);
+    background: #fff; border-radius: 9px; padding: 9px 12px; color: var(--ink-2);
+  }
+  .clrule.on { border-color: var(--accent); background: var(--accent-2); color: var(--ink); }
+  .clrule b { display: block; font-size: 13px; }
+  .clrule span { font-size: 11.5px; color: var(--ink-3); }
+  .clprev {
+    border: 1px solid var(--line); border-radius: 9px; max-height: 300px;
+    overflow: auto; background: #fbfaf8;
+  }
+  .clprev .row {
+    display: flex; gap: 9px; padding: 6px 11px;
+    border-bottom: 1px solid var(--line-2); font-size: 12.5px; line-height: 1.7;
+  }
+  .clprev .row:last-child { border-bottom: none; }
+  .clprev .row.bad { background: #fdf4f3; }
+  .clprev .row.hint { background: #fbf8ee; }
+  .clprev .no { flex: 0 0 40px; color: var(--ink-3); font-size: 11.5px; }
+  .clprev .tx { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+  .clprev .wh { flex: 0 0 auto; font-size: 11px; color: var(--ink-3); }
+
+  .clcatbar {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    margin: 2px 0 9px;
+  }
+  .clcatbar .sep {
+    width: 1px; height: 18px; background: var(--line); margin: 0 3px;
+  }
+  .clcatbar .tip { font-size: 12.5px; color: var(--ink-3); }
+  .clcat {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--line); background: #fff; border-radius: 999px;
+    padding: 4px 11px; font-size: 12.5px; color: var(--ink-2);
+    cursor: pointer; line-height: 1.5;
+  }
+  .clcat:hover { border-color: var(--ink-3); }
+  .clcat.on {
+    background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600;
+  }
+  .clcat .n {
+    font-size: 11.5px; color: var(--ink-3);
+    background: var(--line-2); border-radius: 999px; padding: 0 6px;
+  }
+  .clcat.on .n { color: #fff; background: rgba(255, 255, 255, 0.22); }
+
+  .clfilters {
+    display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
+  }
+  .clfilters select {
+    height: 32px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; padding: 0 8px; font-size: 12.5px; color: var(--ink-2);
+  }
+  .clfilters .cbs {
+    display: flex; gap: 11px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .clfilters .cbs label { display: flex; align-items: center; gap: 5px; }
+  .clfilters .cnt { font-size: 12.5px; color: var(--ink-3); }
+
+  .clbatch {
+    position: sticky; top: 62px; z-index: 15;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    background: var(--ink); color: #fff; border-radius: var(--radius);
+    padding: 9px 12px; margin-bottom: 10px;
+  }
+  .clbatch .cnt { font-size: 13px; font-weight: 600; }
+  .clbatch select {
+    height: 30px; border-radius: 7px; border: none; padding: 0 8px; font-size: 12.5px;
+  }
+  .clbatch .mini {
+    background: transparent; color: #fff; border-color: rgba(255,255,255,.36);
+  }
+  .clbatch .mini:hover { background: rgba(255,255,255,.14); color: #fff; }
+  .clbatch .undo { border-color: rgba(255,255,255,.6); }
+
+  .clcard {
+    display: flex; gap: 11px; align-items: flex-start;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 11px 14px; margin-bottom: 8px;
+  }
+  .clcard.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-2); }
+  .clcard.off { opacity: .62; background: #fbfaf8; }
+  .clcard .idx {
+    flex: 0 0 30px; font-size: 11.5px; color: var(--ink-3); padding-top: 3px;
+  }
+  .clcard .bd { flex: 1 1 auto; min-width: 0; }
+  .clcard .tx { line-height: 1.85; word-break: break-word; white-space: pre-wrap; }
+  .clcard .tx.clamp {
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; white-space: normal;
+  }
+  .clcard .row2 {
+    display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-top: 8px;
+  }
+  .clcard .row2 select {
+    height: 28px; border: 1px solid var(--line); border-radius: 7px;
+    background: #fff; padding: 0 6px; font-size: 12px; color: var(--ink-2);
+  }
+  .clcard .pos { font-size: 11.5px; color: var(--ink-3); }
+  .clcard .warns { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .chip.bad { color: var(--danger); background: #fbeceb; }
+  .chip.gray { color: var(--ink-3); background: var(--line-2); }
+
+  /* 拆分时的剪刀标记：点在哪个字后面，就从哪里切开 */
+  .clcut { display: inline; }
+  .clcut button {
+    border: 1px dashed var(--line); background: var(--line-2); color: var(--ink-3);
+    border-radius: 5px; font-size: 11px; padding: 0 4px; margin: 0 2px;
+  }
+  .clcut button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .cltagpick { display: flex; flex-direction: column; gap: 6px; }
+  .cltagpick label {
+    display: flex; align-items: center; gap: 7px; font-size: 13px;
+    padding: 5px 8px; border-radius: 7px;
+  }
+  .cltagpick label:hover { background: var(--line-2); }
+  /* 模型设置面板 */
+  .mdrow {
+    border: 1px solid var(--line-2); border-radius: 9px;
+    padding: 11px 12px; margin-bottom: 9px;
+  }
+  .mdhead { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+  .mdnote { font-size: 12px; color: var(--ink-3); margin: 5px 0 9px; line-height: 1.6; }
+  .mdrow2 { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .mdrow2 input[type=password] { flex: 1 1 auto; min-width: 0; }
+  .mdchk {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 5px;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  /* ---- 模型设置：可编辑的地址/模型名 ----
+     为什么要给这两栏单开样式而不是塞进 .mdrow2：
+     它们是那种"平时不用看、填错了才知道要看"的字段，
+     默认展开但视觉上要弱一点，免得抢了"粘 Key"那条主流操作。
+     但绝不能藏进折叠里 —— 她这次踩的坑正是地址错了，
+     藏起来就等于让人永远找不到出错的那一栏。 */
+  .mdgrid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 7px 9px;
+  }
+  .mdgrid label {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 11.5px; color: var(--ink-3);
+  }
+  .mdgrid input { font-size: 12.5px; }
+  .mdtool {
+    display: flex; align-items: center; gap: 9px;
+    flex-wrap: wrap; margin-bottom: 11px;
+  }
+  .mdtool select { flex: 0 0 auto; max-width: 260px; }
+  .mdhint {
+    flex: 1 1 200px; font-size: 12px; color: var(--ink-3); line-height: 1.6;
+  }
+  .mdlabel {
+    flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600;
+    border: 1px solid transparent; background: transparent;
+    padding: 3px 5px; border-radius: 6px;
+  }
+  .mdlabel:hover { border-color: var(--line-2); }
+  .mdlabel:focus {
+    border-color: var(--line); background: var(--line-2); outline: none;
+  }
+  .mdkey {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  /* 删除按钮要"找得到但不抢眼"。
+     它每一条都出现，而这是整套面板里最不可能点的动作 ——
+     用红字铺满每一行的话，整块界面上最刺眼的东西成了"删配置"，
+     她每次进来都得先绕开它。所以平时是灰的，指上去才变红。 */
+  .mddel { color: var(--ink-3); }
+  .mddel:hover { color: #c0392b; border-color: #c0392b; }
+  /* ---- 补充提示词（分类页）----
+     默认收起成一行。为什么不默认展开：
+     它大多数时候是空的，摊开一块五行的输入框会把她真正要看的
+     类目条和卡片挤下去 —— 但它是"想说话的时候得有地方说"，
+     所以收起状态那行必须一直可见、且写着一句话说明它是什么。 */
+  .clprompt {
+    border: 1px solid var(--line-2); border-radius: 9px;
+    margin-bottom: 11px; background: var(--line-2);
+  }
+  .clphead {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 11px; font-size: 12.5px; cursor: pointer;
+  }
+  .clphead:hover { background: var(--line); border-radius: 9px; }
+  .clphead b { font-size: 13px; }
+  .clpbody { padding: 0 11px 11px; }
+  .clpbody textarea {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    font-size: 12.5px; line-height: 1.75;
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 8px 9px; background: var(--bg); color: var(--ink);
+    font-family: inherit;
+  }
+  .clpfoot {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 7px; font-size: 12px; color: var(--ink-3);
+  }
+  .clpcnt.warn { color: #c0392b; font-weight: 600; }
+  .clpwarn { color: #c0392b; }
+
+  /* 方法选择（大模型 / 本地占位规则）：说明文字有两行，不能居中 */
+  .clengine { display: flex; flex-direction: column; gap: 6px; }
+  .clengine label {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
+    padding: 7px 9px; border-radius: 7px;
+  }
+  .clengine label:hover { background: var(--line-2); }
+  .clengine label span { line-height: 1.7; }
+  /* 归类面板的主类：连"不归类"共 9 项，竖排要占掉整屏，
+     两列刚好铺开，副标签还能看得见 */
+  #ccCats { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; }
+  .clmaptbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .clmaptbl th, .clmaptbl td {
+    text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line-2);
+    vertical-align: middle;
+  }
+  .clmaptbl th { color: var(--ink-3); font-weight: 600; }
+  .clmaptbl select {
+    height: 28px; border: 1px solid var(--line); border-radius: 7px;
+    background: #fff; font-size: 12px; padding: 0 5px;
+  }
+  .clsample .it {
+    border-bottom: 1px solid var(--line-2); padding: 7px 0; font-size: 12.5px;
+    line-height: 1.7;
+  }
+  .clsample .it:last-child { border-bottom: none; }
+  .clsample .it b { color: var(--ink-3); font-weight: 400; font-size: 11.5px; }
+
+  @media (max-width: 900px) {
+    .clbody { flex-direction: column; }
+    .clside { flex: 1 1 auto; width: 100%; }
+  }
 </style>
 </head>
 <body class="guest">
@@ -488,6 +796,10 @@
         <div><span class="num" id="sTag">-</span>个标签</div>
       </div>
 
+      <!-- 这行文案由 paintClsHint() 按"有没有配模型"填。
+           这里只放个占位，免得加载的一瞬间闪一遍过时的说法 -->
+      <div class="clshint" id="clsHint">正在读模型配置…</div>
+
       <div class="vbody">
         <aside class="tagside">
           <h3>标签</h3>
@@ -496,6 +808,58 @@
         <div class="listwrap">
           <div class="listhead" id="listhead"></div>
           <div id="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 功能三：素材分类（素材分类库） ----------
+         这一层的最小单位是「一条卡片」：原文里的一个连续区间。
+         左边一列是文件 / 来源，右边是切分面板 + 卡片流。 -->
+    <section class="view" id="view-classify">
+      <header class="vhead">
+        <h1 class="vtitle">素材分类</h1>
+        <div class="vacts">
+          <button class="btn" id="clMapBtn">来源映射表</button>
+          <button class="btn" id="clHistBtn">操作记录</button>
+          <button class="btn" id="clReload">刷新</button>
+        </div>
+      </header>
+
+      <div class="statsbar">
+        <div><span class="num" id="clStatCards">-</span>张卡片</div>
+        <div><span class="num" id="clStatPending">-</span>待确认</div>
+        <div><span class="num" id="clStatNo">-</span>未分类</div>
+        <div><span class="num" id="clStatEx">-</span>已排除</div>
+        <div><span class="num" id="clStatNoise">-</span>条噪音</div>
+      </div>
+
+      <div class="vbody clbody">
+        <aside class="clside">
+          <h3>文件 / 来源</h3>
+          <div class="clsrc" id="clSources"></div>
+        </aside>
+
+        <div class="clmain">
+          <div class="clprompt" id="clPrompt">
+            <div class="clphead" id="clPHead"></div>
+            <div class="clpbody" id="clPBody" hidden>
+              <textarea id="clPText" rows="5" maxlength="5000" spellcheck="false"
+                placeholder="选填。这里写的话，点「开始分类」时会连同素材一起发给大模型。&#10;&#10;例如：&#10;· 这份稿子里的「他」都指师兄，别按第三人称叙述判&#10;· 带引号的短句优先算「对话台词」，哪怕只有四五个字&#10;· 拿不准的一律留空，我要自己看，别替我猜"></textarea>
+              <div class="clpfoot">
+                <span class="clpcnt" id="clPCnt">0 / 5000</span>
+                <span class="clpwarn" id="clPWarn"></span>
+                <span style="flex:1"></span>
+                <button class="mini" id="clPClear">清空</button>
+                <button class="mini primary" id="clPSave">保存</button>
+              </div>
+            </div>
+          </div>
+          <div class="clpanel" id="clPanel"></div>
+          <div class="clcatbar" id="clCatBar"></div>
+          <div class="clfilters" id="clFilters"></div>
+          <div class="clbatch" id="clBatch" hidden></div>
+          <div id="clCards"></div>
+          <div id="clMore" style="margin:14px 0 40px"></div>
         </div>
       </div>
     </section>
@@ -583,7 +947,7 @@
     <div class="content">
       <div class="field">
         <label>文件夹或文件路径</label>
-        <input type="text" id="impPath" placeholder="C:\Users\Administrator\Desktop\分类">
+        <input type="text" id="impPath" placeholder="D:\素材\分类">
         <div class="hint">
           把磁盘上的文件夹路径粘进来。取路径的办法：在资源管理器里进到那个文件夹，
           点一下顶部的地址栏，路径就会变成可复制的文字，Ctrl+C 复制。
@@ -669,6 +1033,240 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- ============ 素材分类：来源映射表 ============ -->
+<div class="mask" id="mkClMap">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>来源映射表</h2>
+        <p>来源名是你导入时的文件夹名 / 文件名，它只能「建议」主类，确认了才算数。</p>
+      </div>
+      <button class="x" data-close="mkClMap">&times;</button>
+    </header>
+    <div class="content" id="clMapBody"></div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn" data-close="mkClMap">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材分类：抽样检查 ============ -->
+<div class="mask" id="mkClSample">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2 id="clSampleTitle">抽样检查</h2>
+        <p>样本刻意不是纯随机：固定包含最长、最短、疑似重复的几条。</p>
+      </div>
+      <button class="x" data-close="mkClSample">&times;</button>
+    </header>
+    <div class="content">
+      <div class="clsample" id="clSampleBody"></div>
+      <div class="field" style="margin-top:12px">
+        <label>这批抽样结果</label>
+        <select id="clSampleResult">
+          <option value="0">还没看</option>
+          <option value="9">10 条里 9 条以上符合 → 可以批量确认</option>
+          <option value="7">10 条里 7~8 条符合 → 可以批，但整批标「需复核」</option>
+          <option value="5">6 条及以下符合 → 不许批量，退回逐条</option>
+        </select>
+      </div>
+    </div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn primary" id="clSampleOk">记下这次抽样</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材分类：操作记录（可撤销） ============ -->
+<div class="mask" id="mkClHist">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>操作记录</h2>
+        <p>每一次批量改动都在这里，能一键撤销；撤销只回滚当时改过的字段。</p>
+      </div>
+      <button class="x" data-close="mkClHist">&times;</button>
+    </header>
+    <div class="content" id="clHistBody"></div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn" data-close="mkClHist">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材分类：卡片前后文 ============ -->
+<div class="mask" id="mkClCtx">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>对照原文</h2>
+        <p id="clCtxMeta"></p>
+      </div>
+      <button class="x" data-close="mkClCtx">&times;</button>
+    </header>
+    <div class="content">
+      <div class="clprev">
+        <div class="row"><div class="no">前文</div><div class="tx" id="clCtxBefore"></div></div>
+        <div class="row" style="background:#fff"><div class="no">本条</div><div class="tx" id="clCtxText"></div></div>
+        <div class="row"><div class="no">后文</div><div class="tx" id="clCtxAfter"></div></div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn" id="clCtxSplit">拆分这张</button>
+      <button class="btn" data-close="mkClCtx">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材分类：拆分 ============ -->
+<div class="mask" id="mkClSplit">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>拆分这张卡片</h2>
+        <p>点文字中间那个「✂」，就从那里切开。原卡不会被删，只是标成已排除，随时能撤销。</p>
+      </div>
+      <button class="x" data-close="mkClSplit">&times;</button>
+    </header>
+    <div class="content">
+      <div id="clSplitBody" style="line-height:2.05;font-size:13.5px"></div>
+    </div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn" id="clSplitHalf">从正中间切一刀</button>
+      <button class="btn" data-close="mkClSplit">取消</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 素材分类：副标签选择 ============ -->
+<div class="mask" id="mkClTags">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2 id="clTagsTitle">选副标签</h2>
+        <p>副标签回答「我以后为什么用它」。主类只能有一个，副标签可以有很多个。</p>
+      </div>
+      <button class="x" data-close="mkClTags">&times;</button>
+    </header>
+    <div class="content">
+      <div class="cltagpick" id="clTagsBody"></div>
+      <div class="field" style="margin-top:12px">
+        <label>新加一个标签（可选）</label>
+        <input type="text" id="clTagNew" placeholder="比如：适合独白">
+      </div>
+    </div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn primary" id="clTagsOk">确定</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 模型设置 ============
+     为什么单独一个弹层而不是一个功能页：
+       它是「配置」，不是「功能」。放在左侧栏会跟那六个功能混在一起，
+       而且它一年也就进来改一两次，不值得占一个常驻入口。
+     为什么能填好几家：
+       她要比"哪个模型分得准"。填几个，分类时一次用一个，
+       跑完看结果就能比 —— 不用改代码。 -->
+<div class="mask" id="mkModels">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>模型设置</h2>
+        <p>填哪家的 API Key，就能用哪家判素材。填完先「测试」验通不通，再「保存」。</p>
+      </div>
+      <button class="x" data-close="mkModels">&times;</button>
+    </header>
+    <div class="content">
+      <div class="mdtool">
+        <select id="mdAdd"><option value="">＋ 添加一个模型（选服务商）</option></select>
+        <span class="mdhint">
+          充的是第三方的额度（硅基流动、各种中转站）也能用 ——
+          选一个预填好地址，把 Key 粘进去就行，地址和模型名都能自己改。
+        </span>
+      </div>
+      <div id="mdBody"></div>
+      <div class="why" style="margin-top:14px">
+        Key 只写在你本机的 <b>data/models.json</b>，界面上永远只显示打码后的样子。
+        data/ 整个目录都在忽略名单里，不会进公开仓库。<br>
+        <b>换 Key</b>：直接在框里粘新的、点保存就覆盖了。<br>
+        <b>撤掉 Key</b>：点那条上的「清空密钥」—— 地址和备注留着，只把钥匙抹掉。
+        删掉整条也行，但那样这些设置得重填。<br>
+        「测试」会往那家服务商发一句「在吗」，确认地址、模型名、Key 三样都对 ——
+        这比跑完 600 张卡才发现填错了省事得多。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 开始自动分类：先定"用谁判" ============ -->
+<div class="mask" id="mkClRun">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2 id="crTitle">自动分类</h2>
+        <p>先定这次用谁判。同一份文件换不同模型各跑一次，就能比出哪个分得准。</p>
+      </div>
+      <button class="x" data-close="mkClRun">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>用哪种方法</label>
+        <div class="clengine" id="crEngines"></div>
+      </div>
+      <div class="field" id="crModelField">
+        <label>用哪个模型</label>
+        <select id="crModel"></select>
+      </div>
+      <div id="crNote"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkClRun">取消</button>
+      <button class="btn primary" id="crGo">开始分类</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 手动归类 ============
+     这就是她说的"添加按钮"：挑好主类（+副标签）点一下，
+     这几张卡片就直接归到那一类里，不看 AI 的脸色。 -->
+<div class="mask" id="mkClCat">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2 id="ccTitle">归类</h2>
+        <p>主类只能有一个，副标签可以多个。归类不改原文，也不动卡片正文。</p>
+      </div>
+      <button class="x" data-close="mkClCat">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>主类</label>
+        <div class="cltagpick" id="ccCats"></div>
+      </div>
+      <div class="field">
+        <label>副标签
+          <span style="color:var(--ink-3)">（选中的主类常用的那几个排在前面）</span></label>
+        <div class="cltagpick" id="ccTags"></div>
+      </div>
+      <div id="ccNote"></div>
+    </div>
+    <footer>
+      <span class="grow" style="flex:1"></span>
+      <button class="btn" data-close="mkClCat">取消</button>
+      <button class="btn primary" id="ccOk">就归到这一类</button>
+    </footer>
+  </div>
+</div>
+
 <script>
 /* ==================================================================
    前端逻辑
@@ -692,8 +1290,8 @@ const VIEWS = [
     desc: "所有素材都在这里" },
   { id: "search",   name: "素材检索", icon: "search",  ready: false,
     desc: "按关键词从素材库里捞出最相关的片段，为写稿做准备" },
-  { id: "classify", name: "素材分类", icon: "tag",     ready: false,
-    desc: "给素材分门别类，支持批量改标签、合并同类项" },
+  { id: "classify", name: "素材分类", icon: "tag",     ready: true,
+    desc: "把一份文件切成一条一条的素材，逐条看、逐条改、能勾选，每条都能定位回原文" },
   { id: "infuse",   name: "剧情内化", icon: "wand",    ready: false,
     desc: "把原始素材提炼成可复用的剧情零件（谁做了什么、动机是什么）" },
   { id: "outline",  name: "大纲生成", icon: "list",    ready: false,
@@ -728,6 +1326,12 @@ function svgIcon(name) {
 
 const S = { view: "library", keyword: "", tag: "", current: null };
 const A = { mode: "login", user: null, firstTime: false, unclaimed: 0, busy: false };
+
+/* 置信度低于这个数，就算"AI 自己也没把握"，界面上要标出来让人先看。
+   这个数必须跟后端 backend/classification.py 里的 LOW_CONFIDENCE 一致 ——
+   两边不一致的话，总素材库上写着"低置信 6 张"、点进去却只标了 3 张，
+   人会以为界面坏了。 */
+const LOW_CONF = 0.70;
 
 /* 把用户内容里的尖括号转义，避免素材正文里的 < > 破坏页面结构 */
 function esc(s) {
@@ -787,8 +1391,10 @@ function renderNav() {
   const box = document.getElementById("navlist");
   box.innerHTML = VIEWS.map(v => {
     const cls = "navitem" + (v.id === S.view ? " on" : "") + (v.ready ? "" : " off");
+    // 徽标 id 里带上功能 id —— 以前写死成 navCount，
+    // 多点亮一个功能就会出现两个同名 id，取到的是哪一个全看运气。
     const right = v.ready
-      ? '<span class="badge" id="navCount">-</span>'
+      ? '<span class="badge" id="navCount-' + v.id + '">-</span>'
       : '<span class="soon">待做</span>';
     return '<button class="' + cls + '" data-view="' + v.id + '" ' +
              'title="' + esc(v.name) + '">' +
@@ -800,6 +1406,12 @@ function renderNav() {
   box.querySelectorAll(".navitem").forEach(el => {
     el.onclick = () => goView(el.dataset.view);
   });
+}
+
+/* 更新某个功能后面的数字徽标 */
+function setNavBadge(viewId, text) {
+  const el = document.getElementById("navCount-" + viewId);
+  if (el) el.textContent = text;
 }
 
 /* 切到某个功能 */
@@ -830,6 +1442,12 @@ function goView(id) {
   }
 
   document.querySelector(".stage").scrollTop = 0;
+
+  // 离开总素材库就停掉分类进度轮询 —— 看别的页面时没必要一直问
+  if (id !== "library") clsStopPoll();
+
+  // 素材分类要在第一次进来时才拉数据（省得每次登录都白拉一遍）
+  if (id === "classify") loadClassify(false);
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -957,8 +1575,13 @@ async function doLogout() {
   document.getElementById("tagbar").innerHTML = "";
   document.getElementById("listhead").innerHTML = "";
   ["sMat", "sChar", "sTag"].forEach(id => document.getElementById(id).textContent = "-");
-  const nb = document.getElementById("navCount");
-  if (nb) nb.textContent = "-";
+  setNavBadge("library", "-");
+  // 换账号时要把它自己的分类状态一起清掉，否则会看到上一个账号的卡片
+  C.ready = false;
+  C.cur = null;
+  C.cards = [];
+  C.sel = {};
+  C.lastChange = null;
   goView("library");
   A.firstTime = false;
   setAuthMode("login");
@@ -1006,8 +1629,7 @@ async function loadStats() {
     document.getElementById("sChar").textContent = fmtNum(s.chars);
     document.getElementById("sTag").textContent = fmtNum(s.tags);
     // 左侧栏「总素材库」后面那个数字，跟统计是同一个来源
-    const nb = document.getElementById("navCount");
-    if (nb) nb.textContent = fmtNum(s.materials);
+    setNavBadge("library", fmtNum(s.materials));
   } catch (e) { /* 统计失败不打断主流程 */ }
 }
 
@@ -1045,7 +1667,14 @@ async function loadList() {
   let data;
   try {
     const q = new URLSearchParams({ keyword: S.keyword, tag: S.tag, limit: "200" });
-    data = await api("/api/materials?" + q.toString());
+    // 素材列表和分类状态一起拉。
+    // loadClsStates 自己把错误吞掉了 —— 分类状态取不到只是按钮不显示，
+    // 不该让整个素材库打不开。
+    const both = await Promise.all([
+      api("/api/materials?" + q.toString()),
+      loadClsStates()
+    ]);
+    data = both[0];
   } catch (e) {
     box.innerHTML = '<div class="blank"><b>读取失败</b>' + esc(e.message) + '</div>';
     return;
@@ -1085,6 +1714,7 @@ async function loadList() {
         '</div>' +
         ((tags || local || warnChip)
           ? '<div class="tags">' + tags + warnChip + local + '</div>' : '') +
+        clsBarHtml(m.id) +
       '</div>' +
       '<div class="acts">' +
         '<button class="mini" data-open="' + m.id + '">查看</button>' +
@@ -1092,6 +1722,9 @@ async function loadList() {
       '</div>' +
     '</div>';
   }).join("");
+
+  // 有任务在跑就开轮询；跑完了它自己会停。
+  clsSyncPoll();
 
   box.querySelectorAll("[data-open]").forEach(el => {
     el.onclick = () => openDrawer(+el.dataset.open);
@@ -1131,6 +1764,338 @@ async function maybeOfferAdopt() {
     blank.appendChild(wrap);
   } catch (e) { /* 拿不到就算了，不影响主流程 */ }
 }
+
+/* ================== 自动分类（总素材库这一层） ==================
+
+   这一段只干一件事：把「提交任务 → 后台跑 → 结果进卡片库」这条流程
+   放到界面上，让人看得见、点得动。
+
+   三条不能松口的规矩：
+     1. 页面上那句"用的是本地占位规则、没联网"必须一直挂着 ——
+        不能让人以为这是大模型判的。文案从接口里取，不写死在页面。
+     2. 干活在后台线程，前端只是隔一会儿问一次"跑到哪了"。
+        请求永远不会卡在这儿等它跑完。
+     3. 「重新分类」会覆盖上一次写进去的 AI 建议，属于破坏性动作，
+        必须二次确认，而且得把"要覆盖多少张"说清楚。
+
+   状态由后端定（never / running / done / partial / failed / cancelled），
+   前端只负责把它翻译成"按钮该长什么样"。别在前端自己推理状态。
+*/
+
+S.cls = {};        // material_id -> 后端给的分类状态
+S.clsMeta = null;  // 接口顺带返回的分类器信息 + 模型清单（选模型要用）
+S.models = [];     // 模型设置面板里的那几条配置（密钥是打码的）
+S.runPick = null;  // 「开始自动分类」面板里她挑的方法和模型
+S.clPrompt = null; // 分类页的补充提示词 {content, max, open}
+S.catPick = null;  // 「手动归类」面板里她挑的主类和副标签
+S.clsPoll = null;  // 轮询定时器
+S.clsBusy = {};    // material_id -> true，防止同一个按钮被连点两次
+
+/* 一次拉回所有素材的分类状态。（一批几十份素材，一份份查库太慢） */
+async function loadClsStates() {
+  try {
+    const d = await api("/api/classification-states");
+    S.cls = d.items || {};
+    S.clsMeta = d;
+    paintClsHint();
+  } catch (e) {
+    // 取不到就当作"没有状态"，按钮不显示 —— 但绝不能因此让素材库打不开。
+    S.cls = {};
+  }
+  return S.cls;
+}
+
+/* 把说明行补全。
+   按"有没有配模型"给两种说法 —— 这不是文案小事：
+   配了模型之后，素材片段真的会离开这台电脑，她有权在点按钮之前就知道。
+
+   只在拿到接口数据后改一次，之后不再动（免得轮询把这行刷来刷去）。
+   改配置之后要重画，就传 force。 */
+function paintClsHint(force) {
+  const el = document.getElementById("clsHint");
+  if (!el || !S.clsMeta) return;
+  if (!force && el.dataset.filled === "1") return;
+  const m = S.clsMeta;
+  const usable = m.usable_models || [];
+  let txt;
+  if (m.llm_ready) {
+    txt = '自动分类现在能用<b>大模型</b>了，已配好 <b>' + usable.length + '</b> 个：' +
+      esc(usable.map(u => u.label || u.key).join("、")) +
+      '。点「自动分类」时可以自己挑用哪个。<br>' +
+      '先把一件事说清楚：<b>被分类的素材片段会发到模型服务商那边</b>，' +
+      '换来的才是「读得懂句子」的判断。原文只存在你电脑上，分类不会改动它一个字；' +
+      '不想发出去，就别点自动分类 —— 手动归类一样能用。';
+  } else {
+    txt = '自动分类还没配模型。点右边「模型设置」填一个 API Key（比如通义千问的），' +
+      '它就能读懂句子的意思来判。<br>' +
+      '现在只有<b>本地占位规则</b>可用 —— 不联网、不花钱，' +
+      '但只认得出「引号里是对话」这类形式特征，读不懂语义，所以判不出的会明显偏多。' +
+      '它只给建议，不覆盖你分好的类，也不改原文。';
+  }
+  el.innerHTML = '<span class="clshintxt">' + txt + '</span>' +
+    '<button class="btn" id="btnModels">模型设置' +
+    (usable.length ? "" : "（还没配）") + '</button>';
+  el.dataset.filled = "1";
+  const b = document.getElementById("btnModels");
+  if (b) b.onclick = openModels;
+}
+
+/* 一张文档卡片底下的状态条。没状态就整块不画。 */
+function clsBarHtml(mid) {
+  const s = S.cls[mid];
+  if (!s) return "";
+  return '<div class="clsbar" data-clsfor="' + mid + '">' +
+         clsBarInner(mid) + '</div>';
+}
+
+function clsBarInner(mid) {
+  const s = S.cls[mid];
+  if (!s) return "";
+
+  const chips = [];   // 状态小标签
+  const btns = [];    // 可点的按钮
+  const info = [];    // 数量这类补充信息，攒成一个小标签
+  let why = "";       // 失败/部分完成的原因，独占一行
+
+  if (s.state === "running") {
+    const pct = Math.round((s.progress || 0) * 100);
+    chips.push('<span class="chip warn">分类中 ' + pct + '%</span>');
+    if (s.run && s.run.total_items) {
+      info.push(fmtNum(s.run.done_items) + "/" + fmtNum(s.run.total_items) + " 张");
+    }
+    if (s.run && s.run.failed_items) {
+      chips.push('<span class="chip warn">失败 ' + fmtNum(s.run.failed_items) + ' 张</span>');
+    }
+    // 心跳：回答"它还活着吗"。
+    // 光看数字不动分不出"在慢慢跑"和"线程早死了"这两种情况，
+    // 而第一批要等模型回话（几十秒），这段时间数字本来就不动。
+    const beat = beatText(s.run);
+    if (beat) info.push(beat);
+    // 运行中的错误也要立刻露出来。
+    // 原来这里什么都不显示：要是每一批都报错（比如 Key 中途失效），
+    // 她会看见一个 0% 的进度条一直转到跑完才知道全失败了。
+    const live = runNoteErr(s.run);
+    if (live) why = "正在跑，但已经有批次报错：" + live;
+    btns.push(clsBtn(mid, "cancel", "取消", "d"));
+
+  } else if (s.state === "done") {
+    chips.push('<span class="chip ok">分类完成</span>');
+    if (s.ai_suggested) info.push("AI 建议 " + fmtNum(s.ai_suggested) + " 张");
+    if (s.low_confidence) {
+      chips.push('<span class="chip warn">低置信 ' + fmtNum(s.low_confidence) + ' 张</span>');
+    }
+    btns.push(clsBtn(mid, "redo", "重新分类", ""));
+
+  } else if (s.state === "partial") {
+    chips.push('<span class="chip warn">部分完成</span>');
+    if (s.failed_cards) info.push("失败 " + fmtNum(s.failed_cards) + " 张");
+    if (s.ai_suggested) info.push("AI 建议 " + fmtNum(s.ai_suggested) + " 张");
+    if (s.low_confidence) {
+      chips.push('<span class="chip warn">低置信 ' + fmtNum(s.low_confidence) + ' 张</span>');
+    }
+    why = clsWhy(s);
+    btns.push(clsBtn(mid, "retry", "重试失败项", "primary"));
+    btns.push(clsBtn(mid, "redo", "重新分类", ""));
+
+  } else if (s.state === "failed") {
+    chips.push('<span class="chip warn">上次失败</span>');
+    why = clsWhy(s);
+    btns.push(clsBtn(mid, "retry", "重试分类", "primary"));
+
+  } else if (s.state === "cancelled") {
+    chips.push('<span class="chip local">已取消</span>');
+    if (s.ai_suggested) info.push("已写 " + fmtNum(s.ai_suggested) + " 张");
+    btns.push(clsBtn(mid, "start", "继续分类", "primary"));
+
+  } else {
+    // never：从没分类过。这里要分清三种情况，
+    // 因为"能不能点"和"点了会发生什么"完全不一样。
+    if (s.needs_split) {
+      chips.push('<span class="chip local">还没切分</span>');
+      why = "这个文件还没切分过。点「自动分类」会先按现有规则切一次，再逐张分类。";
+    } else if (s.can_start) {
+      chips.push('<span class="chip local">还没分类</span>');
+    } else {
+      chips.push('<span class="chip ok">卡片都已有主类</span>');
+    }
+    if (s.can_start) {
+      btns.push(clsBtn(mid, "start", "自动分类", "primary"));
+    } else {
+      btns.push('<button class="mini" disabled ' +
+                'title="这个文件的每张卡片都已经有主类了，没有需要自动分类的卡片">' +
+                '无需分类</button>');
+    }
+    if (s.confirmed) info.push("已确认 " + fmtNum(s.confirmed) + " 张");
+  }
+
+  // 这次是谁判的 —— 放在状态条上，不藏进任务记录里。
+  // 她要「看看哪个模型分得最准」，靠的就是把两次结果并排看，
+  // 那"这次是谁判的"就必须抬眼可见。
+  const who = clsWho(s);
+  if (who) chips.push('<span class="chip gray">' + esc(who) + "</span>");
+
+  if (info.length) chips.push('<span class="chip">' + info.join(" · ") + "</span>");
+
+  return chips.concat(btns).join("") +
+         (why ? '<div class="why">' + esc(why) + "</div>" : "");
+}
+
+/* 上一次任务是谁判的。没跑过就返回空串。
+   本地规则和模型的区别必须说得出来 —— 占位规则判出来的结果
+   看着和 AI 的没两样，但性质完全不同（它读不懂语义）。 */
+function clsWho(s) {
+  const r = s && s.run;
+  if (!r) return "";
+  const c = r.classifier || "";
+  const mv = r.model_version || "";
+  // classifier 这一列是后加的，之前建的任务记录里它是空的，
+  // 名字只藏在 model_version（"placeholder-rules-v1"）里。
+  // 两种都得认出来，不然历史任务会显示成一串机器名 —— 看着像坏数据。
+  if (c === "placeholder" || /placeholder/i.test(mv)) return "本地占位规则判的";
+  const name = r.model_key || mv;
+  return name ? (name + " 判的") : "";
+}
+
+/* 心跳那句话：从"最后动过"到现在多久了。
+
+【为什么不显示绝对时间】（比如"最后更新 18:47:12"）
+   她不想在脑子里做减法。直接说"40 秒前"才是她要的信息。
+
+【为什么要分档说】
+   · 十几秒 = 正常，模型正在回话，不用提心跳（提了反而是噪音）
+   · 一两分钟 = 可能这批特别大，或者网络慢，说清"还在动"
+   · 几分钟以上 = 真可能卡了，要明说"可能卡住了"，并给出该怎么办
+   这三档的区别就是"她要不要管"，所以必须分开说，
+   不能统一显示成一句"最后更新 200 秒前"让她自己判断。
+*/
+function beatText(run) {
+  if (!run || run.stale_seconds === null || run.stale_seconds === undefined) {
+    return "";
+  }
+  const t = run.stale_seconds;
+  if (t < 15) return "刚才还在动";
+  if (t < 60) return "最后更新 " + t + " 秒前";
+  const m = Math.floor(t / 60);
+  if (t < 180) return "最后更新 " + m + " 分钟前（模型还在回话，稍等）";
+  return "已经 " + m + " 分钟没动静，可能卡住了 —— 可以点「取消」重来";
+}
+
+/* 从任务备注里把"第一个错误"抠出来。
+   备注那一行长这样：【进度】已判 300/630 张；失败 2 张；首个错误：xxx */
+function runNoteErr(run) {
+  const n = (run && run.note) || "";
+  const i = n.indexOf("首个错误：");
+  return i < 0 ? "" : n.slice(i + "首个错误：".length).trim();
+}
+
+/* 失败原因只露第一条，别把整篇栈信息糊在卡片上。
+   完整原因在任务明细接口里，要看的时候去那儿看。 */
+function clsWhy(s) {
+  const t = (s.run && (s.run.error || s.run.note)) || "";
+  if (t) return "失败原因：" + t.split("\n")[0].slice(0, 120);
+  if (s.failed_cards) {
+    return "有 " + fmtNum(s.failed_cards) +
+           " 张卡片没处理成功，点「重试失败项」只会重跑这些，不影响其他卡片。";
+  }
+  return "";
+}
+
+function clsBtn(mid, act, label, cls) {
+  // 请求还没回来的这段时间里，轮询会把状态条整个重画一遍。
+  // 重画出来的按钮是全新的、默认可点的 —— 所以这里要重新看一次 busy 标记，
+  // 否则"点一下 → 1.5 秒后按钮又亮了 → 再点一下"就会变成重复提交。
+  return '<button class="mini ' + (cls || "") + '"' +
+         (S.clsBusy[mid] ? " disabled" : "") +
+         ' data-clsact="' + act + '" data-clsid="' + mid + '">' +
+         esc(label) + "</button>";
+}
+
+/* 只重画状态条，不重画整个列表。
+   整个列表重建会让滚动位置跳、正在看的行消失，轮询期间尤其难受。 */
+function paintClsBars() {
+  document.querySelectorAll("[data-clsfor]").forEach(el => {
+    const mid = Number(el.dataset.clsfor);
+    el.innerHTML = clsBarInner(mid);
+  });
+}
+
+/* 有任务在跑就开轮询，没有就停。
+   轮询只问状态、只重画状态条，不打断任何正在进行的操作。 */
+function clsSyncPoll() {
+  const running = Object.keys(S.cls).some(k => S.cls[k].state === "running");
+  if (running && !S.clsPoll) {
+    S.clsPoll = setInterval(async () => {
+      if (S.view !== "library") { clsStopPoll(); return; }
+      await loadClsStates();
+      paintClsBars();
+    }, 1500);
+  } else if (!running) {
+    clsStopPoll();
+  }
+}
+
+function clsStopPoll() {
+  if (S.clsPoll) { clearInterval(S.clsPoll); S.clsPoll = null; }
+}
+
+/* 单个文件的状态重查一次（点完按钮马上刷新，不用等下一轮轮询） */
+async function clsRefreshOne(mid) {
+  try {
+    S.cls[mid] = await api("/api/materials/" + mid + "/classification-status");
+    paintClsBars();
+    clsSyncPoll();
+  } catch (e) { /* 刷新失败不吵人，下一轮轮询会补上 */ }
+}
+
+/* 点按钮的总入口。act: start / retry / redo / cancel */
+async function clsAct(mid, act, el) {
+  const s = S.cls[mid] || {};
+  if (S.clsBusy[mid]) return;
+
+  // 取消：说清楚哪些已经跑完的会留下
+  if (act === "cancel") {
+    if (!confirm("取消这个文件正在跑的分类任务？\n\n" +
+                 "已经跑完的卡片会留在库里，还没轮到的不会动。\n" +
+                 "之后可以再点「继续分类」。")) return;
+  }
+
+  // 重新分类 / 开始：先弹面板让她定"这次用谁判"。
+  // 面板里一次说清这几件事：用大模型还是本地规则、重新分类会覆盖多少张、
+  // 素材会不会发到服务商那边。比原来那种"一句 confirm 然后闷头跑"诚实得多 ——
+  // 尤其是"素材会离开这台电脑"这件事，她有权在按钮之前就知道。
+  if (act === "redo" || act === "start") {
+    return openClsRun(mid, act, el);
+  }
+
+  S.clsBusy[mid] = true;
+  if (el) el.disabled = true;
+
+  const url = "/api/materials/" + mid +
+              (act === "cancel" ? "/classification-cancel"
+               : act === "retry" ? "/classification-retry"
+               : "/auto-classify");
+
+  try {
+    const r = await post(url);
+    toast(r.message || (act === "cancel" ? "已请求取消" : "任务已提交，后台开始跑"));
+    await clsRefreshOne(mid);
+  } catch (e) {
+    toast(e.message, true);
+    if (el) el.disabled = false;
+  } finally {
+    delete S.clsBusy[mid];
+  }
+}
+
+/* 按钮用事件委托绑一次就够了。
+   状态条会被反复重画，每画一次绑一次既啰嗦又容易漏（这正是"点了没反应"的经典来源）。 */
+document.getElementById("list").addEventListener("click", ev => {
+  const el = ev.target.closest("[data-clsact]");
+  if (!el) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  clsAct(Number(el.dataset.clsid), el.dataset.clsact, el);
+});
 
 /* ---------------- 详情抽屉 ---------------- */
 
@@ -1272,6 +2237,8 @@ function renderImportPreview(res) {
 async function doScan() {
   const path = document.getElementById("impPath").value.trim();
   if (!path) { toast("先填文件夹路径", true); return; }
+  // 记住这次填的路径，下次打开导入面板自动带出来（省得每次重新粘贴）
+  try { localStorage.setItem("moge_lastImportPath", path); } catch (e) {}
   const btn = document.getElementById("btnScan");
   btn.disabled = true; btn.textContent = "扫描中…";
   document.getElementById("impMsg").textContent = "";
@@ -1361,7 +2328,10 @@ document.getElementById("fileInput").onchange = e => {
 
 document.getElementById("btnImport").onclick = () => {
   resetImportPreview();
-  document.getElementById("impPath").value = "C:\\Users\\Administrator\\Desktop\\分类";
+  // 用上次填过的路径（存在浏览器本地，不写进代码里 —— 代码要能给别人用）
+  let last = "";
+  try { last = localStorage.getItem("moge_lastImportPath") || ""; } catch (e) {}
+  document.getElementById("impPath").value = last;
   openMask("mkImport");
 };
 document.getElementById("btnScan").onclick = doScan;
@@ -1441,6 +2411,1639 @@ window.addEventListener("keydown", e => {
     });
   }
 });
+
+/* ================== 功能三：素材分类（素材分类库） ==================
+
+   这一层解决的事：把一份文件切成「一条一条」的素材，逐条看、逐条改、能勾选，
+   而且每条都能定位回原文。它和「总素材库」的区别只有一句：
+
+       总素材库的一条 = 一份文件
+       素材分类的一条 = 原文里的一个连续区间（卡片）
+
+   四条不能破的规矩（后端强制，界面只是照着用）：
+     1 卡片正文不是存下来的，是每次按偏移从原文现切的 —— 原文永远只有一个版本
+     2 卡片可以排除、可以拆、可以合，但都不物理删除，全都能撤销
+     3 批量操作一定写一条操作记录，记录里有影响条数和抽样样本
+     4 与原文对不上的卡片，不许标成「已确认」
+   ------------------------------------------------------------------ */
+
+const C = {
+  ready: false,
+  sources: [], cur: null,
+  preview: null, rule: "", segLimit: 20,
+  cards: [], total: 0, offset: 0, limit: 30,
+  sel: {}, cats: [], statuses: [], tags: [], tagsAll: [], rules: [],
+  cMap: {}, lastChange: null, catCounts: {}, pvOpen: false,
+  sample: null, picker: null, maps: [], changes: [],
+  f: { cat: "", tag: "", status: "", exclude: false, bad: false, dup: false, order: "seq" }
+};
+
+function fill(id, txt) {
+  const e = document.getElementById(id);
+  if (e) e.textContent = txt;
+}
+
+function patch(url, body) {
+  return api(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+}
+
+function show(id) { document.getElementById(id).classList.add("on"); }
+function hide(id) { document.getElementById(id).classList.remove("on"); }
+
+function selIds() {
+  return Object.keys(C.sel).filter(k => C.sel[k]).map(Number);
+}
+
+async function loadClassify(force) {
+  try {
+    if (!C.ready || force) {
+      const opt = await api("/api/categories");
+      C.cats = opt.categories || [];
+      C.statuses = opt.statuses || [];
+      C.tags = opt.sub_tags || [];
+      C.tagsAll = opt.sub_tags_all || C.tags;
+      C.rules = opt.rules || [];
+      C.ready = true;
+      renderClFilters();
+      renderClCatBar();
+    }
+    await loadClPrompt();
+    await loadClSources();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+/* ---------------- 补充提示词 ----------------
+   她可以在分类页写几句话，点自动分类时一起发给大模型。
+   存库（跟着账号走），不是存文件 —— 改了立刻生效，不用重启服务。 */
+
+async function loadClPrompt() {
+  try {
+    const r = await api("/api/classify-prompt");
+    S.clPrompt = { content: r.content || "", max: r.max || 5000,
+                   open: S.clPrompt ? !!S.clPrompt.open : false };
+  } catch (e) {
+    // 读不到就当空的，绝不因为这一条让整个分类页打不开
+    S.clPrompt = { content: "", max: 5000, open: false };
+  }
+  paintClPrompt();
+}
+
+function paintClPrompt() {
+  const st = S.clPrompt || { content: "", max: 5000, open: false };
+  const head = document.getElementById("clPHead");
+  const body = document.getElementById("clPBody");
+  const ta = document.getElementById("clPText");
+  if (!head || !body || !ta) return;
+
+  const n = st.content.length;
+  const open = !!st.open;
+  body.hidden = !open;
+  head.innerHTML =
+    '<b>' + (open ? "▾" : "▸") + ' 补充提示词</b>' +
+    '<span class="chip gray">选填</span>' +
+    (n ? '<span class="chip">已写 ' + fmtNum(n) + ' 字</span>'
+       : '<span>想额外交代几句就写在这里，点「开始分类」时会一起发给大模型</span>');
+  if (open) {
+    // 打开时才灌内容：收起状态下别把输入框里的东西来回重置
+    if (document.activeElement !== ta) ta.value = st.content;
+    paintClPCount();
+  }
+}
+
+function paintClPCount() {
+  const ta = document.getElementById("clPText");
+  const cnt = document.getElementById("clPCnt");
+  const warn = document.getElementById("clPWarn");
+  if (!ta || !cnt) return;
+  const max = (S.clPrompt && S.clPrompt.max) || 5000;
+  const n = ta.value.length;
+  cnt.textContent = n + " / " + max;
+  cnt.className = "clpcnt" + (n > max ? " warn" : "");
+  if (warn) {
+    // 超长在后端也会被拒，但在这里先拦住更好 —— 让她当场知道自己写太长了，
+    // 而不是填完一堆、点了开始分类才被退回来。
+    warn.textContent = n > max
+      ? ("超了 " + (n - max) + " 字，发不出去。这句要每批都重发一遍，"
+         + "太长会明显变慢、变贵 —— 精简一下更划算。")
+      : "";
+  }
+}
+
+/* 当前输入框里的内容。
+   没展开过（一直在收起状态）就返回 null，表示"用存着的那份"。 */
+function clPromptValue() {
+  const body = document.getElementById("clPBody");
+  const ta = document.getElementById("clPText");
+  if (!body || !ta || body.hidden) return null;
+  return ta.value;
+}
+
+async function loadClSources() {
+  const r = await Promise.all([
+    api("/api/material-classification/overview"),
+    api("/api/material-classification/sources")
+  ]);
+  const ov = r[0], src = r[1];
+  C.sources = src.items || [];
+
+  fill("clStatCards", fmtNum(ov.cards));
+  fill("clStatPending", fmtNum(ov.pending));
+  fill("clStatNo", fmtNum(ov.no_category));
+  fill("clStatEx", fmtNum(ov.excluded));
+  fill("clStatNoise", fmtNum(ov.noise_segments));
+  setNavBadge("classify", fmtNum(ov.cards));
+  renderClSources();
+
+  if (!C.sources.length) {
+    document.getElementById("clPanel").innerHTML =
+      '<div class="blank"><b>还没有素材</b>' +
+      '先去「总素材库」上传或粘贴一份文稿，再回到这里切条、分类。</div>';
+    document.getElementById("clCards").innerHTML = "";
+    document.getElementById("clMore").innerHTML = "";
+    return;
+  }
+  const ok = C.sources.some(x => x.id === C.cur);
+  if (!ok) await selectSource(C.sources[0].id);
+}
+
+function renderClSources() {
+  const box = document.getElementById("clSources");
+  box.innerHTML = C.sources.map(s => {
+    const sub = [fmtNum(s.chars) + " 字"];
+    sub.push(s.has_run ? (s.cards + " 张卡片") : "还没切分");
+    if (s.pending) sub.push(s.pending + " 待确认");
+    if (s.segments_excluded) sub.push(s.segments_excluded + " 条噪音");
+    return '<button class="clsrcitem' + (s.id === C.cur ? " on" : "") +
+      '" data-src="' + s.id + '">' +
+      '<span class="nm"><span class="dot' + (s.has_run ? " done" : "") + '"></span>' +
+      esc(s.source_collection || s.title) + '</span>' +
+      '<span class="sub">' + esc(sub.join(" · ")) + '</span></button>';
+  }).join("");
+
+  box.querySelectorAll(".clsrcitem").forEach(el => {
+    el.onclick = () => selectSource(Number(el.dataset.src));
+  });
+}
+
+async function selectSource(id) {
+  C.cur = id;
+  C.sel = {};
+  C.offset = 0;
+  C.lastChange = null;
+  C.pvOpen = false;      // 换一份文件，切分预览重新收起来（默认只留一行摘要）
+  const row = C.sources.find(x => x.id === id) || {};
+  C.rule = row.rule || "";
+  renderClSources();
+  renderClBatch();
+  try {
+    await refreshPreview(false);
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function refreshPreview(keepRule) {
+  if (!C.cur) return;
+  const q = "?limit=" + C.segLimit + (keepRule && C.rule ? "&rule=" + C.rule : "");
+  try {
+    C.preview = await api("/api/material-classification/materials/" +
+                          C.cur + "/split-preview" + q);
+  } catch (e) {
+    C.preview = null;
+  }
+  if (!keepRule) C.rule = "";
+  renderClPanel();
+}
+
+function renderClPanel() {
+  const box = document.getElementById("clPanel");
+  const row = C.sources.find(x => x.id === C.cur);
+  const pv = C.preview;
+  if (!row || !pv) { box.innerHTML = ""; return; }
+
+  const alts = pv.alternatives || {};
+  const cur = C.rule || pv.rule;
+  const pick = Object.keys(alts).map(k => {
+    const a = alts[k];
+    return '<button class="clrule' + (k === cur ? " on" : "") + '" data-rule="' + k + '">' +
+      '<b>' + esc(a.name) + (a.recommended ? "（推荐）" : "") + '</b>' +
+      '<span>切成 ' + a.count + ' 条 · 中位 ' + a.median + ' 字 · 最长 ' + a.max + ' 字</span>' +
+      '</button>';
+  }).join("");
+
+  const c = pv.counts || {};
+  const segs = pv.segments || [];
+  const prev = segs.map(s => {
+    const lvl = s.noise_level === "high" ? " bad"
+              : (s.noise_level === "hint" ? " hint" : "");
+    const t = ("text" in s) ? s.text : "（这一段没带正文）";
+    return '<div class="row' + lvl + '">' +
+      '<div class="no">' + s.seq + '</div>' +
+      '<div class="tx">' + esc(t) + '</div>' +
+      '<div class="wh">' + esc(s.noise_reason || "") + '</div></div>';
+  }).join("");
+
+  // ---- 已经切好过的文件：默认把这个面板收起来 ----
+  //
+  // 为什么：这个面板有 20 行预览，占满一屏。她的日常是"翻卡片、归类"，
+  // 不是天天重切；默认摊开的结果是每次进来都得先滚过半屏预览才看得见卡片。
+  // 还没切分过的文件例外 —— 那种情况下挑切法就是这一屏的正事，必须摊开。
+  //
+  // 收起时也要留住关键信息：用哪条规则切的、切出多少条。
+  // 收起不等于把信息藏起来，只是把"现在用不到的明细"折起来。
+  if (row.has_run && !C.pvOpen) {
+    box.innerHTML =
+      '<h3>' + esc(row.source_collection || row.title) +
+        '　<span class="chip">已切分</span>' +
+        '<button class="mini" id="clPvOpen" style="margin-left:8px">' +
+        '切分预览 / 重切</button>' +
+      '</h3>' +
+      '<div class="why">按「' + esc(cur === "blank" ? "空行切" : "非空行切") +
+        '」切成 <b>' + c.total + '</b> 条' +
+        (c.noise_high ? '，自动排除 <b>' + c.noise_high + '</b> 条噪音' : '') +
+        '，生成 <b>' + c.will_create_cards + '</b> 张卡片。' +
+        '要看明细或换切法，点上面的按钮。</div>';
+    document.getElementById("clPvOpen").onclick = () => {
+      C.pvOpen = true;
+      renderClPanel();
+    };
+    return;
+  }
+
+  box.innerHTML =
+    '<h3>' + esc(row.source_collection || row.title) +
+      (row.has_run ? '　<span class="chip">已切分</span>' : '　<span class="chip gray">还没切分</span>') +
+      (row.has_run
+        ? '<button class="mini" id="clPvClose" style="margin-left:8px">收起</button>'
+        : "") +
+    '</h3>' +
+    '<div class="why">' + esc(pv.rule_reason || "") + '</div>' +
+    '<div class="clrules">' + pick + '</div>' +
+    '<div class="why">这份文件一共 <b>' + c.total + '</b> 条；' +
+      '自动排除 <b>' + c.noise_high + '</b> 条噪音，提示 <b>' + c.noise_hint + '</b> 条；' +
+      '预计生成 <b>' + c.will_create_cards + '</b> 张卡片。' +
+      (c.noise_hint ? '<br>带「提示」的那些只是看着像标题，<b>没有</b>被排除 —— 短对白是精华，不敢替你删。' : '') +
+    '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:11px 0">' +
+      '<button class="btn primary" id="clApply">' +
+        (row.has_run ? "按这个切法重切" : "确认切分，生成卡片") + '</button>' +
+      (row.run_id && row.segments_excluded
+        ? '<button class="btn" id="clRestore">把 ' + row.segments_excluded +
+          ' 条被排除的噪音恢复成卡片</button>'
+        : '') +
+    '</div>' +
+    '<div class="clprev">' +
+      (prev || '<div class="row"><div class="tx">（没有可预览的段）</div></div>') +
+    '</div>' +
+    (c.total > segs.length
+      ? '<div style="margin-top:6px;font-size:12.5px;color:var(--ink-3)">' +
+        '上面只显示前 ' + segs.length + ' 条；确认时会切完整 ' + c.total + ' 条。</div>'
+      : '');
+
+  box.querySelectorAll("[data-rule]").forEach(b => {
+    b.onclick = () => { C.rule = b.dataset.rule; refreshPreview(true); };
+  });
+  const ap = document.getElementById("clApply");
+  if (ap) ap.onclick = applySplit;
+  const rs = document.getElementById("clRestore");
+  if (rs) rs.onclick = restoreNoise;
+  const pc = document.getElementById("clPvClose");
+  if (pc) pc.onclick = () => { C.pvOpen = false; renderClPanel(); };
+}
+
+async function applySplit() {
+  const row = C.sources.find(x => x.id === C.cur) || {};
+  const body = { rule: C.rule || null };
+  if (row.has_run) {
+    const changing = C.rule && row.rule && C.rule !== row.rule;
+    const msg = changing
+      ? "这个文件上次是用「" + row.rule + "」切的，这次选的是「" + C.rule + "」。\n" +
+        "换切法会重新生成一套段落。已经人工改过的卡片不会失效（它们靠原文偏移定位），确定吗？"
+      : "再切一遍？已经人工改过的卡片不会失效。";
+    if (!confirm(msg)) return;
+    body.force = true;
+  }
+  try {
+    const r = await post("/api/material-classification/materials/" +
+                         C.cur + "/segment-runs", body);
+    if (r.ok === false) { toast(r.message || "切分失败", true); return; }
+    toast(r.message || "切好了");
+    C.sel = {};
+    await loadClSources();
+    await refreshPreview(false);
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function restoreNoise() {
+  const row = C.sources.find(x => x.id === C.cur) || {};
+  if (!row.run_id) { toast("这份文件还没切分过", true); return; }
+  try {
+    const r = await post("/api/segments/restore", { run_id: row.run_id });
+    C.lastChange = r.change_id;
+    toast((r.message || "已恢复") + "，可撤销");
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 卡片流 ---------------- */
+
+async function loadCards(append) {
+  if (!C.cur) return;
+  const q = new URLSearchParams();
+  q.set("material_id", C.cur);
+  if (C.f.cat !== "") q.set("category_id", C.f.cat);
+  if (C.f.tag) q.set("sub_tag", C.f.tag);
+  if (C.f.status) q.set("status", C.f.status);
+  if (C.f.exclude) q.set("include_excluded", "true");
+  if (C.f.bad) q.set("verify_error", "true");
+  if (C.f.dup) q.set("duplicate", "true");
+  q.set("order", C.f.order);
+  q.set("limit", C.limit);
+  q.set("offset", append ? C.offset : 0);
+
+  try {
+    const r = await api("/api/cards?" + q.toString());
+    if (append) {
+      C.cards = C.cards.concat(r.items);
+    } else {
+      C.cards = r.items;
+      C.offset = 0;
+      C.sel = {};
+    }
+    C.total = r.total;
+    r.items.forEach(x => { C.cMap[x.id] = x; });
+    // 类目导航条的计数跟着卡片流一起回来（后端一次算完，不用再多发一个请求）。
+    // 它算的是"不含主类筛选"的数字 —— 否则点了「外貌」之后其他类全变 0。
+    if (r.cat_counts) { C.catCounts = r.cat_counts; renderClCatBar(); }
+    // 「共 N 张」和「撤销上一次」两处跟着数据一起更新。
+    // 以前这个数字只在建筛选条的时候写一次，于是永远停在"共 0 张"。
+    fill("clCount", "共 " + C.total + " 张");
+    const ub = document.getElementById("clUndo");
+    if (ub) ub.hidden = !C.lastChange;
+    renderClCards();
+    renderClBatch();
+    renderClMore();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderClCards() {
+  const box = document.getElementById("clCards");
+  if (!C.cards.length) {
+    box.innerHTML = '<div class="blank"><b>这里还没有卡片</b>' +
+      '上面点「确认切分，生成卡片」，就会按规则把这份文件切成一条一条的卡片。' +
+      '（当前筛选条件下也可能一条都没有，试试把筛选条件放宽。）</div>';
+    return;
+  }
+
+  box.innerHTML = C.cards.map(card => {
+    const on = !!C.sel[card.id];
+    const cat = '<select data-act="cat" data-id="' + card.id + '">' +
+      '<option value="0">未分类</option>' +
+      C.cats.map(k => '<option value="' + k.id + '"' +
+        (card.primary_category_id === k.id ? " selected" : "") + '>' +
+        esc(k.name) + '</option>').join("") + '</select>';
+    const st = '<select data-act="status" data-id="' + card.id + '">' +
+      C.statuses.map(s => '<option' + (card.status === s ? " selected" : "") + '>' +
+        esc(s) + '</option>').join("") + '</select>';
+    const tags = (card.sub_tags || []).map(t =>
+      '<span class="chip">' + esc(t) + '</span>').join("");
+
+    const warns = [];
+    if (!card.verify_ok) {
+      warns.push('<span class="chip bad">与原文对不上：' +
+                 esc(card.verify_reason || "") + '</span>');
+    }
+    if (card.parent_card_id) {
+      warns.push('<span class="chip gray">由拆分或合并产生（原卡 #' +
+                 card.parent_card_id + '）</span>');
+    }
+
+    /* AI 建议必须一眼看得出来。
+       不标的话，"AI 猜的"和"我自己定的"在界面上长得一模一样，
+       那"AI 建议和人工确认分开保存"这件事在界面上就等于没做 ——
+       她会把自己没看过的建议当成已经定好的。
+       标法：来源是 ai 的挂一个标签，没把握的用告警色，并把 AI 给的理由
+       直接摊在卡片上（理由藏在 tooltip 里等于没给）。 */
+    let aiChip = "";
+    if (card.source === "ai") {
+      const c = card.ai_confidence;
+      const shaky = (c === null || c === undefined || c < LOW_CONF);
+      aiChip = '<span class="chip ' + (shaky ? "warn" : "ok") + '"' +
+        (card.ai_reason ? ' title="' + esc(card.ai_reason) + '"' : "") + '>' +
+        'AI 建议 · ' + (shaky ? "没把握" : Math.round(c * 100) + "%") +
+        '</span>';
+      if (shaky && card.ai_reason) {
+        warns.push('<span class="chip warn">AI 的理由：' +
+                   esc(card.ai_reason) + '</span>');
+      }
+    }
+
+    const long = (card.text || "").length > 110;
+    return '<div class="clcard' + (on ? " sel" : "") +
+        (card.status === "已排除" ? " off" : "") + '" data-id="' + card.id + '">' +
+      '<input type="checkbox" data-act="sel" data-id="' + card.id + '"' +
+        (on ? " checked" : "") + '>' +
+      '<div class="idx">' + (card.seq_no || "") + '</div>' +
+      '<div class="bd">' +
+        '<div class="tx' + (long ? " clamp" : "") + '">' + esc(card.text) + '</div>' +
+        (warns.length ? '<div class="warns">' + warns.join("") + '</div>' : '') +
+        '<div class="row2">' +
+          '<span class="chip gray">' + esc(card.source_collection || "") + '</span>' +
+          aiChip + cat + st + tags +
+          '<span class="pos">原文 ' + card.start_offset + '–' + card.end_offset +
+            '（' + card.chars + ' 字）</span>' +
+          // 「归类」放最前面：这是她最常用的动作 ——
+          // 看到一条好素材，直接把它放进自己那一类里，不用等 AI。
+          '<button class="mini" data-act="cls" data-id="' + card.id + '">归类</button>' +
+          '<button class="mini" data-act="tags" data-id="' + card.id + '">标签</button>' +
+          '<button class="mini" data-act="ctx" data-id="' + card.id + '">对照原文</button>' +
+          '<button class="mini" data-act="split" data-id="' + card.id + '">拆分</button>' +
+          (card.status === "已排除"
+            ? '<button class="mini" data-act="restore" data-id="' + card.id + '">恢复</button>'
+            : '<button class="mini d" data-act="excl" data-id="' + card.id + '">排除</button>') +
+        '</div>' +
+      '</div></div>';
+  }).join("");
+
+  box.querySelectorAll('select[data-act="cat"]').forEach(s => {
+    s.onchange = () => setCardCat(Number(s.dataset.id), Number(s.value));
+  });
+  box.querySelectorAll('select[data-act="status"]').forEach(s => {
+    s.onchange = () => setCardStatus(Number(s.dataset.id), s.value);
+  });
+  box.querySelectorAll('input[data-act="sel"]').forEach(i => {
+    i.onchange = () => {
+      const id = Number(i.dataset.id);
+      if (i.checked) C.sel[id] = true; else delete C.sel[id];
+      const card = i.closest(".clcard");
+      if (card) card.classList.toggle("sel", i.checked);
+      renderClBatch();
+    };
+  });
+  box.querySelectorAll('button[data-act]').forEach(b => {
+    b.onclick = () => cardAct(b.dataset.act, Number(b.dataset.id));
+  });
+  box.querySelectorAll(".tx.clamp").forEach(t => {
+    t.onclick = () => t.classList.remove("clamp");
+  });
+}
+
+function renderClMore() {
+  const box = document.getElementById("clMore");
+  const rest = C.total - C.cards.length;
+  if (rest > 0) {
+    box.innerHTML = '<button class="btn" id="clMoreBtn">再看 ' +
+      Math.min(C.limit, rest) + ' 张（还有 ' + rest + ' 张）</button>';
+    document.getElementById("clMoreBtn").onclick = () => {
+      C.offset = C.cards.length;
+      loadCards(true);
+    };
+  } else {
+    box.innerHTML = C.total
+      ? '<div style="font-size:12.5px;color:var(--ink-3)">已经到底了，共 ' +
+        C.total + ' 张。</div>'
+      : "";
+  }
+}
+
+/* ---------------- 类目导航条 ----------------
+   八个主类各装了多少张，一眼看完，点一下就筛到那一类。
+
+   为什么要单独做这一排，而不是继续用那个"全部主类"下拉：
+       她描述自己的用法是"我有一段素材是描写外貌的，我就把它放进外貌这一类" ——
+       在她的模型里，「类」是一个个装东西的桶。
+       桶该是抬眼就能看见、伸手就能点的一排入口。
+       藏在下拉框里的代价是：她永远在猜"我外貌这一类攒了多少了"，
+       得点开下拉、选一次、再看数字，才知道自己攒了多少。
+       那种要"先操作才能看到"的东西，等于不存在。
+
+   为什么空类也要显示：显示「外貌 0」本身就是信息 ——
+   告诉她这一类还一张都没有，该往这里放了。 */
+function renderClCatBar() {
+  const box = document.getElementById("clCatBar");
+  if (!box) return;
+  const cc = C.catCounts || {};
+  let sum = 0;
+  Object.keys(cc).forEach(k => { sum += cc[k]; });
+
+  const chip = (key, name, n, extra) => {
+    const on = String(C.f.cat) === String(key);
+    return '<button class="clcat' + (on ? " on" : "") + (extra || "") +
+      '" data-cat="' + esc(key) + '">' + esc(name) +
+      ' <span class="n">' + n + '</span></button>';
+  };
+
+  box.innerHTML =
+    chip("", "全部", sum) +
+    chip("0", "未分类", cc[""] || 0) +
+    (C.cats.length
+      ? '<span class="sep"></span>' +
+        C.cats.map(c => chip(String(c.id), c.name, cc[String(c.id)] || 0)).join("")
+      : '<span class="tip">还没读到分类体系，点右上「刷新」试试。</span>');
+
+  box.querySelectorAll("[data-cat]").forEach(b => {
+    b.onclick = () => {
+      C.f.cat = b.dataset.cat;
+      const sel = document.getElementById("fCat");
+      if (sel) sel.value = C.f.cat;      // 下拉框跟着同步，别一个新值一个旧值
+      C.offset = 0;
+      loadCards();
+    };
+  });
+}
+
+function renderClFilters() {
+  const box = document.getElementById("clFilters");
+  const catSel = '<select id="fCat"><option value="">全部主类</option>' +
+    '<option value="0"' + (C.f.cat === "0" ? " selected" : "") + '>（未分类）</option>' +
+    C.cats.map(c => '<option value="' + c.id + '"' +
+      (String(C.f.cat) === String(c.id) ? " selected" : "") + '>' +
+      esc(c.name) + '</option>').join("") + '</select>';
+  const tagSel = '<select id="fTag"><option value="">全部副标签</option>' +
+    C.tags.map(t => '<option' + (C.f.tag === t.name ? " selected" : "") + '>' +
+      esc(t.name) + '</option>').join("") + '</select>';
+  const stSel = '<select id="fStatus"><option value="">全部状态</option>' +
+    C.statuses.map(s => '<option' + (C.f.status === s ? " selected" : "") + '>' +
+      esc(s) + '</option>').join("") + '</select>';
+  const orSel = '<select id="fOrder">' +
+    [["seq", "按原文顺序"], ["updated", "最近改的在前"], ["chars", "最长在前"]]
+      .map(o => '<option value="' + o[0] + '"' +
+        (C.f.order === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") +
+    '</select>';
+
+  box.innerHTML = catSel + tagSel + stSel + orSel +
+    '<span class="cbs">' +
+      '<label><input type="checkbox" id="fEx"' + (C.f.exclude ? " checked" : "") +
+        '>显示已排除</label>' +
+      '<label><input type="checkbox" id="fBad"' + (C.f.bad ? " checked" : "") +
+        '>只看校验失败</label>' +
+      '<label><input type="checkbox" id="fDup"' + (C.f.dup ? " checked" : "") +
+        '>只看有重复</label>' +
+    '</span>' +
+    '<span class="cnt" id="clCount">共 ' + C.total + ' 张</span>' +
+    '<button class="mini" id="clUndo"' + (C.lastChange ? "" : " hidden") +
+      '>撤销上一次操作</button>';
+
+  const on = (id, key, cb) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.onchange = () => { C.f[key] = cb(el); loadCards(); };
+  };
+  on("fCat", "cat", el => el.value);
+  on("fTag", "tag", el => el.value);
+  on("fStatus", "status", el => el.value);
+  on("fOrder", "order", el => el.value);
+  on("fEx", "exclude", el => el.checked);
+  on("fBad", "bad", el => el.checked);
+  on("fDup", "dup", el => el.checked);
+  const u = document.getElementById("clUndo");
+  if (u) u.onclick = doUndo;
+}
+
+function renderClBatch() {
+  const bar = document.getElementById("clBatch");
+  const ids = selIds();
+  if (!ids.length) { bar.hidden = true; bar.innerHTML = ""; return; }
+  bar.hidden = false;
+  bar.innerHTML =
+    '<span class="cnt">已选 ' + ids.length + ' 张</span>' +
+    // 「归类…」= 主类 + 副标签一次定完（卡片上的那个按钮是同一套面板）
+    '<button class="mini primary" id="bCls">归类…</button>' +
+    '<select id="bCat"><option value="">只设主类…</option><option value="0">（清空主类）</option>' +
+      C.cats.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join("") +
+    '</select>' +
+    '<select id="bStatus"><option value="">改状态…</option>' +
+      C.statuses.map(s => '<option>' + esc(s) + '</option>').join("") + '</select>' +
+    '<button class="mini" id="bAddTag">加副标签</button>' +
+    '<button class="mini" id="bDelTag">去副标签</button>' +
+    '<button class="mini" id="bMerge">合并相邻</button>' +
+    '<button class="mini" id="bExcl">批量排除</button>' +
+    '<button class="mini" id="bRestore">批量恢复</button>' +
+    '<button class="mini" id="bClear">取消选择</button>' +
+    (C.lastChange ? '<button class="mini undo" id="bUndo">撤销上一次</button>' : '');
+
+  const g = id => document.getElementById(id);
+  g("bCls").onclick = () => {
+    // 都同属一类（且副标签也一样）就预设上，省一次点击；
+    // 不一致就留空，免得把她误导成"这些本来就在一类里"。
+    const cards = ids.map(i => C.cMap[i] || {});
+    const c0 = cards[0].primary_category_id || 0;
+    const sameCat = cards.every(c => (c.primary_category_id || 0) === c0);
+    const key = (c) => (c.sub_tags || []).slice().sort().join("\u0001");
+    const k0 = cards.length ? key(cards[0]) : "";
+    const sameTags = cards.every(c => key(c) === k0);
+    openClCat(ids, { cat: sameCat ? c0 : 0,
+                     tags: sameTags ? (cards[0].sub_tags || []) : [] });
+  };
+  g("bCat").onchange = () => {
+    const v = Number(g("bCat").value);
+    g("bCat").value = "";
+    if (!v && v !== 0) return;
+    batchUpdate(v ? { category_id: v } : { clear_category: true });
+  };
+  g("bStatus").onchange = () => {
+    const v = g("bStatus").value;
+    g("bStatus").value = "";
+    if (!v) return;
+    batchUpdate({ status: v });
+  };
+  g("bAddTag").onclick = () => openTagPick({
+    title: "给选中的 " + ids.length + " 张加副标签", pre: [],
+    onOk: names => batchTags("add", names)
+  });
+  g("bDelTag").onclick = () => openTagPick({
+    title: "从选中的 " + ids.length + " 张里去掉副标签", pre: [],
+    onOk: names => batchTags("del", names)
+  });
+  g("bMerge").onclick = doMerge;
+  g("bExcl").onclick = () => batchUpdate({ status: "已排除" });
+  g("bRestore").onclick = () => batchUpdate({ status: "待确认" });
+  g("bClear").onclick = () => { C.sel = {}; renderClCards(); renderClBatch(); };
+  if (C.lastChange) g("bUndo").onclick = doUndo;
+}
+
+/* ---------------- 单张卡片的操作 ---------------- */
+
+async function cardAct(act, id) {
+  // 手动归类：把她已经定好的主类和副标签带进面板，改起来省事
+  if (act === "cls") {
+    const c = C.cMap[id] || {};
+    return openClCat([id], { cat: c.primary_category_id || 0,
+                             tags: c.sub_tags || [] });
+  }
+  if (act === "tags") {
+    const c = C.cMap[id] || {};
+    openTagPick({
+      title: "给这张卡片选副标签", pre: c.sub_tags || [],
+      onOk: async names => {
+        try {
+          const r = await patch("/api/cards/" + id, { sub_tags: names });
+          C.lastChange = r.change_id;
+          if (C.cMap[id]) C.cMap[id].sub_tags = (r.card || {}).sub_tags || names;
+          toast("副标签已改（可撤销）");
+          C.sel = {};
+          await loadCards();
+        } catch (e) { toast(e.message, true); }
+      }
+    });
+    return;
+  }
+  if (act === "ctx") return openCtx(id);
+  if (act === "split") return openSplit(id);
+  if (act === "excl") return setCardStatus(id, "已排除");
+  if (act === "restore") return setCardStatus(id, "待确认");
+}
+
+async function setCardCat(id, catId) {
+  try {
+    const body = catId ? { category_id: catId } : { clear_category: true };
+    const r = await patch("/api/cards/" + id, body);
+    C.lastChange = r.change_id;
+    if (C.cMap[id]) C.cMap[id].primary_category_id = catId || null;
+    toast("主类已改（可撤销）");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function setCardStatus(id, status) {
+  try {
+    const r = await patch("/api/cards/" + id, { status: status });
+    C.lastChange = r.change_id;
+    toast("状态已改成「" + status + "」（可撤销）");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function batchUpdate(body) {
+  const ids = selIds();
+  if (!ids.length) return;
+  try {
+    const r = await post("/api/cards/batch-update",
+                         Object.assign({ card_ids: ids }, body));
+    if (r.ok === false) { toast(r.message || "没改成", true); return; }
+    C.lastChange = r.change_id;
+    toast((r.message || "已修改") + "，可撤销");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 批量加 / 去副标签：每张卡的结果可能不一样，
+   所以先在本地算出每张卡改完之后是什么，再按"结果相同"分组，一组发一次请求。
+   这样既不用发 N 次请求，也不会把不同的卡片写成同一个值。 */
+async function batchTags(mode, names) {
+  const ids = selIds();
+  if (!ids.length) return;
+  const groups = {};
+  ids.forEach(id => {
+    const cur = (C.cMap[id] && C.cMap[id].sub_tags) || [];
+    let next;
+    if (mode === "add") next = Array.from(new Set(cur.concat(names)));
+    else if (mode === "del") next = cur.filter(t => names.indexOf(t) < 0);
+    else next = names.slice();
+    const key = next.slice().sort().join("\u0001");
+    (groups[key] = groups[key] || []).push(id);
+  });
+  try {
+    let last = null;
+    for (const key in groups) {
+      const r = await post("/api/cards/batch-update", {
+        card_ids: groups[key],
+        sub_tags: key ? key.split("\u0001") : []
+      });
+      if (r && r.change_id) last = r.change_id;
+    }
+    C.lastChange = last;
+    toast("副标签已改（可撤销）");
+    C.sel = {};
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function doMerge() {
+  const ids = selIds().sort((a, b) => a - b);
+  if (ids.length < 2) { toast("至少选两张相邻的卡片", true); return; }
+  try {
+    const r = await post("/api/cards/merge", { card_ids: ids });
+    C.lastChange = r.change_id;
+    toast((r.message || "已合并") + "，可撤销");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function doUndo() {
+  const ch = C.lastChange;
+  if (!ch) { toast("没有可撤销的操作", true); return; }
+  try {
+    const r = await post("/api/card-changes/" + ch + "/undo", {});
+    C.lastChange = null;
+    toast(r.message || "已撤销");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 弹窗：对照原文 ---------------- */
+
+async function openCtx(id) {
+  try {
+    const d = await api("/api/cards/" + id);
+    document.getElementById("clCtxMeta").textContent =
+      (d.source_collection || "") + " · 原文 " + d.start_offset + "–" + d.end_offset +
+      " · " + d.chars + " 字 · " + (d.category_name || "未分类") + " · " + d.status +
+      (d.verify_ok ? " · 与原文一致" : " · 注意：" + (d.verify_reason || ""));
+    fill("clCtxBefore", d.before_text || "（已经是开头）");
+    fill("clCtxText", d.text || "");
+    fill("clCtxAfter", d.after_text || "（已经是结尾）");
+    document.getElementById("clCtxSplit").onclick = () => {
+      hide("mkClCtx");
+      openSplit(id);
+    };
+    show("mkClCtx");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 弹窗：拆分 ---------------- */
+
+function openSplit(id) {
+  const c = C.cMap[id];
+  if (!c) { toast("这张卡片不在当前列表里，先切到它所在的文件", true); return; }
+  const txt = c.text || "";
+  const cuts = [];
+  let last = -9;
+  const re = /[。！？…”」』]/g;
+  let m;
+  while ((m = re.exec(txt))) {
+    const at = c.start_offset + m.index + 1;
+    // 相邻的两个标点只留一个切点（否则会切出一个只有标点的碎片）
+    if (at > c.start_offset && at < c.end_offset && at > last + 1) {
+      cuts.push(at);
+      last = at;
+    }
+  }
+  let html = "", prev = 0;
+  cuts.forEach(at => {
+    const rel = at - c.start_offset;
+    html += esc(txt.slice(prev, rel)) +
+      '<span class="clcut"><button data-cut="' + at + '">✂</button></span>';
+    prev = rel;
+  });
+  html += esc(txt.slice(prev));
+  document.getElementById("clSplitBody").innerHTML = html || esc(txt);
+  document.querySelectorAll("#clSplitBody button[data-cut]").forEach(b => {
+    b.onclick = () => doSplit(id, [Number(b.dataset.cut)]);
+  });
+  document.getElementById("clSplitHalf").onclick = () => doSplit(id, [
+    Math.floor((c.start_offset + c.end_offset) / 2)
+  ]);
+  show("mkClSplit");
+}
+
+async function doSplit(id, cuts) {
+  try {
+    const r = await post("/api/cards/" + id + "/split", { cuts: cuts });
+    if (r.ok === false) { toast(r.message || "拆不开", true); return; }
+    C.lastChange = r.change_id;
+    hide("mkClSplit");
+    toast((r.message || "已拆分") + "，可撤销");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 弹窗：副标签 ---------------- */
+
+/* ==================================================================
+   模型设置 + 手动归类
+   ------------------------------------------------------------------
+   这三块放在一起，因为它们是同一件事的三面：
+     · 模型设置     —— 谁能来判（配 Key）
+     · 开始分类面板 —— 这次用谁来判（挑方法和模型）
+     · 手动归类     —— 不用谁判，我自己定
+   ================================================================== */
+
+/* ---------------- 弹窗：模型设置 ----------------
+   清单存在后端 data/models.json 里，这里拿到的密钥永远是打码的。
+   回传时"密钥留空 = 不改"，所以整条回传、只在要改的那行填 Key 是安全做法。 */
+async function openModels() {
+  try {
+    const d = await api("/api/models");
+    S.models = d.items || [];
+    paintAddOptions();
+    renderModels();
+    show("mkModels");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 「添加」下拉里能选哪些服务商。
+   【为什么预置这几家】
+   她这次踩的坑就是：充的是硅基流动的额度，却填进了「DeepSeek 官方」那一条 ——
+   官方当然说这个密钥没认过。问题根本不在 Key，而在地址那一栏。
+   预置的意义就是把"地址 + 模型名"这一对帮她填对，她只需要粘 Key。
+   但**只是预填**，四个字段全都能改：中转站的地址和模型名千奇百怪，
+   写死一套必然有一半人填不进去。
+   注意：这些预置里没有任何密钥，可以安全地写在前端。 */
+const MODEL_PRESETS = [
+  {
+    id: "siliconflow", label: "硅基流动（SiliconFlow）",
+    key: "siliconflow",
+    base_url: "https://api.siliconflow.cn/v1",
+    model: "deepseek-ai/DeepSeek-V3.2",
+    note: "第三方平台，一个 Key 能用 DeepSeek / Qwen / GLM 等一堆开源模型，"
+        + "国内直连。模型名带厂商前缀（deepseek-ai/…、Qwen/…），"
+        + "要换成别的模型就去控制台抄一个过来。"
+  },
+  {
+    id: "relay", label: "中转站 / 其它 OpenAI 兼容服务",
+    key: "relay",
+    base_url: "https://你的中转站域名/v1",
+    model: "",
+    note: "中转站基本都兼容 OpenAI 的接口。地址填服务商给你的那串"
+        + "（一般以 /v1 结尾，不是网站首页），模型名照抄它文档里写的。"
+        + "填完一定要点「测试」—— 中转站的模型名经常跟官方不一样。"
+  },
+  {
+    id: "blank", label: "空白一条（全部自己填）",
+    key: "custom",
+    base_url: "",
+    model: "",
+    note: "地址、模型名、Key 都自己填。"
+  }
+];
+
+function paintAddOptions() {
+  const sel = document.getElementById("mdAdd");
+  if (!sel) return;
+  sel.innerHTML = '<option value="">＋ 添加一个模型（选服务商）</option>' +
+    MODEL_PRESETS.map(p => '<option value="' + esc(p.id) + '">' +
+      esc(p.label) + '</option>').join("");
+  sel.onchange = () => {
+    const id = sel.value;
+    sel.value = "";
+    if (id) addModel(id);
+  };
+}
+
+/* 找一个还没被占用的内部短名字。
+   她看不到 key（只在卡片角落显示成灰字），所以不能让她起名，
+   但又必须唯一 —— 撞名要么覆盖别人、要么报错，两种体验都差。 */
+function freshModelKey(base) {
+  const used = new Set(S.models.map(m => m.key));
+  let i = 1;
+  let k = base || "custom";
+  while (used.has(k)) { i += 1; k = (base || "custom") + "-" + i; }
+  return k;
+}
+
+/* 添加 = 先只在界面上插一条草稿，等她填完点「保存」才落盘。
+   为什么要这样：选完服务商她还得粘 Key，中途关掉窗口不该在配置文件里
+   留下一条半成品（那条会出现在「自动分类」的可选列表里，看着像坏了）。 */
+function addModel(presetId) {
+  const p = MODEL_PRESETS.find(x => x.id === presetId);
+  if (!p) return;
+  const draft = {
+    key: freshModelKey(p.key),
+    label: p.label,
+    base_url: p.base_url,
+    model: p.model,
+    note: p.note,
+    api_key_masked: "", has_key: false, enabled: true,
+    _draft: true                       // 还没存过，保存时走「新增」接口
+  };
+  S.models.push(draft);
+  renderModels();
+  // 滚到新加的那条，并把她最该动的那一栏选中
+  const rows = document.querySelectorAll("#mdBody .mdrow");
+  const row = rows[rows.length - 1];
+  if (row) {
+    row.scrollIntoView({ block: "nearest" });
+    const kw = row.querySelector('[data-f="api_key"]');
+    if (kw) kw.focus();
+  }
+  toast("选好了，把 Key 粘进去再点「保存」");
+}
+
+function modelChips(m) {
+  const ok = m.enabled && m.has_key;
+  if (m._draft) return '<span class="chip warn">还没保存</span>';
+  if (ok) return '<span class="chip ok">能用</span>';
+  if (m.has_key) return '<span class="chip">已停用</span>';
+  return '<span class="chip local">还没填 Key</span>';
+}
+
+function renderModels() {
+  const box = document.getElementById("mdBody");
+  if (!S.models.length) {
+    box.innerHTML = '<div class="blank"><b>清单是空的</b>' +
+      '正常不该这样 —— 重开一次页面试试。</div>';
+    return;
+  }
+  box.innerHTML = S.models.map((m, i) => {
+    return '<div class="mdrow" data-i="' + i + '">' +
+      '<div class="mdhead">' +
+        '<input class="mdlabel" data-f="label" value="' + esc(m.label || m.key) + '">' +
+        modelChips(m) +
+        '<span class="mdkey">' + esc(m.key) + '</span>' +
+      '</div>' +
+      '<div class="mdnote">' + esc(m.note || "") + '</div>' +
+      '<div class="mdgrid">' +
+        '<label>API 地址<input data-f="base_url" value="' + esc(m.base_url || "") +
+          '" placeholder="https://…/v1"></label>' +
+        '<label>模型名<input data-f="model" value="' + esc(m.model || "") +
+          '" placeholder="服务商文档里写的那个"></label>' +
+      '</div>' +
+      '<div class="mdrow2">' +
+        '<input type="password" data-f="api_key" autocomplete="new-password"' +
+          ' placeholder="' + (m.has_key
+            ? "已填 " + esc(m.api_key_masked) + "，留空 = 不改"
+            : "粘贴 API Key") + '">' +
+        '<label class="mdchk"><input type="checkbox" data-f="enabled"' +
+          (m.enabled ? " checked" : "") + '>启用</label>' +
+        '<button class="mini" data-act="mtest">测试</button>' +
+        '<button class="mini primary" data-act="msave">' +
+          (m._draft ? "保存这条" : "保存") + '</button>' +
+      '</div>' +
+      '<div class="mdrow2">' +
+        (m.has_key
+          ? '<button class="mini" data-act="mclear">清空密钥</button>' : '') +
+        '<span class="grow" style="flex:1"></span>' +
+        '<button class="mini mddel" data-act="mdel">从清单里删掉</button>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+
+  box.querySelectorAll(".mdrow").forEach(row => {
+    const i = Number(row.dataset.i);
+    const get = f => row.querySelector('[data-f="' + f + '"]');
+    const kw = get("api_key"), en = get("enabled");
+
+    row.querySelector('[data-act="mtest"]').onclick = () => testModel(i, row);
+    row.querySelector('[data-act="msave"]').onclick = () => saveModel(i, row);
+    const mc = row.querySelector('[data-act="mclear"]');
+    if (mc) mc.onclick = () => clearModelKey(i, row);
+    row.querySelector('[data-act="mdel"]').onclick = () => deleteModel(i, row);
+    // 回车 = 保存，省得她还要挪鼠标去点
+    row.querySelectorAll("input").forEach(inp => {
+      inp.onkeydown = ev => { if (ev.key === "Enter") saveModel(i, row); };
+    });
+  });
+}
+
+/* 把这一行的输入框收成一份请求体。
+   【只把"改过的字段"发出去】—— 这是这一整块最容易出错的地方。
+   后端是 PATCH 语义：字段在不在请求里决定改不改。
+   如果这里把没动过的字段也一并回传，看起来没差别，
+   但 api_key 是个例外（界面回传的永远是空），
+   所以这里统一只发真正有值的字段，api_key 空了就不发。 */
+function readModelRow(i, row) {
+  const m = S.models[i];
+  const v = f => {
+    const el = row.querySelector('[data-f="' + f + '"]');
+    return el ? el.value.trim() : "";
+  };
+  const body = {
+    key: m.key,
+    label: v("label") || m.label || m.key,
+    base_url: v("base_url"),
+    model: v("model"),
+    enabled: !!(row.querySelector('[data-f="enabled"]') || {}).checked
+  };
+  const k = v("api_key");
+  if (k) body.api_key = k;             // 没填就不发 = 不改密钥
+  return body;
+}
+
+/* 保存一条。
+   【为什么新建的走 /api/models/add，改的走 /api/models】
+   在她那侧这是两个不同的动作。新建时撞上已有的名字，
+   正确反应是说"这个名字有了"，而不是默默覆盖掉原来那条配置。 */
+async function saveModel(i, row) {
+  const m = S.models[i];
+  const btn = row.querySelector('[data-act="msave"]');
+  const body = readModelRow(i, row);
+  if (!body.base_url) { toast("API 地址得填上，不然发不出去请求", true); return; }
+  if (!body.model) { toast("模型名得填上（服务商文档里写的那个）", true); return; }
+  btn.disabled = true;
+  try {
+    const url = m._draft ? "/api/models/add" : "/api/models";
+    const r = await post(url, body);
+    S.models = r.items || S.models;
+    renderModels();
+    toast(m._draft ? ("已添加 " + body.label) : "设置已保存");
+    await refreshClsMeta();
+  } catch (e) {
+    toast(e.message, true);
+    btn.disabled = false;
+  }
+}
+
+/* 清空密钥。配置留着，只把钥匙抹掉。
+   为什么要二次确认：她可能只是想换个 Key，结果点到这里 ——
+   那下次跑分类就会因为"没填 Key"报错，而她会以为是别的地方坏了。 */
+async function clearModelKey(i, row) {
+  const m = S.models[i];
+  if (!confirm("把「" + (m.label || m.key) + "」的 API Key 清掉？\n\n" +
+               "地址、模型名、备注都留着，只删钥匙。\n" +
+               "删了之后这条就用不了了，要用得重新粘一个。\n\n" +
+               "（如果你只是想换个 Key：不用点这里，" +
+               "直接在输入框粘新的、点保存就覆盖了。）")) return;
+  try {
+    const r = await post("/api/models/clear-key", { key: m.key });
+    S.models = r.items || S.models;
+    renderModels();
+    toast("密钥已清空");
+    await refreshClsMeta();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteModel(i, row) {
+  const m = S.models[i];
+  if (m._draft) {                       // 没存过的草稿，直接从界面拿掉即可
+    S.models.splice(i, 1);
+    renderModels();
+    return;
+  }
+  if (!confirm("从清单里删掉「" + (m.label || m.key) + "」？\n\n" +
+               "配置和里面的 Key 都会删掉，这个动作撤不回来。\n" +
+               "（它不会影响以前已经跑完的分类结果 —— " +
+               "那些记录里还留着用的是哪个模型。）")) return;
+  try {
+    const r = await post("/api/models/delete", { key: m.key });
+    S.models = r.items || S.models;
+    renderModels();
+    toast("已删除");
+    await refreshClsMeta();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 测试连通：真发一句「在吗」，顺带把用量带回来。
+   比"跑完 600 张卡才发现 Key 写错了"省事得多，也省钱。
+   **测的是输入框里现在的内容**，不是存过的那份 ——
+   她会先改地址再测，测通了才保存。这个顺序最自然。 */
+async function testModel(i, row) {
+  const m = S.models[i];
+  const btn = row.querySelector('[data-act="mtest"]');
+  const body = readModelRow(i, row);
+  body.key = m.key;
+  btn.disabled = true;
+  btn.textContent = "测试中…";
+  try {
+    const r = await post("/api/models/test", body);
+    const u = r.usage || {};
+    const n = u.total_tokens || u.prompt_tokens;
+    toast("通了 ——" + (r.model || body.model) + " 回了一句「" +
+          (r.reply || "").trim() + "」" + (n ? ("，用掉 " + n + " 个 token") : "") +
+          "。别忘了点「保存」。");
+  } catch (e) {
+    toast("没通：" + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "测试";
+  }
+}
+
+
+async function refreshClsMeta() {
+  await loadClsStates();
+  paintClsHint(true);
+}
+
+/* ---------------- 弹窗：开始自动分类（先定"用谁判"） ----------------
+   为什么要多这一步：她要"看看哪个模型分得最准" —— 那就必须能在点按钮时挑一个，
+   不然只能靠改代码。顺带把"素材会发到服务商那边"这句话放在按钮上方，
+   她还有机会退出去。 */
+function openClsRun(mid, act, el) {
+  const usable = (S.clsMeta && S.clsMeta.usable_models) || [];
+  S.runPick = { mid: mid, act: act, el: el,
+                engine: usable.length ? "llm" : "placeholder" };
+  document.getElementById("crTitle").textContent =
+    act === "redo" ? "重新分类" : "自动分类";
+
+  const engines = [
+    { k: "llm", name: "大模型",
+      desc: usable.length
+        ? ("读得懂句子，判得出「外貌 / 梗 / 暧昧拉扯」这些要理解语义的类。"
+           + "现在有 " + usable.length + " 个可用。")
+        : "现在一个都没配 —— 先去「模型设置」填 Key。",
+      off: !usable.length },
+    { k: "placeholder", name: "本地占位规则",
+      desc: "不联网、不花钱，素材不出这台电脑。但只认形式特征（对话、动作、长相），"
+            + "读不懂语义，判不出的会明显偏多。", off: false }
+  ];
+  document.getElementById("crEngines").innerHTML = engines.map(e =>
+    '<label><input type="radio" name="crEngine" value="' + e.k + '"' +
+      (S.runPick.engine === e.k ? " checked" : "") +
+      (e.off ? " disabled" : "") + '><span><b>' + esc(e.name) + "</b>" +
+      (e.off ? ' <span class="chip gray">不可用</span>' : "") +
+      "<br>" + esc(e.desc) + "</span></label>").join("");
+
+  const sel = document.getElementById("crModel");
+  sel.innerHTML = usable.length
+    ? usable.map(u => '<option value="' + esc(u.key) + '">' +
+        esc(u.label || u.key) + '</option>').join("")
+    : '<option value="">（没有可用的模型）</option>';
+  if (S.clsMeta && S.clsMeta.default_model) sel.value = S.clsMeta.default_model;
+
+  const repaint = () => {
+    const r = document.querySelector('input[name="crEngine"]:checked');
+    S.runPick.engine = r ? r.value : "placeholder";
+    const isLlm = S.runPick.engine === "llm";
+    document.getElementById("crModelField").style.display = isLlm ? "" : "none";
+    document.getElementById("crNote").innerHTML = runNoteHtml();
+  };
+  document.querySelectorAll('input[name="crEngine"]').forEach(r => {
+    r.onchange = repaint;
+  });
+  repaint();
+
+  document.getElementById("crGo").onclick = runCls;
+  show("mkClRun");
+}
+
+function runNoteHtml() {
+  const st = S.runPick;
+  const s = S.cls[st.mid] || {};
+  const lines = [];
+  if (s.needs_split) {
+    lines.push("这个文件还没切分过：任务会先按现有规则把它切成卡片，" +
+      "再逐张分类。切分不改动原文。");
+  }
+  if (st.act === "redo") {
+    lines.push("这次会把上一次自动分类写进去的 <b>" + fmtNum(s.ai_suggested || 0) +
+      " 张建议</b>重算一遍，旧建议被新结果覆盖。你手动改过主类、" +
+      "或手动确认过的卡片不动。");
+  }
+  if (st.engine === "llm") {
+    lines.push("<b>这份素材被切成的每一条片段都会发到模型服务商那边</b>" +
+      "（只发片段文本；几百条就是几百次调用，会产生少量费用）。" +
+      "原文本身只存在你电脑上，分类不会改动它一个字。");
+    // 补充提示词这件事必须提前说 —— 她写的时候在另一个页面，
+    // 站在这儿她才想起来"对了，会带上那几句吗"。
+    const up = clPromptValue();
+    const n = up === null
+      ? ((S.clPrompt && S.clPrompt.content || "").length) : up.length;
+    if (n) {
+      lines.push("会带上你在「素材分类」页写的<b>补充提示词（" + fmtNum(n) +
+        " 字）</b>，每一条片段都会捎上它。");
+    } else {
+      lines.push("没写补充提示词。想让它按你的习惯判，就去「素材分类」页那一栏写几句。");
+    }
+  } else {
+    lines.push("本地规则不联网，素材不出这台电脑。代价是判得粗 ——" +
+      "「梗 / 暧昧拉扯 / 搞笑情节」这三类它基本判不出来，会落在「分类失败」里等你处理。");
+  }
+  return '<div class="why">' + lines.join("<br>") + "</div>";
+}
+
+async function runCls() {
+  const st = S.runPick;
+  if (!st) return;
+  const btn = document.getElementById("crGo");
+  const body = { classifier: st.engine };
+  if (st.engine === "llm") {
+    const mk = document.getElementById("crModel").value;
+    if (!mk) { toast("还没有可用的模型，先去「模型设置」", true); return; }
+    body.model_key = mk;
+  }
+  // 分类页上写的补充提示词一起带上。
+  // clPromptValue() 在收起状态下返回 null（= 用她存着的那份），
+  // 这样"从总素材库点自动分类"也能带上她之前写好保存的那些。
+  const up = clPromptValue();
+  if (up !== null) {
+    if (up.length > ((S.clPrompt && S.clPrompt.max) || 5000)) {
+      toast("补充提示词超长了，去分类页删掉一些再跑", true);
+      return;
+    }
+    body.user_prompt = up;
+  }
+  btn.disabled = true;
+  try {
+    // start 和 redo 走同一个接口：后端会自己看"上次跑到哪"来决定干什么
+    const r = await post("/api/materials/" + st.mid + "/auto-classify", body);
+    hide("mkClRun");
+    toast(r.message || "任务已提交，后台开始跑");
+    await clsRefreshOne(st.mid);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------------- 弹窗：手动归类（主类 + 副标签） ----------------
+   这就是她说的「添加按钮」。两个入口共用：
+     · 卡片上的「归类」    → 归这一张
+     · 批量条上的「归类…」 → 归选中的这几张
+   为什么主类不做成下拉框：下拉框选完就立刻发送了，没有"看一眼再定"的余地；
+   这里改成"挑好主类 + 副标签，再点一下确定"，跟她的说法一致。 */
+function openClCat(ids, opt) {
+  opt = opt || {};
+  S.catPick = { ids: (ids || []).slice(), cat: opt.cat || 0,
+                preTags: (opt.tags || []).slice() };
+  document.getElementById("ccTitle").textContent = S.catPick.ids.length > 1
+    ? ("归类 —— 选中的 " + S.catPick.ids.length + " 张") : "归类";
+  paintClCat(S.catPick.cat);
+  show("mkClCat");
+}
+
+function readCcTags() {
+  const out = [];
+  document.querySelectorAll("#ccTags input[data-tag]").forEach(i => {
+    if (i.checked) out.push(i.dataset.tag);
+  });
+  return out;
+}
+
+/* 选中的主类变了就重画副标签：把这一类常用的排到最前面。
+   但**不自动勾** —— 副标签是她表达"我以后为什么用它"的地方，
+   替她勾上会让她以为那些是必须的，而误勾了不一定看得出来。 */
+function paintClCat(catId) {
+  S.catPick.cat = catId || 0;
+  const cat = C.cats.find(c => c.id === S.catPick.cat) || null;
+  const sug = (cat && cat.suggested_tags) || [];
+
+  document.getElementById("ccCats").innerHTML =
+    '<label><input type="radio" name="ccCat" value="0"' +
+      (S.catPick.cat ? "" : " checked") +
+      '><span>不归类（清空主类）</span></label>' +
+    C.cats.map(c => '<label><input type="radio" name="ccCat" value="' + c.id + '"' +
+      (S.catPick.cat === c.id ? " checked" : "") +
+      "><span>" + esc(c.name) + "</span></label>").join("");
+
+  const all = C.tagsAll.length ? C.tagsAll : C.tags;
+  const far = 999;
+  const ordered = all.slice().sort((a, b) => {
+    const ia = sug.indexOf(a.name), ib = sug.indexOf(b.name);
+    return (ia < 0 ? far : ia) - (ib < 0 ? far : ib);
+  });
+  document.getElementById("ccTags").innerHTML = ordered.map(t =>
+    '<label><input type="checkbox" data-tag="' + esc(t.name) + '"' +
+      (S.catPick.preTags.indexOf(t.name) >= 0 ? " checked" : "") + ">" +
+      esc(t.name) +
+      (sug.indexOf(t.name) >= 0 ? ' <span class="chip gray">这类常用</span>' : "") +
+      (t.active ? "" : ' <span class="chip gray">已停用</span>') +
+    "</label>").join("");
+
+  document.getElementById("ccNote").innerHTML = cat
+    ? '<div class="why">「' + esc(cat.name) + "」的判据：" +
+      esc(cat.description || "（还没写）") + "</div>"
+    : "";
+
+  document.querySelectorAll('input[name="ccCat"]').forEach(r => {
+    r.onchange = () => {
+      // 先把她已经勾的副标签收起来，不然换个主类就全被重置了
+      S.catPick.preTags = readCcTags();
+      paintClCat(Number(r.value));
+    };
+  });
+}
+
+async function submitClCat() {
+  const st = S.catPick;
+  if (!st || !st.ids.length) return;
+  const body = { card_ids: st.ids, sub_tags: readCcTags() };
+  if (st.cat) body.category_id = st.cat;
+  else body.clear_category = true;
+
+  const btn = document.getElementById("ccOk");
+  btn.disabled = true;
+  try {
+    const r = await post("/api/cards/batch-update", body);
+    if (r && r.ok === false) { toast(r.message || "没改成", true); return; }
+    C.lastChange = r.change_id;
+    hide("mkClCat");
+    toast(st.ids.length > 1
+      ? ("这 " + st.ids.length + " 张已归类（可撤销）") : "已归类（可撤销）");
+    C.sel = {};
+    await loadClSources();
+    await loadCards();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById("ccOk").onclick = submitClCat;
+
+function openTagPick(opt) {
+
+  C.picker = opt;
+  document.getElementById("clTagsTitle").textContent = opt.title || "选副标签";
+  document.getElementById("clTagNew").value = "";
+  const pre = opt.pre || [];
+  const list = C.tagsAll.length ? C.tagsAll : C.tags;
+  document.getElementById("clTagsBody").innerHTML = list.length
+    ? list.map(t => '<label><input type="checkbox" data-tag="' + esc(t.name) + '"' +
+        (pre.indexOf(t.name) >= 0 ? " checked" : "") + '>' + esc(t.name) +
+        (t.active ? "" : ' <span class="chip gray">已停用</span>') + '</label>').join("")
+    : '<div style="color:var(--ink-3);font-size:13px">还没有副标签，在下面新建一个。</div>';
+  show("mkClTags");
+}
+
+/* ---------------- 弹窗：来源映射表 ---------------- */
+
+async function openMap() {
+  try {
+    const r = await api("/api/source-mappings");
+    C.maps = r.items || [];
+    renderMap();
+    show("mkClMap");
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderMap() {
+  const body = document.getElementById("clMapBody");
+  if (!C.maps.length) {
+    body.innerHTML = '<div class="blank"><b>还没有来源</b>' +
+      '去「总素材库」导入或粘贴一份文稿，这里就会列出它的来源名。</div>';
+    return;
+  }
+  body.innerHTML = '<table class="clmaptbl"><thead><tr>' +
+    '<th>来源</th><th>卡片</th><th>建议主类</th><th>已确认</th><th>抽样</th><th></th>' +
+    '</tr></thead><tbody>' +
+    C.maps.map((m, i) => '<tr data-i="' + i + '">' +
+      '<td>' + esc(m.source_collection) + '</td>' +
+      '<td>' + m.card_count + '</td>' +
+      '<td><select data-act="mapcat"><option value="0">（不定）</option>' +
+        C.cats.map(c => '<option value="' + c.id + '"' +
+          (m.category_id === c.id ? " selected" : "") + '>' + esc(c.name) +
+          '</option>').join("") + '</select></td>' +
+      '<td><input type="checkbox" data-act="mapcf"' + (m.confirmed ? " checked" : "") + '></td>' +
+      '<td data-act="smptxt">' + esc(m.sample_result || "未抽样") + '</td>' +
+      '<td><button class="mini" data-act="sample">抽样</button> ' +
+        '<button class="mini" data-act="suggest">采纳建议</button> ' +
+        '<button class="mini" data-act="confirm">批量确认</button></td>' +
+    '</tr>').join("") + '</tbody></table>' +
+    '<div class="why" style="margin-top:12px">' +
+    '「采纳建议」只写主类，状态仍是待确认；「批量确认」才写成已确认 —— ' +
+    '它只该用在来源名本身就等于主类的那些（比如来源名叫「环境描写」，主类就是「场景氛围」）。' +
+    '来源名和主类对不上的（来源名是一种"效果评价"或"写作状态"的那种），必须逐条看，不能批量确认。' +
+    '</div>';
+
+  body.querySelectorAll("tr[data-i]").forEach(tr => {
+    const i = Number(tr.dataset.i);
+    const m = C.maps[i];
+    const cat = tr.querySelector('[data-act="mapcat"]');
+    const cf = tr.querySelector('[data-act="mapcf"]');
+    cat.onchange = async () => {
+      const v = Number(cat.value);
+      try {
+        await patch("/api/source-mappings", {
+          source_collection: m.source_collection,
+          category_id: v, clear_category: !v
+        });
+        m.category_id = v || null;
+        toast("建议已存");
+      } catch (e) { toast(e.message, true); }
+    };
+    cf.onchange = async () => {
+      try {
+        await patch("/api/source-mappings", {
+          source_collection: m.source_collection, confirmed: cf.checked
+        });
+        m.confirmed = cf.checked ? 1 : 0;
+      } catch (e) { toast(e.message, true); }
+    };
+    tr.querySelector('[data-act="sample"]').onclick = () => doSample(i);
+    tr.querySelector('[data-act="suggest"]').onclick = () =>
+      applySource(i, false, Number(cat.value));
+    tr.querySelector('[data-act="confirm"]').onclick = () =>
+      applySource(i, true, Number(cat.value));
+  });
+}
+
+async function doSample(i) {
+  const m = C.maps[i];
+  try {
+    const r = await api("/api/source-mappings/sample?source_collection=" +
+                        encodeURIComponent(m.source_collection) + "&size=10");
+    C.sample = { src: m.source_collection, ids: r.ids || [], size: (r.items || []).length };
+    document.getElementById("clSampleTitle").textContent =
+      "抽样检查：" + m.source_collection;
+    document.getElementById("clSampleBody").innerHTML = (r.items || []).length
+      ? r.items.map((x, k) => '<div class="it"><b>#' + (k + 1) +
+          '（' + x.chars + ' 字，原文 ' + x.start_offset + '–' + x.end_offset + '）</b><br>' +
+          esc(x.text) + '</div>').join("")
+      : '<div class="it">这个来源下还没有卡片，先切分。</div>';
+    document.getElementById("clSampleResult").value = "0";
+    show("mkClSample");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function applySource(i, confirm, catId) {
+  const m = C.maps[i];
+  if (!catId) { toast("先给这个来源选一个主类", true); return; }
+  if (confirm && !m.sample_result) {
+    toast("先点「抽样」看几条，再来批量确认", true);
+    return;
+  }
+  try {
+    const r = await post("/api/source-mappings/apply", {
+      source_collection: m.source_collection,
+      category_id: catId, confirm: confirm,
+      sample_ids: (C.sample && C.sample.src === m.source_collection) ? C.sample.ids : [],
+      sample_result: m.sample_result || ""
+    });
+    if (r.ok === false) { toast(r.message || "没成功", true); return; }
+    C.lastChange = r.change_id;
+    toast((r.message || "已采纳") + "，可撤销");
+    await openMap();
+    await loadClSources();
+    await loadCards();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 弹窗：操作记录 ---------------- */
+
+async function openHist() {
+  try {
+    const r = await api("/api/card-changes?limit=40");
+    C.changes = r.items || [];
+    renderHist();
+    show("mkClHist");
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderHist() {
+  const body = document.getElementById("clHistBody");
+  if (!C.changes.length) {
+    body.innerHTML = '<div class="blank"><b>还没有操作记录</b>' +
+      '改过卡片之后，这里会出现每一条改动，随时能撤销。</div>';
+    return;
+  }
+  body.innerHTML = '<table class="clmaptbl"><thead><tr>' +
+    '<th>时间</th><th>操作</th><th>影响</th><th>抽样</th><th></th>' +
+    '</tr></thead><tbody>' +
+    C.changes.map((c, i) => '<tr data-i="' + i + '">' +
+      '<td>' + esc((c.created_at || "").slice(5)) + '</td>' +
+      '<td>' + esc(c.summary || c.action_type) + '</td>' +
+      '<td>' + c.affected_count + '</td>' +
+      '<td>' + esc(c.sample_result || "—") + '</td>' +
+      '<td>' + (c.undone_at
+        ? '<span class="chip gray">已撤销</span>'
+        : (c.undoable ? '<button class="mini" data-act="undo">撤销</button>' : '—')) +
+      '</td></tr>').join("") + '</tbody></table>';
+
+  body.querySelectorAll('button[data-act="undo"]').forEach(b => {
+    b.onclick = async () => {
+      const i = Number(b.closest("tr").dataset.i);
+      try {
+        const r = await post("/api/card-changes/" + C.changes[i].id + "/undo", {});
+        toast(r.message || "已撤销");
+        await openHist();
+        await loadClSources();
+        await loadCards();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+
+/* ---------------- 一次性绑定 ---------------- */
+
+document.getElementById("clMapBtn").onclick = openMap;
+document.getElementById("clHistBtn").onclick = openHist;
+document.getElementById("clReload").onclick = async () => {
+  await loadClassify(true);
+  await refreshPreview(false);
+  await loadCards();
+  renderClFilters();
+  toast("已刷新");
+};
+
+/* ---- 补充提示词：展开/收起、计数、保存、清空 ---- */
+document.getElementById("clPHead").onclick = () => {
+  S.clPrompt = S.clPrompt || { content: "", max: 5000 };
+  S.clPrompt.open = !S.clPrompt.open;
+  paintClPrompt();
+};
+document.getElementById("clPText").oninput = paintClPCount;
+document.getElementById("clPSave").onclick = async () => {
+  const v = document.getElementById("clPText").value;
+  const max = (S.clPrompt && S.clPrompt.max) || 5000;
+  if (v.length > max) {
+    toast("超了 " + (v.length - max) + " 字，先删掉一些再保存", true);
+    return;
+  }
+  try {
+    const r = await post("/api/classify-prompt", { content: v });
+    S.clPrompt = { content: r.content || "", max: r.max || 5000, open: true };
+    paintClPrompt();
+    toast(r.content ? "提示词已保存" : "提示词已清空");
+  } catch (e) { toast(e.message, true); }
+};
+document.getElementById("clPClear").onclick = async () => {
+  const ta = document.getElementById("clPText");
+  if (ta.value && !confirm("清空补充提示词？\n\n"
+      + "清空之后自动分类就只按分类判据来判，不再带你写的这几句。\n"
+      + "（已经跑完的那些任务不受影响。）")) return;
+  ta.value = "";
+  paintClPCount();
+  try {
+    const r = await post("/api/classify-prompt", { content: "" });
+    S.clPrompt = { content: "", max: r.max || 5000, open: true };
+    paintClPrompt();
+    toast("提示词已清空");
+  } catch (e) { toast(e.message, true); }
+};
+document.querySelectorAll("[data-close]").forEach(b => {
+  b.onclick = () => hide(b.dataset.close);
+});
+
+document.getElementById("clSampleOk").onclick = () => {
+  const v = Number(document.getElementById("clSampleResult").value);
+  const n = (C.sample && C.sample.size) || 10;
+  const txt = v === 9 ? (n + " 条里 " + n + " 条以上符合，可以批量确认")
+            : v === 7 ? (n + " 条里 7~8 条符合，可以批但整批标「需复核」")
+            : v === 5 ? (n + " 条里 6 条及以下符合，不许批量，退回逐条")
+            : "还没看";
+  if (C.sample) {
+    const idx = C.maps.findIndex(m => m.source_collection === C.sample.src);
+    if (idx >= 0) {
+      C.maps[idx].sample_result = txt;
+      const cell = document.querySelector('#clMapBody tr[data-i="' + idx +
+                                           '"] [data-act="smptxt"]');
+      if (cell) cell.textContent = txt;
+    }
+  }
+  hide("mkClSample");
+};
+
+document.getElementById("clTagsOk").onclick = async () => {
+  const names = [];
+  document.querySelectorAll('#clTagsBody input[type=checkbox]').forEach(i => {
+    if (i.checked) names.push(i.dataset.tag);
+  });
+  const nw = document.getElementById("clTagNew").value.trim();
+  if (nw && names.indexOf(nw) < 0) {
+    try {
+      await post("/api/sub-tags", { name: nw, action: "add" });
+      names.push(nw);
+      C.tags = ((await api("/api/categories")).sub_tags) || C.tags;
+    } catch (e) { toast(e.message, true); }
+  }
+  hide("mkClTags");
+  const cb = C.picker && C.picker.onOk;
+  C.picker = null;
+  if (cb) await cb(names);
+};
+
 
 /* ---------------- 启动 ---------------- */
 

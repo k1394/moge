@@ -19,7 +19,7 @@
 
     分类\\打斗.docx                 → 标签 [打斗]
     分类\\外貌.docx                 → 标签 [外貌]
-    分类\\世界观\\九门\\九门\\职业.txt → 标签 [世界观, 九门, 职业]
+    分类\\世界观\\旧城\\旧城\\职业.txt → 标签 [世界观, 旧城, 职业]
 
 好处是你现有的分类直接变成标签体系，不用手工重打一遍。
 
@@ -133,7 +133,7 @@ def import_folder(folder, owner=db.DEFAULT_OWNER, recursive=True,
                   local_only=False, dry_run=False):
     """导入一个文件夹里的所有可解析文件。
 
-    recursive=True 时子文件夹也一起扫（你的「世界观\\九门」就在子目录里）。
+    recursive=True 时子文件夹也一起扫（你的「世界观\\旧城」就在子目录里）。
     """
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
@@ -189,7 +189,7 @@ def _summarize(items):
 
 # ----------------------------------------------------------------------
 # 命令行自测
-#     python backend/importer.py "C:\\Users\\Administrator\\Desktop\\分类"
+#     python backend/importer.py "D:\\素材\\分类"
 #     末尾加 preview 只看预览，不写库
 # ----------------------------------------------------------------------
 

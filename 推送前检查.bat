@@ -11,7 +11,14 @@ if errorlevel 1 (
     exit /b
 )
 
+echo [1/2] data safety check
 python "G:\docker\tools\data_safety_check.py"
+
+echo.
+echo ---------------------------------------------
+echo [2/2] private words check (files going public)
+echo ---------------------------------------------
+python "G:\docker\tools\check_private_words.py"
 
 echo.
 echo ---------------------------------------------

@@ -104,10 +104,15 @@ _v*_tmp.*
 #  要么存数据库（data/ 已被挡），要么放 prompts/ 目录（下面已挡）。
 # ------------------------------------------------------------
 
-# 提示词目录：整个不传，只留一个假示例给外面看
+# 提示词目录：整个不传，只留假示例给外面看
+#
+# 线上真正生效的那份是 prompts/classify.txt（编码在 prompts/ 下，
+# 已经被 prompts/* 挡住了）。这里只放行 example.classify.txt ——
+# 它和 example.prompts.txt 一样，是给人看格式的占位内容。
 prompts/*
 !prompts/.gitkeep
 !prompts/example.prompts.txt
+!prompts/example.classify.txt
 
 # 提示词的其他可能存放形式，一并兜底
 *.prompt

@@ -46,10 +46,18 @@ from pydantic import BaseModel
 
 try:
     from backend import auth, db, importer, parsers
+    from backend import classify_db as cls
+    from backend import classification as auto
+    from backend import segmentation as sg
+    from backend import llm
 except ImportError:                                   # pragma: no cover
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from backend import auth, db, importer, parsers
+    from backend import classify_db as cls
+    from backend import classification as auto
+    from backend import segmentation as sg
+    from backend import llm
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +70,15 @@ INDEX_HTML = os.path.join(FRONTEND_DIR, "index.html")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    # 分类库的建表与迁移：反复启动是安全的（IF NOT EXISTS + 查过再加列）
+    cls.migrate()
+    # 自动分类任务的建表。必须在 cls.migrate() 之后 ——
+    # 它要给 cls 建的 ai_judgements 补两列，那张表得先存在。
+    auto.migrate()
+    # 把上次运行留下的"还在跑"的任务收尾。
+    # 必须放在启动时做：后台任务跑在进程内的线程里，进程一没线程就没了，
+    # 但任务表里还写着 running —— 界面上会永远显示"分类中"而进度不动。
+    auto.reap_orphan_runs()
     db.purge_expired_sessions()
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
@@ -538,3 +555,895 @@ def api_import_run(req: PathIn, user: dict = Depends(auth.current_user)):
                                  local_only=req.local_only, owner=user["owner"])
     res["is_file"] = False
     return res
+
+
+# ======================================================================
+# 素材分类库
+# ======================================================================
+#
+# 这一整块回答一个问题：怎么把一份文件变成"一条一条能看能改的素材卡片"。
+#
+# 分成三步，每一步都能停下来看：
+#     1. 来源列表   —— 有哪些文件、切了没有、能切多少条
+#     2. 切分预览   —— 先看切得对不对（这一步不写任何数据）
+#     3. 确认生成   —— 真的切、真的建卡片
+#
+# 之后就是卡片流的增删改查，以及"任何批量操作都能撤销"。
+#
+# 安全约定（和素材接口完全一致）：
+#     每个接口都挂 Depends(auth.current_user)，
+#     所有查询都带 owner=user["owner"] ——
+#     别人的卡片、切分、变更记录一个字都看不到。
+#     绝不接受前端传来的用户身份。
+#
+# 路由顺序有个坑：/api/cards/merge 和 /api/cards/batch-update 这种
+# 固定路径，必须写在 /api/cards/{cid} 前面。
+# 否则 FastAPI 会先拿 "merge" 去当卡片 id 解析，报 422。
+# ----------------------------------------------------------------------
+
+class SplitIn(BaseModel):
+    """确认切分"""
+    rule: Optional[str] = None      # None = 用自动判断的结果
+    force: bool = False             # 换切法时是否强制
+
+
+class RestoreIn(BaseModel):
+    """把被自动排除的噪音段恢复成卡片"""
+    run_id: int
+    segment_ids: Optional[List[int]] = None
+
+
+class CardPatchIn(BaseModel):
+    """改单张卡片。没传的字段不动；clear_category=True 表示清空主类。"""
+    category_id: Optional[int] = None
+    clear_category: bool = False
+    sub_tags: Optional[List[str]] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+
+class BatchPatchIn(BaseModel):
+    """批量改卡片"""
+    card_ids: List[int] = []
+    category_id: Optional[int] = None
+    clear_category: bool = False
+    sub_tags: Optional[List[str]] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+    sample_ids: List[int] = []
+    sample_result: str = ""
+
+
+class SplitCardIn(BaseModel):
+    """拆分一张卡。cuts 是原文里的绝对偏移（卡内部的位置）"""
+    cuts: List[int] = []
+
+
+class MergeIn(BaseModel):
+    card_ids: List[int] = []
+
+
+class SourceMapIn(BaseModel):
+    """改来源映射表的一行"""
+    source_collection: str = ""
+    category_id: Optional[int] = None
+    clear_category: bool = False
+    note: Optional[str] = None
+    confirmed: Optional[bool] = None
+
+
+class SourceApplyIn(BaseModel):
+    """按来源批量采纳。
+
+    confirm=False 只写"建议"，状态保持待确认；
+    confirm=True  才标记为已确认（只该用于来源明确的那几个，比如"神态"）。
+    """
+    source_collection: str = ""
+    category_id: int
+    confirm: bool = False
+    material_id: Optional[int] = None
+    sample_ids: List[int] = []
+    sample_result: str = ""
+
+
+class SubTagIn(BaseModel):
+    """副标签的增删停用"""
+    name: str = ""
+    action: str = "add"          # add / rename / deactivate / activate / merge
+    new_name: str = ""
+    merge_into: str = ""
+
+
+def _patch_from_body(body) -> dict:
+    """把请求体转成 classify_db 要的 patch 字典。
+
+    规则：字段"传了"才进 patch。
+    clear_category=True 是一种"显式清空"的表达方式
+    （因为 JSON 里传 null 和"没传"很难区分）。
+    """
+    patch = {}
+    if body.clear_category:
+        patch["primary_category_id"] = None
+    elif body.category_id is not None:
+        patch["primary_category_id"] = body.category_id
+    if body.sub_tags is not None:
+        patch["sub_tags"] = body.sub_tags
+    if body.status is not None:
+        patch["status"] = body.status
+    if body.note is not None:
+        patch["note"] = body.note
+    return patch
+
+
+@app.get("/api/material-classification/overview")
+def api_cls_overview(user: dict = Depends(auth.current_user)):
+    """分类库顶部的统计条"""
+    return cls.overview(user["owner"])
+
+
+@app.get("/api/material-classification/sources")
+def api_cls_sources(user: dict = Depends(auth.current_user)):
+    """左栏：文件 / 来源列表"""
+    return {"items": cls.source_list(user["owner"])}
+
+
+@app.get("/api/categories")
+def api_categories(user: dict = Depends(auth.current_user)):
+    """八个正式主类 + 判据 + 副标签 + 状态清单 + 切分规则说明。
+
+    一次全给前端：这三样都是"选项菜单"，页面初始化时取一次就够。
+    """
+    return {
+        "categories": cls.list_categories(),
+        "set_version": cls.CATEGORY_SET_VERSION,
+        "sub_tags": cls.list_sub_tags(user["owner"], active_only=True),
+        "sub_tags_all": cls.list_sub_tags(user["owner"]),
+        "statuses": list(sg.ALL_STATUS),
+        "sources": [x["source_collection"] for x in cls.source_list(user["owner"])],
+        "rules": [{"key": k, "name": v["name"], "desc": v["desc"]}
+                  for k, v in sg.RULES.items()],
+        "norm_version": sg.NORM_VERSION,
+        "rule_version": sg.RULE_VERSION,
+    }
+
+
+@app.get("/api/material-classification/materials/{mid}/split-preview")
+def api_split_preview(
+    mid: int,
+    user: dict = Depends(auth.current_user),
+    rule: str = Query("", description="line / blank，留空则自动判断"),
+    limit: int = Query(80, ge=0, le=800),
+    offset: int = Query(0, ge=0),
+):
+    """切分预览：不写任何数据，只告诉你会切成什么样。"""
+    pv = cls.split_preview(mid, user["owner"], rule=(rule or None),
+                           text_limit=limit if limit else None,
+                           offset=offset)
+    if pv is None:
+        raise HTTPException(status_code=404, detail="没有这份素材，或者它不属于你")
+    if limit:
+        pv["segments"] = pv["segments"][offset:offset + limit]
+        pv["page"] = {"offset": offset, "limit": limit,
+                      "returned": len(pv["segments"])}
+    return pv
+
+
+@app.post("/api/material-classification/materials/{mid}/segment-runs")
+def api_apply_split(mid: int, req: SplitIn,
+                    user: dict = Depends(auth.current_user)):
+    """确认生成：真的切一遍，写 segment_runs + segments + cards。"""
+    res = cls.apply_split(mid, user["owner"], rule=req.rule, force=req.force)
+    if res is None:
+        raise HTTPException(status_code=404, detail="没有这份素材，或者它不属于你")
+    if not res.get("ok"):
+        return res
+    return res
+
+
+@app.post("/api/segments/restore")
+def api_restore_segments(req: RestoreIn, user: dict = Depends(auth.current_user)):
+    """把被自动排除的噪音段恢复成卡片（识别不等于删除）"""
+    res = cls.restore_segments_as_cards(req.run_id, user["owner"],
+                                        req.segment_ids, operator_id=user["id"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "恢复失败"))
+    return res
+
+
+# ---- 卡片：读 ---------------------------------------------------------
+
+@app.get("/api/cards")
+def api_list_cards(
+    user: dict = Depends(auth.current_user),
+    material_id: Optional[int] = None,
+    source_collection: str = "",
+    category_id: Optional[int] = None,
+    sub_tag: str = "",
+    status: str = "",
+    include_excluded: bool = False,
+    verify_error: bool = False,
+    duplicate: bool = False,
+    order: str = "seq",
+    limit: int = Query(60, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """卡片流：分页 + 筛选
+
+    筛选项对应界面上的那一排控件：
+        按文件 / 按来源 / 按主类（category_id=0 表示"还没分类"）
+        / 按副标签 / 按状态 / 是否显示已排除 / 只看看校验失败的
+        / 只看有重复提示的
+    """
+    if source_collection:
+        # 按来源筛选 = 这个来源名下的所有文件
+        return cls.list_cards(user["owner"], source_collection=source_collection,
+                              category_id=category_id,
+                              sub_tag=sub_tag or None, status=status or None,
+                              include_excluded=include_excluded,
+                              only_verify_error=verify_error,
+                              only_duplicate=duplicate, order=order,
+                              limit=limit, offset=offset)
+
+    return cls.list_cards(user["owner"], material_id=material_id,
+                          category_id=category_id,
+                          sub_tag=sub_tag or None, status=status or None,
+                          include_excluded=include_excluded,
+                          only_verify_error=verify_error,
+                          only_duplicate=duplicate, order=order,
+                          limit=limit, offset=offset)
+
+
+@app.get("/api/cards/{cid}")
+def api_get_card(cid: int, user: dict = Depends(auth.current_user)):
+    """卡片详情：正文 + 前后文 + 原文位置 + 校验结果"""
+    d = cls.get_card(cid, user["owner"])
+    if not d:
+        raise HTTPException(status_code=404, detail="没有这张卡片，或者它不属于你")
+    return d
+
+
+# ---- 卡片：写（批量相关的一定要放在 {cid} 前面）-----------------------
+
+@app.post("/api/cards/batch-update")
+def api_cards_batch_update(req: BatchPatchIn,
+                           user: dict = Depends(auth.current_user)):
+    """批量改卡片：主类 / 副标签 / 状态 / 备注。一定会留下可撤销的记录。"""
+    if not req.card_ids:
+        raise HTTPException(status_code=400, detail="没有选中任何卡片")
+    patch = _patch_from_body(req)
+    if not patch:
+        raise HTTPException(status_code=400, detail="没有要修改的字段")
+    res = cls.update_cards(user["owner"], req.card_ids, patch,
+                           action_type="batch_update",
+                           operator_id=user["id"],
+                           sample_ids=req.sample_ids,
+                           sample_result=req.sample_result)
+    if not res:
+        raise HTTPException(status_code=404, detail="选中的卡片一张都不属于你")
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "修改失败"))
+    return res
+
+
+@app.post("/api/cards/merge")
+def api_cards_merge(req: MergeIn, user: dict = Depends(auth.current_user)):
+    """合并相邻卡片"""
+    res = cls.merge_cards(req.card_ids, user["owner"], operator_id=user["id"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "合并失败"))
+    return res
+
+
+@app.patch("/api/cards/{cid}")
+def api_patch_card(cid: int, req: CardPatchIn,
+                   user: dict = Depends(auth.current_user)):
+    """改单张卡片"""
+    patch = _patch_from_body(req)
+    if not patch:
+        raise HTTPException(status_code=400, detail="没有要修改的字段")
+    res = cls.update_cards(user["owner"], [cid], patch,
+                           action_type="update_card", operator_id=user["id"])
+    if not res:
+        raise HTTPException(status_code=404, detail="没有这张卡片，或者它不属于你")
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "修改失败"))
+    return {"ok": True, "change_id": res["change_id"],
+            "card": cls.get_card(cid, user["owner"])}
+
+
+@app.post("/api/cards/{cid}/split")
+def api_split_card(cid: int, req: SplitCardIn,
+                   user: dict = Depends(auth.current_user)):
+    """拆分一张卡。原卡不删，标记为已排除（可恢复）。"""
+    res = cls.split_card(cid, user["owner"], req.cuts, operator_id=user["id"])
+    if not res:
+        raise HTTPException(status_code=404, detail="没有这张卡片，或者它不属于你")
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "拆分失败"))
+    return res
+
+
+# ---- 变更记录与撤销 --------------------------------------------------
+
+@app.get("/api/card-changes")
+def api_list_changes(user: dict = Depends(auth.current_user),
+                     material_id: Optional[int] = None,
+                     limit: int = Query(50, ge=1, le=500)):
+    """变更记录。界面上是一个"操作历史"面板，每条后面带一个撤销按钮。"""
+    return {"items": cls.list_changes(user["owner"], limit=limit,
+                                      material_id=material_id)}
+
+
+@app.post("/api/card-changes/{cid}/undo")
+def api_undo(cid: int, user: dict = Depends(auth.current_user)):
+    """撤销一次变更。只恢复"本次改过、且之后没人再动过"的字段。"""
+    res = cls.undo_change(user["owner"], cid)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "撤销失败"))
+    return res
+
+
+# ---- 来源映射与抽样确认 ----------------------------------------------
+
+@app.get("/api/source-mappings")
+def api_source_mappings(user: dict = Depends(auth.current_user)):
+    return {"items": cls.list_source_mappings(user["owner"])}
+
+
+@app.patch("/api/source-mappings")
+def api_set_source_mapping(req: SourceMapIn,
+                           user: dict = Depends(auth.current_user)):
+    """改一行来源映射（改建议、加备注、标记已确认）"""
+    if not req.source_collection:
+        raise HTTPException(status_code=400, detail="没有指定来源名")
+    row = cls.set_source_mapping(
+        user["owner"], req.source_collection,
+        category_id=(None if req.clear_category else req.category_id),
+        note=req.note, confirmed=req.confirmed)
+    if not row:
+        raise HTTPException(status_code=404,
+                            detail="没有这个来源，或者它不属于你")
+    return {"ok": True, "mapping": row}
+
+
+@app.get("/api/source-mappings/sample")
+def api_source_sample(
+    user: dict = Depends(auth.current_user),
+    source_collection: str = "",
+    material_id: Optional[int] = None,
+    size: int = Query(10, ge=1, le=50),
+):
+    """抽样检查。
+
+    样本刻意不是纯随机：固定包含 最长 / 最短 / 含数字或表格残留 /
+    极短 / 疑似重复，再用随机补齐。
+    理由：最长的最容易出问题，重复的说明来源不纯 ——
+    纯随机很可能一条都抽不到。
+    """
+    if not source_collection and not material_id:
+        raise HTTPException(status_code=400, detail="要指定来源名或文件 id")
+    return cls.sample_cards(user["owner"], material_id,
+                            source_collection=source_collection, size=size)
+
+
+@app.post("/api/source-mappings/apply")
+def api_source_apply(req: SourceApplyIn,
+                     user: dict = Depends(auth.current_user)):
+    """按来源批量采纳。
+
+    两件事分开：
+        确认建议（confirm=False）→ 只写主类，状态仍是"待确认"
+        批量确认结果（confirm=True）→ 主类 + 状态"已确认"
+
+    为什么要分开：
+        来源名本身就是一个内容类型的（比如来源名就叫「环境描写」），
+        可以一次定下来；
+        但来源名是"效果评价"或"写作状态"的那种（它和主类不是一回事），
+        整批写"已确认"等于把不确定的东西装成确定的，以后很难查。
+    """
+    cards = cls.all_card_ids(user["owner"], material_id=req.material_id,
+                             source_collection=req.source_collection)
+    if not cards:
+        raise HTTPException(status_code=400,
+                            detail="这个来源下还没有卡片，先切分再采纳")
+
+    patch = {"primary_category_id": req.category_id}
+    if req.confirm:
+        patch["status"] = sg.STATUS_CONFIRMED
+
+    res = cls.update_cards(user["owner"], cards, patch,
+                           action_type="source_apply" if req.confirm else "source_suggest",
+                           operator_id=user["id"],
+                           sample_ids=req.sample_ids,
+                           sample_result=req.sample_result,
+                           summary="来源「%s」批量%s %d 张卡片"
+                                   % (req.source_collection,
+                                      "确认" if req.confirm else "给出建议",
+                                      len(cards)))
+    if not res:
+        raise HTTPException(status_code=404, detail="没有可改的卡片")
+    # 批量没成功（比如有卡片校验不过）时，映射表也不能动 ——
+    # 否则映射表写着"已确认"，卡片却还是待确认，两边就对不上了。
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "批量采纳失败"))
+    cls.set_source_mapping(user["owner"], req.source_collection,
+                           category_id=req.category_id,
+                           confirmed=True if req.confirm else None)
+    return res
+
+
+# ---- 副标签维护 ------------------------------------------------------
+
+@app.post("/api/sub-tags")
+def api_sub_tags(req: SubTagIn, user: dict = Depends(auth.current_user)):
+    """副标签的新增 / 改名 / 停用 / 合并。
+
+    一律不做物理删除（规格要求"旧标签不物理删除"）——
+    停用之后旧卡片上挂着的记录还认得出它叫什么。
+    """
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="标签名不能是空的")
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM sub_tags WHERE owner_id=? AND name=?",
+            (user["owner"], name)).fetchone()
+
+        if req.action == "add":
+            if row:
+                if not row["active"]:
+                    conn.execute("UPDATE sub_tags SET active=1 WHERE id=?", (row["id"],))
+                    return {"ok": True, "message": "标签「%s」已重新启用" % name}
+                return {"ok": True, "message": "标签「%s」已经有了" % name}
+            conn.execute(
+                "INSERT INTO sub_tags (owner_id, name, active, created_at) "
+                "VALUES (?,?,1,?)", (user["owner"], name, cls.now_str()))
+            return {"ok": True, "message": "已新增标签「%s」" % name}
+
+        if not row:
+            raise HTTPException(status_code=404, detail="没有这个标签")
+
+        if req.action in ("deactivate", "activate"):
+            conn.execute("UPDATE sub_tags SET active=? WHERE id=?",
+                         (0 if req.action == "deactivate" else 1, row["id"]))
+            return {"ok": True,
+                    "message": "标签「%s」已%s"
+                               % (name, "停用" if req.action == "deactivate" else "启用")}
+
+        if req.action == "rename":
+            new = (req.new_name or "").strip()
+            if not new:
+                raise HTTPException(status_code=400, detail="新名字不能是空的")
+            if conn.execute("SELECT 1 FROM sub_tags WHERE owner_id=? AND name=?",
+                            (user["owner"], new)).fetchone():
+                raise HTTPException(status_code=400, detail="已经有一个叫「%s」的标签了" % new)
+            conn.execute("UPDATE sub_tags SET name=? WHERE id=?", (new, row["id"]))
+            return {"ok": True, "message": "「%s」已改名为「%s」" % (name, new)}
+
+        if req.action == "merge":
+            into = (req.merge_into or "").strip()
+            tgt = conn.execute("SELECT * FROM sub_tags WHERE owner_id=? AND name=?",
+                               (user["owner"], into)).fetchone()
+            if not tgt:
+                raise HTTPException(status_code=404, detail="找不到要并入的标签「%s」" % into)
+            # 把挂在这个标签上的卡片改挂到目标标签，然后停用原标签
+            conn.execute(
+                """UPDATE OR IGNORE card_tags SET sub_tag_id=? WHERE sub_tag_id=?""",
+                (tgt["id"], row["id"]))
+            conn.execute("DELETE FROM card_tags WHERE sub_tag_id=?", (row["id"],))
+            conn.execute("UPDATE sub_tags SET active=0 WHERE id=?", (row["id"],))
+            return {"ok": True, "message": "「%s」已并入「%s」（原标签停用保留）" % (name, into)}
+
+    raise HTTPException(status_code=400, detail="不认识的操作：%s" % req.action)
+
+
+# ---- 近重复提示 ------------------------------------------------------
+
+@app.get("/api/duplicates")
+def api_duplicates(user: dict = Depends(auth.current_user),
+                   material_id: Optional[int] = None,
+                   source_collection: str = "",
+                   limit: int = Query(200, ge=1, le=500)):
+    """近重复检测。只提示，不自动删、不自动合并。"""
+    return cls.duplicates(user["owner"], material_id=material_id,
+                          source_collection=source_collection or None,
+                          limit=limit)
+
+
+# ======================================================================
+# 自动分类任务（第二阶段）
+# ======================================================================
+#
+# 这几个接口的共同点：**永远不信任前端**。
+# 素材 id、任务 id 都是前端传上来的，每一次都要用"当前登录的人"去库里
+# 核一遍"这东西是不是他的"。少核一次，别人就能改别人的稿子。
+#
+# 另一个共同点：**全都不阻塞**。
+# 提交任务立刻返回一个任务号，真正的活在后台线程里跑，
+# 前端拿着任务号轮询 classification-status 看进度。
+#
+# 现在用的分类器是「占位规则」—— 纯本地字符串判断，不联网、不花钱。
+# 这一点必须让界面如实显示，不能让人以为这是 AI 判的。
+
+class ClassifyIn(BaseModel):
+    """提交一次自动分类（新建和重试共用）。
+
+    classifier  用哪种方法：
+                  留空          = 大模型（默认）
+                  placeholder   = 本地占位规则
+                为什么默认大模型：本地规则读不懂语义，实测分出来大半是错的。
+                它只该在"还没注册模型账号"时用来把流程走通。
+
+    model_key   用哪个模型。留空 = 清单里第一个填了 Key 的。
+
+    user_prompt 这次要捎带的补充提示词（作者自己在界面上写的那几句）。
+                留空/不传 = 用她存着的那份。
+                为什么请求里也带一份：她在分类页写完那几句，
+                最自然的动作是直接点「开始分类」，而不是先点保存再点开始。
+                带上来的同时会替她存下来，下次进来还在。
+    """
+    classifier: Optional[str] = None
+    model_key: Optional[str] = None
+    user_prompt: Optional[str] = None
+
+
+@app.post("/api/materials/{mid}/auto-classify")
+def api_auto_classify(mid: int, req: Optional[ClassifyIn] = None,
+                      user: dict = Depends(auth.current_user)):
+    """提交一次自动分类任务。立刻返回，不等它跑完。"""
+    req = req or ClassifyIn()
+    # 她带上来的补充提示词：先存下来（下次进来还在），再拿这一份去建任务。
+    # 顺序不能反 —— 先建任务再存的话，任务用的是旧的那份。
+    user_prompt = req.user_prompt
+    if user_prompt is not None:
+        try:
+            user_prompt = auto.set_user_prompt(user["owner"], user_prompt)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    try:
+        res, _ = auto.create_run(
+            user["owner"], mid,
+            classifier_name=req.classifier or auto.LlmClassifier.name,
+            model_key=req.model_key,
+            user_prompt=user_prompt,
+            background=True)
+    except ValueError as e:
+        # 「没填 API Key」「没有这个模型」这类"配置还没弄好"的错，
+        # 在这里就变成一句人话返回给她 —— 不要建完任务再失败。
+        raise HTTPException(status_code=400, detail=str(e))
+    if not res.get("ok"):
+        # 「已经有一个在跑」不是她的错，用 409（冲突）比 400 更准；
+        # 但前端只需要知道没成功 + 原因，所以统一 400 也能用。
+        # 这里保持 400，免得前端要为一个分支多写一套处理。
+        raise HTTPException(status_code=400, detail=res.get("message", "提交失败"))
+    return res
+
+
+@app.get("/api/materials/{mid}/classification-status")
+def api_classification_status(mid: int, user: dict = Depends(auth.current_user)):
+    """这个文件现在的分类状态：按钮该显示成什么、进度多少、各类各多少张。"""
+    st = auto.material_state(user["owner"], mid)
+    if st is None:
+        raise HTTPException(status_code=404, detail="没有这份素材，或者它不属于你")
+    return st
+
+
+@app.post("/api/materials/{mid}/classification-retry")
+def api_classification_retry(mid: int, req: Optional[ClassifyIn] = None,
+                             user: dict = Depends(auth.current_user)):
+    """重试。只重跑上次失败的那些卡片；上次没失败的才整份重来。
+
+    默认**沿用上次用的模型**（理由见 classification.retry_run 的注释：
+    中途换模型会让结果一半是 A 判的、一半是 B 判的，而她不会知道）。
+    真要换，就在请求里带上 model_key。
+    """
+    req = req or ClassifyIn()
+    try:
+        res = auto.retry_run(mid, user["owner"],
+                             classifier_name=req.classifier,
+                             model_key=req.model_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "重试失败"))
+    return res
+
+
+@app.post("/api/materials/{mid}/classification-cancel")
+def api_classification_cancel(mid: int, user: dict = Depends(auth.current_user)):
+    """取消正在跑的任务。
+
+    按素材 id 找，不按任务 id —— 界面上她是对着"这个文件"点的取消，
+    不需要（也不该）知道当前任务是几号。
+    """
+    run = auto.active_run(user["owner"], mid)
+    if not run:
+        raise HTTPException(status_code=400, detail="这个文件现在没有在跑的任务")
+    res = auto.cancel_run(run["id"], user["owner"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "取消失败"))
+    return res
+
+
+@app.get("/api/classification-runs")
+def api_classification_runs(user: dict = Depends(auth.current_user),
+                            material_id: Optional[int] = None,
+                            limit: int = Query(50, ge=1, le=200)):
+    """任务历史。放的是"谁在什么时候对哪个文件做了什么"，出问题先看这里。"""
+    return {"items": auto.list_runs(user["owner"], material_id=material_id,
+                                    limit=limit)}
+
+
+@app.get("/api/classification-runs/{run_id}")
+def api_classification_run(run_id: int, user: dict = Depends(auth.current_user)):
+    run = auto.get_run(run_id, user["owner"])
+    if not run:
+        raise HTTPException(status_code=404, detail="没有这个任务，或者它不属于你")
+    return run
+
+
+@app.get("/api/classification-runs/{run_id}/items")
+def api_classification_run_items(run_id: int,
+                                 user: dict = Depends(auth.current_user),
+                                 status: str = Query(""),
+                                 limit: int = Query(200, ge=1, le=1000),
+                                 offset: int = Query(0, ge=0)):
+    """任务明细：每一条卡片处理成什么样，失败的话原因是什么。"""
+    d = auto.list_items(run_id, user["owner"], status=status or None,
+                        limit=limit, offset=offset)
+    if d is None:
+        raise HTTPException(status_code=404, detail="没有这个任务，或者它不属于你")
+    return d
+
+
+@app.get("/api/classification-states")
+def api_classification_states(user: dict = Depends(auth.current_user)):
+    """总素材库里每一份素材的自动分类状态。
+
+    为什么单开一个接口而不是塞进 /api/materials：
+        /api/materials 是"素材库"那条线的核心接口，被好几处复用。
+        只为了给按钮取个状态就去改它的返回结构，一旦出错影响面太大。
+        单独一个接口，坏了也只坏这一个按钮。
+
+    顺带把"现在能选哪些模型"也带上 —— 总素材库的按钮点下去之前要能选模型，
+    为这个再多拉一次接口不值得。
+    """
+    items = db.list_materials(owner=user["owner"], limit=500)["items"]
+    ids = [m["id"] for m in items]
+    models = llm.public_models()
+    usable = [m for m in models if m.get("enabled") and m.get("has_key")]
+
+    # usable_models 给的是**精简后的对象**，不是光秃秃的 key 字符串。
+    # 为什么：界面要在两处显示它的名字 —— "已配好 1 个（通义千问 Plus）"
+    # 和下拉框的选项文字。只给 key 的话界面拿不到人话名字，
+    # 要么显示成 qwen-plus（看着像机器），要么自己再去 models 里翻一遍。
+    # 给对象最省事，也不会多带一个字段给别人（api_key 早在 public_models 里被摘掉了）。
+    usable_brief = [{"key": m["key"], "label": m["label"],
+                     "model": m["model"]} for m in usable]
+
+    out = {"items": auto.material_states(user["owner"], ids),
+           "models": models,
+           "usable_models": usable_brief,
+           "default_model": usable_brief[0]["key"] if usable_brief else "",
+           "default_classifier": (auto.LlmClassifier.name if usable
+                                  else auto.PlaceholderClassifier.name),
+           "llm_ready": bool(usable)}
+
+    # 界面上那句"当前用的是什么"必须如实说。
+    # 分两种说法写，是为了别在她还没配 Key 的时候骗她说在用 AI。
+    if usable:
+        out["note"] = ("自动分类会调用你选的那个大模型 —— "
+                       "素材片段会发到模型服务商的服务器上，"
+                       "发之前界面上会先跟你确认一次。")
+    else:
+        out["note"] = ("还没配置任何大模型。现在只能跑本地占位规则："
+                       "不联网、不花钱，但它读不懂语义，分出来大半是错的。"
+                       "去「模型设置」填一个 API Key 就能用真模型。")
+    return out
+
+
+# ======================================================================
+# 补充提示词（作者自己写的那几句）
+# ======================================================================
+#
+# 【为什么要有这一块】
+#   调好的那版提示词在 prompts/classify.txt 里，动它要改文件、重启服务。
+#   但有一类调整是**临时的、跟这次素材有关**的，比如
+#   「这份稿子里的『他』都指师兄，别按第三人称叙述判」。
+#   为这种事去改文件太麻烦，而且改完忘了改回来更麻烦。
+#   所以单独给一个"这次想额外交代几句"的位置。
+#
+# 【为什么存库不存文件】
+#   它跟着账号走（换个账号就是另一套口味），而且必须是能随时改、
+#   改了立刻生效的。放文件里就又要重启。
+#
+# 【和那两个硬约束的关系】
+#   它排在主类清单和 JSON 格式之后，提示词里明说了"不能推翻"。
+#   见 classification.build_messages 里那段拼装。
+
+class PromptIn(BaseModel):
+    content: str = ""
+
+
+@app.get("/api/classify-prompt")
+def api_get_classify_prompt(user: dict = Depends(auth.current_user)):
+    content = auto.get_user_prompt(user["owner"])
+    return {"content": content, "max": auto.USER_PROMPT_MAX,
+            "chars": len(content)}
+
+
+@app.post("/api/classify-prompt")
+def api_set_classify_prompt(req: PromptIn,
+                            user: dict = Depends(auth.current_user)):
+    """存下来。超长直接拒绝，不悄悄截断 ——
+    截到一半的提示词会变成一句没头没尾的话，模型照样照做，
+    而她以为自己那整段都发出去了。"""
+    try:
+        content = auto.set_user_prompt(user["owner"], req.content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "content": content, "chars": len(content),
+            "max": auto.USER_PROMPT_MAX}
+
+
+# ======================================================================
+# 模型设置（多模型接入）
+# ======================================================================
+#
+# 【为什么要有这一块】
+# 她要拿同一批素材试不同的模型，看哪个分得准 ——
+# 那"用哪个模型"就必须是界面上能改的东西，不能写死在代码里。
+#
+# 【密钥怎么保护的】
+#   · 存 data/models.json。data/ 整块在 .gitignore 里，同步不出去
+#   · 接口**只返回打码版**，真钥匙不出后端
+#   · 回传空字符串 = "不改密钥"。界面上显示的是 sk-abc****wxyz，
+#     她只改了个显示名就回传，不能因此把钥匙清掉
+
+class ModelIn(BaseModel):
+    """一条模型配置。字段含义见 backend/llm.py 的 DEFAULT_MODELS。
+
+    clear_api_key 不是配置字段，是一个动作开关：
+        勾上它 = "把这一条的密钥抹掉"。
+        为什么不能靠 api_key="" 来表达：空字符串在保存那一步的含义是
+        "我没改密钥"（界面显示的是打码版，回传不了原文）。
+        两种意图共用一个值必然分不清，所以删密钥要有自己的开关。
+    """
+    key: str = ""
+    label: str = ""
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    enabled: bool = True
+    note: str = ""
+    clear_api_key: bool = False
+
+
+def _body_dict(m, sent_only=False):
+    """Pydantic 新旧版都能用。
+
+    为了一行取值去赌版本不值当 —— 项目里 .dict() 和 model_dump()
+    的写法都出现过，这里两个都兜住。
+
+    sent_only=True 表示"只要客户端真的发过来的字段"。
+    为什么需要它：ModelIn 给每个字段都留了默认值（空串），
+    于是不管客户端发了什么，转出来的字典都是齐全的一整份 ——
+    后端的"没传就不改"逻辑（见 llm.upsert_model）就再也分不出
+    "她没传中文名"和"她把中文名清空了"，一条配置的名字会被悄悄改掉。
+    """
+    if hasattr(m, "model_dump"):
+        return m.model_dump(exclude_unset=sent_only)
+    return m.dict(exclude_unset=sent_only)              # pragma: no cover
+
+
+@app.get("/api/models")
+def api_models(user: dict = Depends(auth.current_user)):
+    """能选的模型清单。**密钥是打码的，真钥匙不出后端。**"""
+    items = llm.public_models()
+    return {"items": items,
+            "usable": [m["key"] for m in items if m["enabled"] and m["has_key"]],
+            "file": llm.models_path()}
+
+
+@app.post("/api/models")
+def api_save_model(req: ModelIn, user: dict = Depends(auth.current_user)):
+    """改一条模型配置（按 key 认）。**不含"删密钥"那个动作**，见下面。
+
+    为什么"改"和"加"分成两个接口：
+        在她那侧它们是两个按钮。在【添加】里撞上已有的名字，
+        正确反应是说"这个名字有了"，而不是默默覆盖掉原来那条。
+    """
+    want = _body_dict(req, sent_only=True)
+    _k = (want.get("key") or "").strip()
+    if _k and llm.get_model(_k) is None:
+        # 【为什么这里不许"顺手新建"】
+        # upsert 的底层行为是"没有就追加"。界面上这不合适：
+        # 她在另一个标签页把某条删了，这边还开着旧表单，点保存 ——
+        # 那条会被一个**没有地址、没有模型名的空壳**复活，
+        # 而且看起来像"我明明删了"。新增必须走「添加一个模型」那条路。
+        raise HTTPException(
+            status_code=400,
+            detail="清单里没有「%s」这一条了（可能刚被删掉）。"
+                   "刷新一下页面；要新增请用「添加一个模型」。" % _k)
+    try:
+        # 顺手支持"保存 + 同时清空密钥"（她勾了清空又点保存的场景）
+        if want.pop("clear_api_key", False):
+            llm.clear_api_key(want.get("key"))
+        llm.upsert_model(want)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "items": llm.public_models()}
+
+
+@app.post("/api/models/add")
+def api_add_model(req: ModelIn, user: dict = Depends(auth.current_user)):
+    """新增一条（比如往中转站、或硅基流动这类第三方接）。
+
+    一般不用她手填 base_url：界面上的「添加」会按选的服务商预填好，
+    她只要粘 Key。但预填只是省事，四个字段都能自己改 ——
+    中转站的地址和模型名千奇百怪，写死一套必然有一半人填不进去。
+    """
+    want = _body_dict(req, sent_only=True)
+    want.pop("clear_api_key", None)
+    try:
+        item = llm.add_model(want)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "key": item["key"], "items": llm.public_models()}
+
+
+@app.post("/api/models/clear-key")
+def api_clear_model_key(req: ModelIn, user: dict = Depends(auth.current_user)):
+    """把某一条的密钥抹掉（配置留着）。
+
+    她要的就是这个：填错了要能撤。以前只能把整条删掉重加，
+    地址、模型名、备注一起丢。
+    """
+    try:
+        llm.clear_api_key((req.key or "").strip())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "items": llm.public_models()}
+
+
+@app.post("/api/models/test")
+def api_test_model(req: ModelIn, user: dict = Depends(auth.current_user)):
+    """拿这条配置真发一句话，看连不连得通。
+
+    【为什么值得单开一个接口】
+    她填完 Key 的第一件事一定是"这样行不行"。让她跑一次 630 张卡的
+    自动分类来试，又慢又费钱 —— 这里只发一句「在吗」，
+    顺带把用量也带回来（让她对"跑一遍要花多少"有个直觉）。
+    """
+    want = _body_dict(req, sent_only=True)
+    base = llm.get_model(want.get("key")) or {}
+    cfg = {}
+    for f in ("key", "label", "base_url", "model", "api_key", "note"):
+        v = (want.get(f) or "").strip()
+        # 空的一律用已存的 —— 界面回传的是打码版，本来也回传不了原文
+        cfg[f] = v or (base.get(f) or "")
+
+    try:
+        r = llm.chat(cfg, [{"role": "user", "content": "在吗？回我一个字就行。"}],
+                     temperature=0.0, timeout=30)
+    except llm.LlmError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    return {"ok": True, "model": r.get("model"),
+            "reply": (r.get("content") or "")[:60],
+            "usage": r.get("usage") or {}}
+
+
+@app.post("/api/models/delete")
+def api_delete_model(req: ModelIn, user: dict = Depends(auth.current_user)):
+    """把一条配置从清单里移走。
+
+    只是移走，不是"抹掉痕迹" —— 历史任务记录里还留着它的 key 和模型名，
+    所以以前跑过的结果照样能回答"那次用的是谁"。
+    """
+    key = (req.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="没说是哪一条")
+    items = [m for m in llm.load_models() if m["key"] != key]
+    llm.save_models(items)
+    return {"ok": True, "items": llm.public_models()}
