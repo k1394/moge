@@ -326,10 +326,18 @@ def http_tests():
               "%d 个" % len(meta["usage_hints"]))
         check("零件状态有 6 个（跟卡片状态轴是两回事）",
               len(meta["statuses"]) == 6, "%d 个" % len(meta["statuses"]))
-        check("beats 六个点位带中文标签",
-              len(meta["beats"]) == 6
+        # 七个点位，不是六个 —— 第 2 步的提示词（她那份）按七个定，
+        # 缺了「动机」会被 _clean_beats 静默丢掉。标签顺序也要一起钉住：
+        # 光数个数看不出"动机"是不是被排到了最后。
+        check("beats 七个点位带中文标签",
+              len(meta["beats"]) == 7
               and [b["label"] for b in meta["beats"]][0] == "前提",
-              [b["label"] for b in meta["beats"]][:3])
+              [b["label"] for b in meta["beats"]][:4])
+        check("★ 七个点位的顺序和名字固定",
+              [b["key"] for b in meta["beats"]] ==
+              ["setup", "trigger", "action", "motivation",
+               "conflict", "turn", "result"],
+              [b["key"] for b in meta["beats"]])
         check("卡片内化状态有 5 个", len(meta["card_states"]) == 5,
               "%d 个" % len(meta["card_states"]))
         check("meta 里带上了主类清单（建零件时要选分类）",

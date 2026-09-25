@@ -136,18 +136,28 @@ USAGE_HINTS = (
     "危机处理", "收束", "结尾反转", "其他",
 )
 
-# beats：剧情结构化的六个点位。
+# beats：剧情结构化的七个点位。
 #
 # 【为什么键用英文、值存中文】任务书给的就是这个结构
 # （{"setup": "前提", …}）。键是纯程序结构，不会给她看；
 # 界面上显示的是 BEAT_LABELS 里那套中文标签，由接口下发。
 # 这样将来想改措辞（"前提"→"起手"）不用动任何一行数据。
-BEAT_KEYS = ("setup", "trigger", "action", "conflict", "turn", "result")
+#
+# 【为什么是七个不是六个】2026-09-25 补的 "motivation"。
+#   她的剧情内化提示词（prompts/infuse.txt）里 beats 就是七个：
+#   setup / trigger / action / **motivation** / conflict / turn / result。
+#   而 _clean_beats 只留存在于 BEAT_KEYS 里的键 —— 不补这一格的话，
+#   AI 判出来的「行动动机／隐藏目的」会被**静默丢掉**，
+#   她看到的零件会永远少一块，还查不出是谁弄丢的。
+#   顺序按叙事逻辑排：动机紧跟在行动后面。
+BEAT_KEYS = ("setup", "trigger", "action", "motivation",
+             "conflict", "turn", "result")
 
 BEAT_LABELS = {
     "setup": "前提",
     "trigger": "触发事件",
     "action": "关键行动",
+    "motivation": "动机",
     "conflict": "冲突或阻碍",
     "turn": "转折",
     "result": "结果",
@@ -965,9 +975,21 @@ def card_infuse_states(owner, card_ids=None):
     就等于顺手动了她的分类流程。
     算出来的代价只是一次 JOIN，而她的库才 793 张卡。
 
-    第 2 步建了 plot_runs / plot_items 之后，
-    queued / not_suitable / needs_review 会自动开始有值
-    （现在那几张表还不存在，所以只算得出 has_plot / not_processed）。
+    第 2 步（plots_ai.py）建了那四张表之后，queued / not_suitable /
+    needs_review 就开始有值了。判定口径（优先级从高到低，先到先得）：
+
+        has_plot      查到零件关联   —— 最要紧的信息，压过其它一切
+        queued        任务还活着，且这张卡还没轮到（待处理 / 处理中）
+        needs_review  这一批模型"拿不准"（plot_candidates.result=unsure）
+        not_suitable  这张卡被处理过，但没拿它组出零件（outcome=看过没用）
+
+    【这四个状态词是接口下发给前端的枚举，不是往库里写的东西】
+    库里存的是中文（跟 segmentation.ALL_STATUS 一致），下发时换英文 key。
+    两张皮之间靠 CARD_INFUSE_LABELS 对应。
+
+    【为什么向 plots_ai 现取状态词，不在这儿再抄一份】
+    那些字的唯一定义处在建表的那个模块。抄一份的下场是那边改了词、
+    这边**算错但不报错** —— 内化状态会静默全部退化成"还没内化"。
     """
     if card_ids is not None:
         ids = [int(x) for x in card_ids]
@@ -987,24 +1009,68 @@ def card_infuse_states(owner, card_ids=None):
         for r in conn.execute(q, [owner, PLOT_STATUS_EXCLUDED] + args).fetchall():
             out[r["card_id"]] = CARD_INFUSE_HAS_PLOT
 
-        # 2) 排队中 / 待定 / 不适合 —— 这三样要 plot_runs / plot_items，
-        #    第 2 步才建表。表还没建就跳过，不写死假设。
-        if _has_table(conn, "plot_items") and _has_table(conn, "plot_runs"):
-            q2 = ("SELECT i.card_id, i.result, r.status AS run_status "
-                  "FROM plot_items i JOIN plot_runs r ON r.id = i.run_id "
-                  "WHERE r.owner_id=? " +
-                  (("AND i.card_id IN (%s) " % ph) if card_ids is not None else "") +
-                  "ORDER BY i.id")
-            for r in conn.execute(q2, [owner] + args).fetchall():
+        # 2) 排队中 / 待定 / 不适合 —— 这三样要 plot_runs / plot_items /
+        #    plot_run_cards / plot_candidates，都是第 2 步（plots_ai.py）建的表。
+        #    表还没建就跳过，不写死假设。
+        #
+        #    【状态词一个都不许在这边再抄一遍】
+        #    "排队中""看过没用"这些字的**唯一定义处在 plots_ai**（建那些表的模块），
+        #    跟 segmentation.ALL_STATUS 一个道理。在这边重抄一份字符串，
+        #    哪天那边改个词，这里只会**算错且不报错**。
+        #    import 写在函数里而不是文件顶上：plots_ai 反过来 import 本模块，
+        #    放顶上就成环了。函数被调到的时候两个模块都加载完了。
+        if (_has_table(conn, "plot_items") and _has_table(conn, "plot_runs")):
+            from backend import plots_ai as pai
+
+            where_i = ("AND i.card_id IN (%s) " % ph) if card_ids is not None else ""
+
+            # 2a) 排队中：任务还活着，且这张卡本身还没轮到 / 正在处理
+            q2 = ("SELECT i.card_id FROM plot_items i "
+                  "JOIN plot_runs r ON r.id = i.run_id "
+                  "WHERE r.owner_id=? AND r.status IN (%s) "
+                  "AND i.status IN (%s) " % (
+                      ",".join("?" * len(pai.RUN_ACTIVE)),
+                      ",".join("?" * len(pai.ITEM_ACTIVE))) +
+                  where_i + "ORDER BY i.id")
+            for r in conn.execute(
+                    q2, [owner] + list(pai.RUN_ACTIVE) + list(pai.ITEM_ACTIVE)
+                    + args).fetchall():
                 cid = r["card_id"]
-                if out.get(cid) == CARD_INFUSE_HAS_PLOT:
-                    continue              # 已经有零件了，这个信息最要紧
-                if r["run_status"] in ("queued", "running"):
+                if out.get(cid) != CARD_INFUSE_HAS_PLOT:
                     out[cid] = CARD_INFUSE_QUEUED
-                elif r["result"] == "unsuitable":
+
+            # 2b) 待定：这一批模型"拿不准" —— 比"看过没用"更该让她看一眼，
+            #     所以排在 2c 前面，先到先得。
+            #     批次级的 result 落在 plot_candidates 上，用 plot_run_cards
+            #     的 batch_no 摊回该批的每一张卡。
+            if _has_table(conn, "plot_candidates") and _has_table(conn, "plot_run_cards"):
+                q3 = ("SELECT DISTINCT rc.card_id FROM plot_candidates c "
+                      "JOIN plot_run_cards rc "
+                      "ON rc.run_id = c.run_id AND rc.batch_no = c.batch_no "
+                      "WHERE c.owner_id=? AND c.result=? ")
+                a3 = [owner, pai.RESULT_UNSURE]
+                if card_ids is not None:
+                    q3 += "AND rc.card_id IN (%s) " % ph
+                    a3 += args
+                for r in conn.execute(q3, a3).fetchall():
+                    cid = r["card_id"]
+                    if out.get(cid) not in (CARD_INFUSE_HAS_PLOT,
+                                            CARD_INFUSE_QUEUED):
+                        out[cid] = CARD_INFUSE_REVIEW
+
+            # 2c) 不适合内化：模型看过这张卡，但没拿它组出任何零件。
+            #     **这是"这张卡没产出零件"的事实，不是对她的分类下判断** ——
+            #     所以它只出现在这个算出来的状态里，不写回 cards 表。
+            q4 = ("SELECT i.card_id FROM plot_items i "
+                  "JOIN plot_runs r ON r.id = i.run_id "
+                  "WHERE r.owner_id=? AND i.outcome=? " + where_i +
+                  "ORDER BY i.id")
+            for r in conn.execute(q4, [owner, pai.CARD_UNUSED] + args).fetchall():
+                cid = r["card_id"]
+                if out.get(cid) not in (CARD_INFUSE_HAS_PLOT,
+                                        CARD_INFUSE_QUEUED,
+                                        CARD_INFUSE_REVIEW):
                     out[cid] = CARD_INFUSE_UNSUITABLE
-                elif r["result"] == "unsure":
-                    out[cid] = CARD_INFUSE_REVIEW
 
     if card_ids is not None:
         for i in [int(x) for x in card_ids]:

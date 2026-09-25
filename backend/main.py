@@ -49,6 +49,7 @@ try:
     from backend import classify_db as cls
     from backend import classification as auto
     from backend import plots_db as plots
+    from backend import plots_ai as pai
     from backend import segmentation as sg
     from backend import llm
 except ImportError:                                   # pragma: no cover
@@ -58,6 +59,7 @@ except ImportError:                                   # pragma: no cover
     from backend import classify_db as cls
     from backend import classification as auto
     from backend import plots_db as plots
+    from backend import plots_ai as pai
     from backend import segmentation as sg
     from backend import llm
 
@@ -80,10 +82,17 @@ async def lifespan(app: FastAPI):
     # 剧情内化库的建表（plots / plot_cards / plot_versions）。
     # 纯新增三张空表，没有迁移、不碰任何已有表，所以随时跑都安全。
     plots.migrate()
+    # AI 内化那一步的四张表（plot_runs / plot_run_cards / plot_items /
+    # plot_candidates）。同样是纯新增空表。必须在 plots.migrate() 之后 ——
+    # 落库时要往 plots / plot_cards 里写，那两张得先存在。
+    pai.migrate()
     # 把上次运行留下的"还在跑"的任务收尾。
     # 必须放在启动时做：后台任务跑在进程内的线程里，进程一没线程就没了，
     # 但任务表里还写着 running —— 界面上会永远显示"分类中"而进度不动。
     auto.reap_orphan_runs()
+    # 内化任务同理。它会顺手把"没轮到的"卡片记成失败，
+    # 所以点「重试」只会补这些，已经跑过的那几十批不会重花钱。
+    pai.reap_orphan_runs()
     db.purge_expired_sessions()
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
@@ -1950,3 +1959,205 @@ def api_plot_card_states(card_ids: str = "",
         "states": {str(k): v for k, v in states.items()},
         "labels": plots.CARD_INFUSE_LABELS,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 剧情内化 · AI 那一半（第 2 步）
+#
+# 【它和上面第 1 步那段的区别】
+#   上面全是"零件本身"：手工建、改、版本、排除、来源定位。一个 AI 都不调。
+#   这一段是"让 AI 批量把卡片抽象成零件"：发起任务、看进度、取消、重试。
+#   真正的编排逻辑全在 backend/plots_ai.py，这里只是把开关接到网页上。
+#
+# 【为什么发起之后立刻返回】
+#   任务书第十五节禁止"把任务执行放在 HTTP 请求里长时间阻塞页面"。
+#   663 张卡按 12 张一批是 56 批、每批等模型几十秒 —— 放在请求里页面就死了。
+#   所以这里只建任务记录 + 起后台线程，进度靠前端轮询 /api/infuse-runs/{id}。
+#
+# 【AI 提的零件落在哪儿】
+#   直接进【剧情内化库】，status='待确认' + source='ai' + 带置信度和理由。
+#   她逐条确认／改／排除。「已确认」永远只能由人点出来。
+# ══════════════════════════════════════════════════════════════════════
+
+
+class InfuseIn(BaseModel):
+    """发起一次 AI 内化。
+
+    user_prompt 的三种含义（跟 PATCH 语义一脉相承）：
+      不传  → 用她存着的那份补充提示词
+      传 ""  → 这次不要补充提示词
+      传文字 → 这次就用这段
+    """
+    model_key: str = ""
+    user_prompt: Optional[str] = None
+    skip_infused: bool = True
+    # 只跑前 N 张（0 = 不限）。663 张的稿子先跑 20 张试水用得上。
+    limit: int = 0
+
+
+class InfusePromptIn(BaseModel):
+    content: str = ""
+
+
+@app.get("/api/infuse-meta")
+def api_infuse_meta(user: dict = Depends(auth.current_user)):
+    """内化弹层初始化要用的东西，一次全给齐。
+
+    为什么连批次大小都下发：界面上要跟她说"首批先发 3 张、之后每批 12 张"。
+    硬编码在前端的话，后端调了批次大小、界面上那句提示就成了假话。
+    """
+    return {
+        "models": llm.public_models(),
+        "usable_model_keys": [m["key"] for m in llm.usable_models()],
+        "user_prompt": pai.get_user_prompt(user["owner"]),
+        "user_prompt_max": pai.USER_PROMPT_MAX,
+        "low_confidence": pai.CONFIDENCE_LOW,
+        "first_batch_size": pai.FIRST_BATCH_SIZE,
+        "batch_size": pai.BATCH_SIZE,
+        "max_cards_per_run": pai.MAX_CARDS_PER_RUN,
+        "prompt_version": pai.prompt_version(),
+        "result_labels": pai.RESULT_LABELS,
+        "skipped_statuses": list(pai.SKIP_STATUS),
+        "active_statuses": list(pai.RUN_ACTIVE),
+    }
+
+
+@app.get("/api/materials/{mid}/infuse-preview")
+def api_infuse_preview(mid: int,
+                       skip_infused: int = 1, limit: int = 0,
+                       user: dict = Depends(auth.current_user)):
+    """这份素材会送出去多少张卡。一个字都不写库。
+
+    弹层打开时先调它 —— 663 张的稿子和 20 张的稿子，
+    她要花的钱和要等的时间差两个数量级，动手前必须先看见这个数。
+    """
+    pv = pai.target_preview(user["owner"], mid, bool(skip_infused), limit)
+    if not pv.get("ok"):
+        raise HTTPException(status_code=404,
+                            detail=pv.get("message") or "没有这份素材")
+    return pv
+
+
+@app.get("/api/infuse-states")
+def api_infuse_states(user: dict = Depends(auth.current_user)):
+    """总素材库里每一份素材的内化状态（含"还有几张没跑过"）。
+
+    为什么单开一个接口而不是塞进 /api/materials：
+        跟 /api/classification-states 同一个理由 —— /api/materials 是
+        素材库那条线的核心接口，好几处在用；为了给按钮取个状态就动它，
+        一旦出错影响面太大。单独一个接口，坏了也只坏这一个状态条。
+    """
+    return pai.states_for_owner(user["owner"])
+
+
+@app.post("/api/materials/{mid}/infuse")
+def api_infuse_start(mid: int, req: InfuseIn,
+                     user: dict = Depends(auth.current_user)):
+    """发起 AI 内化。立刻返回 run_id，活儿在后台线程里干。"""
+    body = _given(req)
+    res, _run_id = pai.create_run(
+        user["owner"], mid,
+        model_key=body.get("model_key") or "",
+        user_prompt=body.get("user_prompt"),
+        skip_infused=bool(body.get("skip_infused", True)),
+        limit=int(body.get("limit") or 0),
+        background=True)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400,
+                            detail=res.get("message") or "发起内化失败")
+    return res
+
+
+@app.get("/api/infuse-runs")
+def api_infuse_runs(material_id: int = 0, limit: int = 20,
+                    user: dict = Depends(auth.current_user)):
+    """最近的内化任务。进度条和"这个文件跑到第几批了"都靠它。"""
+    rows = pai.list_runs(user["owner"], material_id or None, limit)
+    return {"runs": rows, "count": len(rows)}
+
+
+@app.get("/api/infuse-runs/{rid}")
+def api_infuse_run(rid: int, user: dict = Depends(auth.current_user)):
+    """一个任务的进度。不是自己的，一律说"没有这个"。"""
+    r = pai.get_run(rid, user["owner"])
+    if not r:
+        raise HTTPException(status_code=404, detail="没有这个内化任务")
+    return {"run": r}
+
+
+@app.get("/api/infuse-runs/{rid}/items")
+def api_infuse_items(rid: int, status: str = "", outcome: str = "",
+                     limit: int = Query(1000, ge=1, le=3000),
+                     offset: int = Query(0, ge=0),
+                     user: dict = Depends(auth.current_user)):
+    """逐张卡片的处理结果。失败的那些她要看得到"哪一张、为什么"。"""
+    if not pai.get_run(rid, user["owner"]):
+        raise HTTPException(status_code=404, detail="没有这个内化任务")
+    rows = pai.list_items(rid, user["owner"], status or None,
+                          outcome or None, limit, offset)
+    return {"items": rows, "count": len(rows)}
+
+
+@app.get("/api/infuse-runs/{rid}/candidates")
+def api_infuse_candidates(rid: int, result: str = "",
+                          limit: int = Query(200, ge=1, le=1000),
+                          user: dict = Depends(auth.current_user)):
+    """AI 提出的候选（含原始返回）。
+
+    【为什么候选也要给前端】零件已经直接落库了，但候选里还有
+    "拿不准"和"不适合"的那些 —— 她要能看到模型对这批素材的整体判断，
+    才知道"为什么这份稿子一条零件都没出"。
+    raw_response **不下发**（又长又乱，她看的是结构化那几个字段）。
+    """
+    if not pai.get_run(rid, user["owner"]):
+        raise HTTPException(status_code=404, detail="没有这个内化任务")
+    rows = pai.list_candidates(rid, user["owner"], result or None, limit)
+    for r in rows:
+        r.pop("raw_response", None)
+    return {"candidates": rows, "count": len(rows),
+            "result_labels": pai.RESULT_LABELS}
+
+
+@app.post("/api/infuse-runs/{rid}/cancel")
+def api_infuse_cancel(rid: int, user: dict = Depends(auth.current_user)):
+    """取消。已经跑好的批次留着，不删。"""
+    try:
+        pai.cancel_run(rid, user["owner"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "message": "已取消。跑好的部分都留着。"}
+
+
+@app.post("/api/infuse-runs/{rid}/retry")
+def api_infuse_retry(rid: int, user: dict = Depends(auth.current_user)):
+    """重试。**只补没跑成的那几张**，跑好的绝不重花钱。"""
+    try:
+        res, _new_id = pai.retry_run(rid, user["owner"], background=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not res.get("ok"):
+        raise HTTPException(status_code=400,
+                            detail=res.get("message") or "重试失败")
+    return res
+
+
+@app.get("/api/infuse-prompt")
+def api_infuse_prompt_get(user: dict = Depends(auth.current_user)):
+    """读她给内化写的补充提示词。
+
+    跟自动分类那个框共用同一张表（user_prompts），靠 kind 区分，
+    所以她在这两个框里踩的是同一套规则，不用学两遍。
+    """
+    return {"content": pai.get_user_prompt(user["owner"]),
+            "max": pai.USER_PROMPT_MAX}
+
+
+@app.put("/api/infuse-prompt")
+def api_infuse_prompt_put(req: InfusePromptIn,
+                          user: dict = Depends(auth.current_user)):
+    """存她给内化写的补充提示词。超长直接 400，不悄悄截断。"""
+    try:
+        c = pai.set_user_prompt(user["owner"], req.content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "length": len(c), "max": pai.USER_PROMPT_MAX}

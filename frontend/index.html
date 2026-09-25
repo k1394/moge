@@ -263,11 +263,29 @@
   }
   .clshint .clshintxt { flex: 1 1 auto; }
   .clshint .btn { flex: 0 0 auto; white-space: nowrap; }
-  .clsbar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
-  .clsbar .chip { font-size: 11px; }
-  .clsbar .why {
+  .clsbar, .infbar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+  .clsbar .chip, .infbar .chip { font-size: 11px; }
+  .clsbar .why, .infbar .why {
     font-size: 11px; color: var(--ink-3); flex: 1 1 100%; line-height: 1.6;
   }
+  /* ---- AI 内化：弹层里"要送多少张"那三格 ----
+     这个数字是**花钱的预告**，所以中间那格（跑过的）和右边那格（真送）
+     是并排的大字，让她一眼看出"这次只花这一点的钱"。 */
+  .ifprev { display: flex; gap: 8px; margin-bottom: 14px; }
+  .ifstat {
+    flex: 1 1 0; border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 11px; background: #fff;
+  }
+  .ifstat b { display: block; font-size: 19px; line-height: 1.25; color: var(--ink); }
+  .ifstat span { font-size: 11px; color: var(--ink-3); }
+  .ifstat.hot { border-color: var(--accent); background: #fff8f4; }
+  .ifstat.hot b { color: var(--accent); }
+  .ifchk {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--ink-2); margin-bottom: 6px; cursor: pointer;
+  }
+  .iflim { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+  .iflim input[type=number] { width: 82px; }
   .mini.primary {
     background: var(--accent); border-color: var(--accent); color: #fff;
   }
@@ -898,6 +916,30 @@
     border-radius: 8px; background: #fcfbf9;
   }
 
+  /* ---- 零件里的「AI 为什么这么提」 ----
+     为什么单独成块、不跟普通字段混在一起：
+       这一块的作用是"提醒她核对"，不是"让她填"。
+       混进表单里，看着就像又一个待填项，她会以为还得自己写点什么。
+       独立成块 + 淡底 + 左侧一道竖线，眼睛一扫就知道这是机器给的说明。 */
+  .aibox {
+    border: 1px solid #f0d9c8; border-left: 3px solid var(--accent);
+    background: #fdf8f4; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px;
+  }
+  .aibox .aih {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+  }
+  .aibox .aiconf { font-size: 12px; color: var(--ink-2); }
+  .aibox .air {
+    font-size: 12.5px; color: var(--ink); line-height: 1.8; word-break: break-word;
+  }
+  .aibox .air b { font-weight: 600; }
+  .aibox .aiempty { color: var(--ink-3); }
+  .aibox .aitip {
+    font-size: 12px; color: var(--ink-3); line-height: 1.75;
+    margin-top: 8px; padding-top: 7px; border-top: 1px dashed #f0d9c8;
+  }
+
   /* ---- 版本历史 ---- */
   .pvsec {
     display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
@@ -1050,6 +1092,7 @@
       <header class="vhead">
         <h1 class="vtitle">剧情内化</h1>
         <div class="vacts">
+          <button class="btn" id="plPromptBtn">补充提示词</button>
           <button class="btn primary" id="plNewBtn">＋ 新建剧情零件</button>
           <button class="btn" id="plReload">刷新</button>
         </div>
@@ -1540,6 +1583,118 @@
   </div>
 </div>
 
+<!-- ============ AI 内化：把一份文稿的卡片提炼成剧情零件 ============
+     入口在「总素材库」每份文件的「AI 内化」按钮上（跟「切分」并排）。
+
+     为什么长得跟「自动分类」弹层很像（有意的）：
+     两件事的决策点一模一样 —— 用哪个模型、要不要写补充提示词、
+     "这一下要花多少"。她学一次就够了，不该为第二个功能再学一遍。
+
+     为什么第一眼就是"要送多少张"：
+     663 张和 20 张，花的钱、等的时间差两个数量级。
+     这件事必须在她按下按钮**之前**看见，而不是跑完才发现。 -->
+<div class="mask" id="mkInfuse">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="ifTitle">AI 内化</h2>
+        <p>把一条条具体素材提炼成"换个角色名还成立"的剧情零件，落进【剧情内化库】。</p>
+      </div>
+      <button class="x" data-close="mkInfuse">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>这份素材的卡片</label>
+        <div class="ifprev" id="ifPrev"></div>
+      </div>
+
+      <div class="field">
+        <label>用哪个模型</label>
+        <select id="ifModel"></select>
+        <div class="mdhint" id="ifModelNote"></div>
+      </div>
+
+      <div class="field">
+        <label>补充提示词 <span class="chip gray">选填</span></label>
+        <textarea id="ifPrompt" rows="4" maxlength="5000" spellcheck="false"
+          placeholder="选填。这里写的话，会连同卡片一起发给大模型。&#10;&#10;例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
+        <div class="clpfoot">
+          <span class="clpcnt" id="ifPCnt">0 / 5000</span>
+          <span class="clpwarn" id="ifPWarn"></span>
+          <span class="grow"></span>
+          <button class="mini" id="ifPClear">清空</button>
+          <button class="mini primary" id="ifPSave">保存</button>
+        </div>
+        <div class="mdhint" id="ifPNote"></div>
+      </div>
+
+      <div class="field">
+        <label>跑哪些卡</label>
+        <label class="ifchk">
+          <input type="checkbox" id="ifSkip" checked>
+          跳过已经跑过的卡（不重复花钱）
+        </label>
+        <div class="iflim">
+          先跑前 <input type="number" id="ifLimit" min="0" max="2000"
+                        step="1" value="0"> 张
+          <span class="mdhint">0 = 不限（663 张建议先跑 20 张看看效果）</span>
+        </div>
+      </div>
+
+      <!-- 这一块是"这一下会发生什么"的大白话，随选项实时重画。
+           尤其是"素材会离开这台电脑"和"会产生调用次数"这两件事，
+           她有权在点按钮之前就知道，而不是跑完才发现。 -->
+      <div id="ifNote"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkInfuse">取消</button>
+      <button class="btn primary" id="ifGo">开始内化</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 内化的补充提示词（单独一个设置入口） ============
+     为什么除了内化弹层里那个框，这里还要再来一个：
+     两个框回答的是不同的问题 ——
+       内化弹层里的那个：「这一次」想让 AI 按什么要求提炼（会随任务存快照）
+       这一个：        「我一直以来」的要求是什么（改完存下来，以后每次默认用它）
+     两处读写的是同一份东西（服务端 user_prompts，kind=infuse）。
+     只留一个的话，她要么每次跑都得重写一遍，要么根本没地方
+     静下来把这句话调好。 -->
+<div class="mask" id="mkInfPrompt">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>内化的补充提示词</h2>
+        <p>写在这里的话，以后每次内化都会捎上它。跑某一份素材时还能临时改。</p>
+      </div>
+      <button class="x" data-close="mkInfPrompt">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <textarea id="ipText" rows="8" maxlength="5000" spellcheck="false"
+          placeholder="例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
+        <div class="clpfoot">
+          <span class="clpcnt" id="ipCnt">0 / 5000</span>
+          <span class="clpwarn" id="ipWarn"></span>
+          <span class="grow"></span>
+          <button class="mini" id="ipClear">清空</button>
+          <button class="mini primary" id="ipSave">保存</button>
+        </div>
+        <div class="mdhint">
+          想立刻对某份素材跑一次内化，回<b>【总素材库】</b>点那份文件的
+          <b>「AI 内化」</b>—— 那儿能看到这次会送多少张。
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkInfPrompt">关掉</button>
+    </footer>
+  </div>
+</div>
+
 <!-- ============ 切分：把一份文稿切成卡片 ============
      入口在「总素材库」每份文件的「切分」按钮上。
      为什么搬过来：切分是"文件"这一层的动作，而分类库现在只看"卡片"。
@@ -1663,6 +1818,17 @@
       <button class="x" data-close="mkPlot">&times;</button>
     </header>
     <div class="content">
+      <!-- 只在 AI 提的零件上出现。人工写的零件这一块整块隐藏，
+           免得她打开自己写的东西还看见一个"AI 怎么想的"空框。 -->
+      <div class="aibox" id="pvAiWrap" hidden>
+        <div class="aih">
+          <span class="chip warn" id="pvAiChip">AI 提的</span>
+          <span class="aiconf" id="pvAiConf"></span>
+        </div>
+        <div class="air" id="pvAiReason"></div>
+        <div class="aitip" id="pvAiTip"></div>
+      </div>
+
       <div class="field">
         <label>标题 <span class="req">*</span></label>
         <div class="counter" id="pvTitleCnt">0 / 60</div>
@@ -2200,12 +2366,13 @@ async function loadList() {
   let data;
   try {
     const q = new URLSearchParams({ keyword: S.keyword, tag: S.tag, limit: "200" });
-    // 素材列表和分类状态一起拉。
-    // loadClsStates 自己把错误吞掉了 —— 分类状态取不到只是按钮不显示，
-    // 不该让整个素材库打不开。
+    // 素材列表、分类状态、内化状态一起拉。
+    // loadClsStates / loadInfStates 自己把错误吞掉了 —— 状态取不到
+    // 只是对应那排按钮不显示，不该让整个素材库打不开。
     const both = await Promise.all([
       api("/api/materials?" + q.toString()),
-      loadClsStates()
+      loadClsStates(),
+      loadInfStates()
     ]);
     data = both[0];
   } catch (e) {
@@ -2248,10 +2415,16 @@ async function loadList() {
         ((tags || local || warnChip)
           ? '<div class="tags">' + tags + warnChip + local + '</div>' : '') +
         clsBarHtml(m.id) +
+        infBarHtml(m.id) +
       '</div>' +
       '<div class="acts">' +
         // 「切分」放在「查看」前面：上传完一份文稿，下一步八成就是切它。
         '<button class="mini" data-split="' + m.id + '">切分</button>' +
+        // 「AI 内化」挨着「切分」站：这两件事是一条流水线上的前后两步
+        // （先切成一卡一卡，再把它抽象成零件）。
+        // **每份素材就这么一个内化入口** —— 状态条那边只给"取消/重试"
+        // 这类补救动作，不再放第二个「AI 内化」，免得一张卡上两个同名按钮。
+        '<button class="mini" data-infuse="' + m.id + '">AI 内化</button>' +
         '<button class="mini" data-open="' + m.id + '">查看</button>' +
         '<button class="mini d" data-del="' + m.id + '">删除</button>' +
       '</div>' +
@@ -2260,6 +2433,7 @@ async function loadList() {
 
   // 有任务在跑就开轮询；跑完了它自己会停。
   clsSyncPoll();
+  infSyncPoll();
 
   box.querySelectorAll("[data-open]").forEach(el => {
     el.onclick = () => openDrawer(+el.dataset.open);
@@ -2273,6 +2447,8 @@ async function loadList() {
   box.querySelectorAll("[data-split]").forEach(el => {
     el.onclick = () => openSplit(+el.dataset.split);
   });
+  // 「AI 内化」不在这里绑 —— 它跟状态条一起归事件委托管，
+  // 理由见下面 #list 那两个委托监听（状态条会被反复重画）。
 }
 
 /* 素材库空着、但库里还有"没归属的素材"时，给一个一键接收的入口。
@@ -2633,6 +2809,25 @@ document.getElementById("list").addEventListener("click", ev => {
   ev.preventDefault();
   ev.stopPropagation();
   clsAct(Number(el.dataset.clsid), el.dataset.clsact, el);
+});
+
+/* 内化的两个入口也走委托。
+   「AI 内化」（.acts 里那个，每份素材唯一的内化入口）和状态条上的
+   补救按钮（取消 / 重试 / 继续内化）都会在重画中换掉整个元素，
+   逐个 onclick 绑的话，重画一次就丢一次。 */
+document.getElementById("list").addEventListener("click", ev => {
+  const inf = ev.target.closest("[data-infuse]");
+  if (inf) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openInfuse(Number(inf.dataset.infuse));
+    return;
+  }
+  const act = ev.target.closest("[data-infact]");
+  if (!act) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  infAct(Number(act.dataset.infid), act.dataset.infact, act);
 });
 
 /* ---------------- 详情抽屉 ---------------- */
@@ -5193,6 +5388,536 @@ document.getElementById("clTagsOk").onclick = async () => {
 
 
 /* ==================================================================
+   AI 内化（总素材库这一层）
+   ----------------------------------------------------------------
+   这一段只干一件事：把「点一下 → 后台按批跑 → 零件进【剧情内化库】」
+   这条流程放到界面上，让她看得见、点得动、花钱之前算得清。
+
+   结构跟「自动分类」那一段一样是三段式：
+       状态（S.inf） → 重画状态条（paintInfBars） → 轮询（infSyncPoll）
+
+   为什么不抽成跟分类共用的公共函数：
+     两边的字段、按钮、失败话术都不一样（那边是"判类"，这边是"提炼零件"），
+     硬抽出来只会变成一堆 if，改一边要提心吊胆另一边。
+
+   【这一版唯一"贵"的动作在这里】
+     点「开始内化」会真的把卡片正文发到模型服务商，按调用次数花钱。
+     所以这一段的每处文案都在回答同一个问题："这一下要花多少、花在哪儿"。
+   ================================================================== */
+
+S.inf = {};          // mid → {state, run, all_card_count, done_before, ...}
+S.infMeta = null;    // /api/infuse-meta（模型清单、批次大小、提示词上限）
+S.infBusy = {};      // mid → true（请求飞行中，按钮先禁掉，防重复提交）
+S.infPick = null;    // 内部化弹层那个文件：{mid, preview}
+S.infWired = false;  // 弹层里的控件只接一次事件，重开不重复接
+
+/* 拉一遍所有素材的内化状态。
+   取不到就当"没有状态"—— 按钮和状态条不显示，但**绝不能因此让素材库打不开**。 */
+async function loadInfStates() {
+  try {
+    const d = await api("/api/infuse-states");
+    S.inf = d.items || {};
+  } catch (e) {
+    S.inf = {};
+  }
+  return S.inf;
+}
+
+/* 一张文档卡片底下的内化状态条。
+   一张卡都没有（还没切分）的文件不画 —— 那种时候状态条只会写一句
+   "还没内化 0 张"，是纯噪音；那种文件的下一步是「切分」，不是内化。 */
+function infBarHtml(mid) {
+  const s = S.inf[mid];
+  if (!s || !s.all_card_count) return "";
+  return '<div class="infbar" data-inffor="' + mid + '">' +
+         infBarInner(mid) + '</div>';
+}
+
+function infBarInner(mid) {
+  const s = S.inf[mid];
+  if (!s) return "";
+
+  const chips = [];   // 状态小标签
+  const btns = [];    // 可点的按钮
+  const info = [];    // 数量这类补充信息，攒成一个小标签
+  let why = "";       // 失败原因，独占一行
+
+  if (s.state === "running") {
+    const r = s.run || {};
+    chips.push('<span class="chip warn">内化中 ' + Math.round(r.percent || 0) + '%</span>');
+    if (r.total_items) {
+      info.push(fmtNum(r.done_items) + "/" + fmtNum(r.total_items) + " 张");
+    }
+    if (r.created_plot_count) {
+      info.push("已出 " + fmtNum(r.created_plot_count) + " 个零件");
+    }
+    if (r.failed_items) {
+      chips.push('<span class="chip warn">失败 ' + fmtNum(r.failed_items) + " 张</span>");
+    }
+    // 心跳：回答"它还活着吗"。第一批要等模型回话，数字本来就不动，
+    // 光看一个不动的百分比分不出"在慢慢跑"和"线程早死了"。
+    const beat = beatText(r);
+    if (beat) info.push(beat);
+    // 运行中的错误也要立刻露出来 —— 否则每批都报错时，
+    // 她会盯着一个 0% 的条一直转到跑完才知道全失败了。
+    const live = infWhy(r);
+    if (live) why = "正在跑，但已经有批次报错：" + live;
+    btns.push(infBtn(mid, "cancel", "取消", "d"));
+
+  } else if (s.state === "done") {
+    chips.push('<span class="chip ok">内化完成</span>');
+    if (s.run && s.run.created_plot_count) {
+      info.push("产出 " + fmtNum(s.run.created_plot_count) + " 个零件 · 待你确认");
+    }
+    if (s.fresh_count) info.push("还有 " + fmtNum(s.fresh_count) + " 张没跑过");
+    btns.push(infBtn(mid, "start", s.fresh_count ? "继续内化" : "再跑一遍", ""));
+
+  } else if (s.state === "partial") {
+    chips.push('<span class="chip warn">部分完成</span>');
+    if (s.run && s.run.created_plot_count) {
+      info.push("产出 " + fmtNum(s.run.created_plot_count) + " 个零件");
+    }
+    if (s.run && s.run.failed_items) {
+      info.push("失败 " + fmtNum(s.run.failed_items) + " 张");
+    }
+    why = infWhy(s.run);
+    btns.push(infBtn(mid, "retry", "重试失败的", "primary"));
+    btns.push(infBtn(mid, "start", "再跑一遍", ""));
+
+  } else if (s.state === "failed") {
+    chips.push('<span class="chip warn">上次失败</span>');
+    why = infWhy(s.run);
+    btns.push(infBtn(mid, "retry", "重试内化", "primary"));
+
+  } else if (s.state === "cancelled") {
+    chips.push('<span class="chip local">已取消</span>');
+    if (s.run && s.run.created_plot_count) {
+      info.push("已出 " + fmtNum(s.run.created_plot_count) + " 个零件");
+    }
+    btns.push(infBtn(mid, "start", "继续内化", "primary"));
+
+  } else {
+    // never：从没内化过。**这里不放按钮** —— 每份素材的内化入口
+    // 就是右边 `.acts` 里那一个「AI 内化」。一张卡上出现两个同名按钮，
+    // 她只会犹豫点哪个。
+    chips.push('<span class="chip local">还没内化</span>');
+    if (s.fresh_count) info.push(fmtNum(s.fresh_count) + " 张可内化");
+  }
+
+  // 这次是谁提的 —— 放在状态条上，不藏进任务记录。
+  // 她要"比一比哪个模型提的零件更好用"，靠的就是两次结果并排看。
+  const r = s.run;
+  if (r && r.model_name) {
+    chips.push('<span class="chip gray">' + esc(r.model_name) + " 提的</span>");
+  }
+  if (info.length) chips.push('<span class="chip">' + info.join(" · ") + "</span>");
+
+  return chips.concat(btns).join("") +
+         (why ? '<div class="why">' + esc(why) + "</div>" : "");
+}
+
+function infBtn(mid, act, label, cls) {
+  // 请求还没回来的这段时间，轮询会把状态条整个重画一遍，
+  // 重画出来的按钮是全新的、默认可点的 —— 所以这里要重看一次 busy 标记，
+  // 否则"点一下 → 1.5 秒后按钮又亮了 → 再点一下"就是重复提交、重复花钱。
+  return '<button class="mini ' + (cls || "") + '"' +
+         (S.infBusy[mid] ? " disabled" : "") +
+         ' data-infact="' + act + '" data-infid="' + mid + '">' +
+         esc(label) + "</button>";
+}
+
+/* 从任务备注里把失败原因抠出来。
+   备注是多行拼的（见 plots_ai._execute 末尾），失败那行以「失败原因：」开头；
+   任务本身崩掉时原因在 error 上。两个都认，免得界面上一个字都不说。 */
+function infWhy(run) {
+  if (!run) return "";
+  const e = (run.error || "").trim();
+  if (e && e.indexOf("返回格式不合规") !== 0) return e;
+  const lines = (run.note || "").split("\n");
+  for (const ln of lines) {
+    if (ln.indexOf("失败原因：") === 0) return ln.slice(5);
+  }
+  const soft = lines.find(x => x.indexOf("有几处小问题") === 0);
+  return e || soft || "";
+}
+
+/* 只重画状态条，不重画整个列表 —— 重建列表会让滚动位置跳、
+   正在看的行消失，轮询期间尤其难受。 */
+function paintInfBars() {
+  document.querySelectorAll("[data-inffor]").forEach(el => {
+    const mid = Number(el.dataset.inffor);
+    el.innerHTML = infBarInner(mid);
+  });
+}
+
+function infSyncPoll() {
+  const running = Object.keys(S.inf).some(k => S.inf[k].state === "running");
+  if (running && !S.infPoll) {
+    S.infPoll = setInterval(async () => {
+      if (S.view !== "library") { infStopPoll(); return; }
+      await loadInfStates();
+      paintInfBars();
+    }, 1500);
+  } else if (!running) {
+    infStopPoll();
+  }
+}
+
+function infStopPoll() {
+  if (S.infPoll) { clearInterval(S.infPoll); S.infPoll = null; }
+}
+
+/* 单个文件的状态重查一次（点完按钮马上刷新，不用等下一轮轮询） */
+async function infRefreshOne(mid) {
+  try {
+    const d = await api("/api/infuse-states");
+    S.inf = d.items || {};
+    // 列表还没画出来时（比如刚切到总素材库）没有 data-inffor 可重画，
+    // 那就整体重画一次列表，保证状态条出现。
+    if (document.querySelector("[data-inffor]")) paintInfBars();
+    else loadList();
+    infSyncPoll();
+  } catch (e) { /* 刷新失败不吵人，下一轮轮询会补上 */ }
+}
+
+/* 点按钮的总入口。act: start / retry / cancel */
+async function infAct(mid, act, el) {
+  if (S.infBusy[mid]) return;
+
+  // start 只是"把弹层打开"，不提交任何东西 —— 所以不碰 busy 标记。
+  // （之前在这里置了 busy，她打开弹层又关掉的话，标记就永远留在那儿，
+  //   状态条上的按钮全变灰，看着像坏了。）
+  if (act === "start") return openInfuse(mid);
+
+  const s = S.inf[mid] || {};
+  if (act === "cancel") {
+    if (!confirm("取消这份素材正在跑的内化任务？\n\n" +
+                 "已经跑完的那几批会留在库里（零件已经在【剧情内化库】里了），\n" +
+                 "还没轮到的不会动。之后可以点「继续内化」。")) return;
+  }
+
+  S.infBusy[mid] = true;
+  if (el) el.disabled = true;
+  try {
+    if (act === "retry") {
+      const r = await post("/api/infuse-runs/" + (s.run ? s.run.id : 0) + "/retry", {});
+      toast(r.message || "已重试，只会补失败的那几张");
+    } else if (act === "cancel") {
+      await post("/api/infuse-runs/" + (s.run ? s.run.id : 0) + "/cancel", {});
+      toast("已取消");
+    }
+    await infRefreshOne(mid);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    S.infBusy[mid] = false;
+    if (el) el.disabled = false;
+  }
+}
+
+/* ---------------- 弹层：决定"这次怎么跑" ---------------- */
+
+async function openInfuse(mid) {
+  S.infPick = { mid: mid, preview: null };
+  document.getElementById("ifTitle").textContent = "AI 内化";
+  document.getElementById("ifPrev").innerHTML =
+    '<div class="mdhint">正在算这份素材要送出去多少张…</div>';
+  document.getElementById("ifNote").innerHTML = "";
+  const go = document.getElementById("ifGo");
+  go.disabled = true;
+  go.textContent = "开始内化";
+  if (!S.infWired) wireInfuse();
+  show("mkInfuse");
+
+  // 模型清单和提示词上限只在第一次开的时候拉一次就够（它们是配置，不是数据）。
+  try {
+    if (!S.infMeta) S.infMeta = await api("/api/infuse-meta");
+    paintInfModels();
+    // 她存的那句每次开都重读一遍 —— 上一轮跑完到现在，
+    // 她可能在别的地方改过它。
+    const ta = document.getElementById("ifPrompt");
+    ta.value = (S.infMeta && S.infMeta.user_prompt) || "";
+    paintInfPromptCount("ifPrompt", "ifPCnt");
+  } catch (e) {
+    document.getElementById("ifModelNote").textContent = "拿不到模型清单：" + e.message;
+  }
+  await infLoadPreview();
+}
+
+/* 弹层里的控件只接一次事件。重开弹层时如果不拦一道，
+   每开一次就多接一层 onclick，点一下会提交好几次。 */
+function wireInfuse() {
+  S.infWired = true;
+  document.getElementById("ifGo").onclick = infRun;
+  document.getElementById("ifPSave").onclick =
+    () => saveInfPrompt("ifPrompt", "ifPWarn", false);
+  document.getElementById("ifPClear").onclick = () => {
+    document.getElementById("ifPrompt").value = "";
+    paintInfPromptCount("ifPrompt", "ifPCnt");
+    toast("框里清空了。要点「保存」才会真的清掉存着的那份");
+  };
+  document.getElementById("ifPrompt").oninput =
+    () => paintInfPromptCount("ifPrompt", "ifPCnt");
+
+  // 勾选框和"只跑前 N 张"一改就重算 —— 这两个控件存在的意义
+  // 就是影响"要送多少张"，改了不重算等于骗她。
+  document.getElementById("ifSkip").onchange = infLoadPreview;
+  document.getElementById("ifLimit").onchange = infLoadPreview;
+  document.getElementById("ifLimit").oninput = () => {
+    // 输入框边打字边发请求会刷屏，等它停 400ms 再算
+    clearTimeout(S.infLimT);
+    S.infLimT = setTimeout(infLoadPreview, 400);
+  };
+}
+
+function paintInfModels() {
+  const sel = document.getElementById("ifModel");
+  const m = S.infMeta || {};
+  const usable = m.usable_model_keys || [];
+  const models = m.models || [];
+  sel.innerHTML = models.map(x =>
+    '<option value="' + esc(x.key) + '"' +
+    (usable.indexOf(x.key) < 0 ? " disabled" : "") + ">" +
+    esc(x.label || x.model || x.key) +
+    (usable.indexOf(x.key) < 0 ? "（没填 Key）" : "") + "</option>").join("");
+  const firstOk = models.find(x => usable.indexOf(x.key) >= 0);
+  if (firstOk) sel.value = firstOk.key;
+  sel.onchange = () => { paintInfModelNote(); infPaintNote(); };
+  paintInfModelNote();
+}
+
+function paintInfModelNote() {
+  const el = document.getElementById("ifModelNote");
+  const m = S.infMeta || {};
+  const usable = m.usable_model_keys || [];
+  el.textContent = usable.length
+    ? "首批先发 " + m.first_batch_size + " 张、之后每批 " + m.batch_size + " 张"
+      + "（批次小是有意的：点完马上能看到进度在动）。"
+    : "现在一个能填了 Key 的模型都没有 —— 点左边导航上的「模型设置」填一个再回来。";
+}
+
+/* ---------------- 补充提示词：两个框共用这一套 ----------------
+   两个框（内化弹层里的"这次用"、设置弹层里的"一直用"）
+   读写的是**同一份东西**，规则也必须一样：同样的上限、
+   同样在超长时先说清超了多少、同样"清空后要点保存才生效"。
+   各写一份迟早会分叉 —— 那时候她会觉得"为什么这边能存那边不能"。 */
+
+function promptMax() {
+  return (S.infMeta && S.infMeta.user_prompt_max) || 5000;
+}
+
+function paintInfPromptCount(taId, cntId) {
+  const ta = document.getElementById(taId);
+  const el = document.getElementById(cntId);
+  if (!ta || !el) return;
+  const max = promptMax();
+  const n = (ta.value || "").length;
+  el.textContent = fmtNum(n) + " / " + fmtNum(max);
+  // 超了就把数字标红 —— 光把框标红她看不出"是字数的问题"。
+  el.classList.toggle("warn", n > max);
+}
+
+async function saveInfPrompt(taId, warnId, silent) {
+  const ta = document.getElementById(taId);
+  const warn = document.getElementById(warnId);
+  const max = promptMax();
+  const txt = ta.value || "";
+  if (txt.length > max) {
+    // 服务端也会 400，但先在这儿说清"是哪个数超了"，
+    // 别让她对着一个"请求失败 400"猜。
+    if (warn) warn.textContent = "超了 " + fmtNum(txt.length - max) + " 字，删短一点再存";
+    if (!silent) toast("补充提示词太长了", true);
+    return false;
+  }
+  try {
+    await send("/api/infuse-prompt", "PUT", { content: txt });
+    if (warn) warn.textContent = "";
+    // 存完把本地缓存也改掉：她接着开内化弹层时，框里要立刻是新的这句，
+    // 不能等下一次拉接口。
+    if (S.infMeta) S.infMeta.user_prompt = txt;
+    if (!silent) toast(txt ? "已保存，以后每次内化都会带上它" : "已清空");
+    return true;
+  } catch (e) {
+    if (warn) warn.textContent = e.message;
+    if (!silent) toast(e.message, true);
+    return false;
+  }
+}
+
+/* 剧情内化页那个独立入口：坐下来把"我一直以来的要求"调好。 */
+async function openInfPrompt() {
+  try {
+    // 每次开都重拉一次 —— 她可能在别的地方刚改过。
+    S.infMeta = await api("/api/infuse-meta");
+  } catch (e) {
+    toast(e.message, true);
+    return;
+  }
+  const ta = document.getElementById("ipText");
+  ta.value = (S.infMeta && S.infMeta.user_prompt) || "";
+  document.getElementById("ipWarn").textContent = "";
+  paintInfPromptCount("ipText", "ipCnt");
+  show("mkInfPrompt");
+  setTimeout(() => ta.focus(), 80);
+}
+
+// 这个弹层的控件是静态的，脚本跑到这里时它们已经在 DOM 里了，
+// 直接绑一次就够（不像状态条那样会被重画）。
+document.getElementById("ipSave").onclick =
+  () => saveInfPrompt("ipText", "ipWarn", false);
+document.getElementById("ipClear").onclick = () => {
+  document.getElementById("ipText").value = "";
+  paintInfPromptCount("ipText", "ipCnt");
+  toast("框里清空了。要点「保存」才会真的清掉存着的那份");
+};
+document.getElementById("ipText").oninput =
+  () => paintInfPromptCount("ipText", "ipCnt");
+
+/* 重算"要送多少张"。 */
+async function infLoadPreview() {
+  const st = S.infPick;
+  if (!st) return;
+  const skip = document.getElementById("ifSkip").checked ? 1 : 0;
+  const lim = Math.max(0, parseInt(document.getElementById("ifLimit").value, 10) || 0);
+  try {
+    const pv = await api("/api/materials/" + st.mid + "/infuse-preview"
+                         + "?skip_infused=" + skip + "&limit=" + lim);
+    st.preview = pv;
+    paintInfPreview();
+  } catch (e) {
+    document.getElementById("ifPrev").innerHTML =
+      '<div class="why">' + esc(e.message) + "</div>";
+    document.getElementById("ifGo").disabled = true;
+  }
+}
+
+function paintInfPreview() {
+  const st = S.infPick;
+  const pv = st && st.preview;
+  if (!pv) return;
+  document.getElementById("ifTitle").textContent = "AI 内化 · " + (pv.material_title || "");
+  const box = document.getElementById("ifPrev");
+  if (!pv.all_card_count) {
+    box.innerHTML = "";
+    document.getElementById("ifNote").innerHTML = infNoteHtml();
+    const go = document.getElementById("ifGo");
+    go.disabled = true;
+    go.textContent = "没有可内化的卡";
+    return;
+  }
+  box.innerHTML =
+    '<div class="ifstat"><b>' + fmtNum(pv.all_card_count) + "</b>" +
+      "<span>这份素材能送的卡</span></div>" +
+    '<div class="ifstat"><b>' + fmtNum(pv.done_before) + "</b>" +
+      "<span>跑过的（出过零件 " + fmtNum(pv.has_plot_count) + " 张）</span></div>" +
+    '<div class="ifstat' + (pv.will_send ? " hot" : "") + '"><b>' +
+      fmtNum(pv.will_send) + "</b><span>这次会送出去</span></div>";
+
+  const go = document.getElementById("ifGo");
+  go.disabled = !pv.will_send;
+  go.textContent = pv.will_send
+    ? ("开始内化（" + fmtNum(pv.will_send) + " 张）") : "没有要内化的卡";
+  document.getElementById("ifNote").innerHTML = infNoteHtml();
+}
+
+function infPaintNote() {
+  const el = document.getElementById("ifNote");
+  if (el && S.infPick && S.infPick.preview) el.innerHTML = infNoteHtml();
+}
+
+/* "这一下会发生什么"的白话说明。
+   为什么非要写这一段：她按下去的是真金白银。用哪个模型、
+   大概几次调用、跳过多少张、产出会是什么状态 —— 都该在按钮之前说清。 */
+function infNoteHtml() {
+  const st = S.infPick;
+  const pv = st && st.preview;
+  if (!pv) return "";
+  const m = S.infMeta || {};
+  const lines = [];
+
+  if (!pv.all_card_count) {
+    lines.push("这份素材还没有能送的卡片。先回总素材库点它的<b>「切分」</b>，"
+      + "把它切成一条一条的卡片，再回来内化。");
+    return '<div class="why">' + lines.join("<br>") + "</div>";
+  }
+
+  if (!pv.will_send) {
+    lines.push("能送的 " + fmtNum(pv.all_card_count) + " 张全都跑过了。"
+      + "想再跑一遍（比如你刚改了上面那句补充提示词），"
+      + "把「跳过已经跑过的卡」的勾去掉。");
+    return '<div class="why">' + lines.join("<br>") + "</div>";
+  }
+
+  if (pv.skip_by_done) {
+    lines.push("跳过 " + fmtNum(pv.skip_by_done) + " 张已经跑过的（其中 "
+      + fmtNum(pv.has_plot_count) + " 张出过零件、"
+      + fmtNum(pv.not_suitable_count) + " 张 AI 看过没用"
+      + (pv.needs_review_count ? "、" + fmtNum(pv.needs_review_count) + " 张待定" : "")
+      + "）—— <b>这几张这次不花钱</b>。");
+  }
+  if (pv.cut_by_limit) {
+    lines.push("「先跑前 " + fmtNum(pv.limit) + " 张」砍掉了 " + fmtNum(pv.cut_by_limit)
+      + " 张；被砍掉的这次不送，下次还能跑。");
+  }
+
+  const fb = m.first_batch_size || 3;
+  const bs = m.batch_size || 12;
+  const calls = pv.will_send <= fb ? 1
+    : 1 + Math.ceil((pv.will_send - fb) / bs);
+  lines.push("<b>这 " + fmtNum(pv.will_send) + " 张的正文会发到模型服务商那边</b>，"
+    + "大约 " + fmtNum(calls) + " 次调用，会产生少量费用。"
+    + "原文本身只存在你电脑上，内化不改动它一个字。");
+
+  const sel = document.getElementById("ifModel");
+  if (sel && sel.selectedIndex >= 0 && sel.value) {
+    lines.push("这次用 <b>" + esc(sel.options[sel.selectedIndex].text) + "</b>。");
+  }
+
+  const up = document.getElementById("ifPrompt").value || "";
+  if (up.trim()) {
+    lines.push("会带上你写的补充提示词（" + fmtNum(up.length) + " 字），每一批都捎上它。");
+  } else {
+    lines.push("没写补充提示词。想让它按你的习惯提炼（比如"
+      + "「重点提炼拉扯和冲突升级」），就在上面的框里写几句。");
+  }
+  lines.push("提出的零件一律标<b>「待确认」</b>、来源标「AI」，"
+    + "不会被当成你认过的；每条都能点开看它来自哪几张卡。");
+  return '<div class="why">' + lines.join("<br>") + "</div>";
+}
+
+async function infRun() {
+  const st = S.infPick;
+  if (!st || !st.preview || !st.preview.will_send) return;
+  const sel = document.getElementById("ifModel");
+  if (!sel.value) {
+    toast("还没有能用的模型 —— 先去「模型设置」填一个 API Key", true);
+    return;
+  }
+  const go = document.getElementById("ifGo");
+  const old = go.textContent;
+  go.disabled = true;
+  go.textContent = "正在提交…";
+  try {
+    const r = await post("/api/materials/" + st.mid + "/infuse", {
+      model_key: sel.value,
+      // 框里是什么就发什么：她刚改了没点保存，这一次也该按新的要求跑。
+      // （"保存"管的是"以后默认用这句"，两件事分开。）
+      user_prompt: document.getElementById("ifPrompt").value || "",
+      skip_infused: document.getElementById("ifSkip").checked,
+      limit: Math.max(0, parseInt(document.getElementById("ifLimit").value, 10) || 0),
+    });
+    const mid = st.mid;
+    hide("mkInfuse");
+    toast(r.message || "已开始，后台按批跑 —— 进度看文件下面那行");
+    await infRefreshOne(mid);
+  } catch (e) {
+    toast(e.message, true);
+    go.disabled = false;
+    go.textContent = old;
+  }
+}
+
+/* ==================================================================
    剧情内化（剧情零件）
    ----------------------------------------------------------------
    零件 = 把一条条具体素材提炼成"换个角色名还成立"的通用剧情。
@@ -5339,10 +6064,13 @@ function renderPlList() {
   if (!box) return;
   if (!PL.plots.length) {
     box.innerHTML = '<div class="blank"><b>这里还没有剧情零件</b>' +
-      '点右上角<b>「＋ 新建剧情零件」</b>手写一条；' +
+      '要机器提：回<b>【总素材库】</b>，点某份文件上的<b>「AI 内化」</b>——' +
+      '它会先告诉你这份素材要送出去多少张、大概几次调用，你确认了才开跑。' +
+      '跑完的零件会出现在这里，标着<b>「AI 提的」</b>和它的把握程度，' +
+      '状态是「待确认」，等你逐条看过。<br>' +
+      '要自己写：点右上角<b>「＋ 新建剧情零件」</b>；' +
       '或者在<b>「素材分类」</b>里勾几张卡片，点<b>「内化为剧情零件」</b>，' +
-      '来源就一起带过来了。<br>' +
-      '（AI 自动内化是下一步的事，这一版先把零件本身和版本管好。）</div>';
+      '来源就一起带过来了。</div>';
     return;
   }
   const parts = [];
@@ -5362,10 +6090,19 @@ function renderPlList() {
     if (p.status && p.status !== "已确认") {
       chips.push('<span class="chip warn">' + esc(p.status) + '</span>');
     }
-    if (p.source === "ai") {
-      chips.push('<span class="chip warn">AI 提的</span>');
-    } else if (p.source === "ai_edited") {
-      chips.push('<span class="chip">AI 提的，你改过</span>');
+    // ---- AI 来源：必须跟人工写的长得不一样 ----
+    // 不标的话，"AI 猜的"和"她自己定的"在列表上完全一样，
+    // 那就等于没有区分 —— 她会把机器提的当成自己认过的。
+    // 置信度也摊在这儿：她要能一眼挑出"机器自己也没把握"的那些先看。
+    if (p.source === "ai" || p.source === "ai_edited") {
+      const edited = p.source === "ai_edited";
+      const c = p.ai_confidence;
+      const hasC = (typeof c === "number");
+      const low = hasC && c < LOW_CONF;
+      chips.push('<span class="chip ' + (edited ? "" : "warn") + '">' +
+        (edited ? "AI 提的 · 你改过" : "AI 提的") +
+        (hasC ? " · " + Math.round(c * 100) + "%" : "") + '</span>');
+      if (!edited && low) chips.push('<span class="chip warn">没把握</span>');
     }
     parts.push(
       '<div class="plcard" data-pid="' + p.id + '">' +
@@ -5464,6 +6201,7 @@ function paintPlot() {
   paintPvBeats();
   paintPvUsage();
   paintPvSrc();
+  paintPvAi();
   paintPvVers();
   paintPvCounters();
 
@@ -5554,6 +6292,49 @@ function paintPvSrc() {
   box.querySelectorAll("button[data-unpick]").forEach(b => {
     b.onclick = () => { PL.srcs.splice(Number(b.dataset.unpick), 1); paintPvSrc(); };
   });
+}
+
+/* 「AI 为什么这么提」——只在 AI 提的零件上出现。
+   为什么要摊开置信度和理由：她要判断"这条能不能信"，光看结果判断不了 ——
+   得知道机器当时依据什么、有多少把握。藏起来等于逼她盲信。
+   已经处理过的（已确认/已编辑）就不再催她核对，只留一句来源说明。 */
+function paintPvAi() {
+  const p = PL.cur, wrap = document.getElementById("pvAiWrap");
+  const isAi = !!p && (p.source === "ai" || p.source === "ai_edited");
+  wrap.hidden = !isAi;
+  if (!isAi) return;
+
+  const edited = p.source === "ai_edited";
+  const c = p.ai_confidence, hasC = (typeof c === "number");
+  const low = hasC && c < LOW_CONF;
+
+  const chip = document.getElementById("pvAiChip");
+  chip.textContent = edited ? "AI 提的 · 你改过" : "AI 提的";
+  chip.className = "chip " + (edited ? "ok" : "warn");
+
+  document.getElementById("pvAiConf").textContent = hasC
+    ? ("当时把握 " + Math.round(c * 100) + "%" + (low ? "（偏低，建议先看这条）" : ""))
+    : "当时没给把握值";
+
+  document.getElementById("pvAiReason").innerHTML = p.ai_reason
+    ? "<b>它是这么想的：</b>" + esc(p.ai_reason)
+    : '<span class="aiempty">这条没写理由。</span>';
+
+  // 提示语按状态变。**不能一句话到底**：对"待确认"说"你已经确认过了"，
+  // 她会以为系统记错了；对"已确认"还说"记得核对"，等于催她做做过的事。
+  const tip = document.getElementById("pvAiTip");
+  if (p.status === "已确认") {
+    tip.textContent = "这条你已经确认过了。";
+  } else if (p.status === "已编辑") {
+    tip.textContent = "你改过这条。改完会记成「AI 提的 · 你改过」，机器以后不会再覆盖它。";
+  } else if (p.status === "已排除") {
+    tip.textContent = "这条已经被排除，不会进内化库。";
+  } else if (p.status === "暂不用") {
+    tip.textContent = "这条标了「暂不用」，先留着但不参与拼大纲。";
+  } else {
+    tip.textContent = "还没确认。核对过内容再点下面的「保存为新版本」——"
+      + "一保存就记成「你改过的」，以后 AI 重跑不会覆盖你确认过的东西。";
+  }
 }
 
 function paintPvVers() {
@@ -5781,6 +6562,10 @@ async function openCardPlots(cid) {
    把绑定集中成一块，将来加功能时一眼能看出哪个按钮归哪个函数。 */
 
 document.getElementById("plNewBtn").onclick = () => openPlot();
+// 「补充提示词」：这是"我一直以来的要求"那个入口。
+// 想对某一份素材立刻跑一次内化，入口在【总素材库】那份文件的
+// 「AI 内化」按钮上 —— 那边能看到这次会送多少张、大概几次调用。
+document.getElementById("plPromptBtn").onclick = () => openInfPrompt();
 document.getElementById("plReload").onclick = async () => {
   await loadPlots(true);
   toast("已刷新");

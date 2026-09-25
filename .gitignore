@@ -106,13 +106,18 @@ _v*_tmp.*
 
 # 提示词目录：整个不传，只留假示例给外面看
 #
-# 线上真正生效的那份是 prompts/classify.txt（编码在 prompts/ 下，
-# 已经被 prompts/* 挡住了）。这里只放行 example.classify.txt ——
-# 它和 example.prompts.txt 一样，是给人看格式的占位内容。
+# 线上真正生效的是 prompts/classify.txt（分类）和 prompts/infuse.txt（剧情内化），
+# 两个都在 prompts/ 下、被 prompts/* 挡住了。
+# 这里只放行那几个 example.*.txt —— 它们是给人看格式的占位内容，没有真提示词。
+#
+# 【2026-09-25 教训】新加一个真实提示词文件时，**不要**顺手给它开 ! 放行。
+# 放行名单只加 example.*：一旦放行了 infuse.txt，她调好的那版会连着
+# 真实原稿片段一起进公开仓库 —— 那是不可逆的事故。
 prompts/*
 !prompts/.gitkeep
 !prompts/example.prompts.txt
 !prompts/example.classify.txt
+!prompts/example.infuse.txt
 
 # 提示词的其他可能存放形式，一并兜底
 *.prompt
