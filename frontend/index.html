@@ -222,6 +222,10 @@
   .btn:hover { border-color: var(--ink-3); color: var(--ink); }
   .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
   .btn.primary:hover { background: #3d3833; }
+  /* 危险动作（删一份大纲）。平时只有边框带一点红，指上去才实心 ——
+     它排在「关掉」旁边，实心红会变成整个弹层里最抢眼的东西。 */
+  .btn.danger { color: var(--danger); border-color: #e3c9c5; }
+  .btn.danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
 
   /* ==================== 素材卡片 ==================== */
@@ -1001,7 +1005,318 @@
     word-break: break-word;
   }
   .pkrow .c { flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3); }
+
+  /* ==================== 大纲生成 ====================     这一页比别的页都长（输入 + 零件池 + 预览 + 任务 + 库），
+     所以布局上有一个总规矩：**宽度灵活的东西给 flex:1，固定的给 flex:0 0 X**，
+     不用 margin-left:auto 撑。左边输入列和右边零件列各占一半，
+     窄屏时整列上下摞起来，不横向滚动。 */
+  .olcols { display: flex; gap: 18px; align-items: flex-start; }
+  .olcol { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+  .olcols2 { display: flex; gap: 12px; align-items: flex-start; }
+  .olcols2 > .field { flex: 1 1 0; min-width: 0; }
+  @media (max-width: 980px) {
+    .olcols { flex-direction: column; }
+    .olcol { flex: 1 1 auto; width: 100%; }
+  }
+  /* 一行按钮排。.grow 是那根弹簧 —— 用它把后面的东西推到右边，
+     比自己算 margin 稳。 */
+  .olrow {
+    display: flex; align-items: center; gap: 7px;
+    flex-wrap: wrap; margin-top: 7px;
+  }
+  .olrow .grow { flex: 1 1 auto; }
+  .olrow .mdhint { flex: 0 0 auto; }
+
+  /* 世界观输入框：比别处长，因为它是这一页最重要的输入 */
+  #olWorld { min-height: 132px; }
+  #olDesign { min-height: 84px; }
+
+  /* ---- 角色卡选择（横向一排小卡） ---- */
+  .olchars {
+    display: flex; flex-wrap: wrap; gap: 7px;
+    min-height: 34px; padding: 7px 8px;
+    border: 1px dashed var(--line); border-radius: 8px;
+    background: var(--line-2);
+  }
+  .olchars:empty::after {
+    content: "还没有关联角色卡。至少挑一张才能生成。";
+    font-size: 12px; color: var(--ink-3); line-height: 20px;
+  }
+  .olchar {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 6px 3px 9px; border-radius: 20px;
+    background: var(--bg); border: 1px solid var(--line);
+    font-size: 12.5px; max-width: 100%;
+  }
+  .olchar .nm {
+    font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 150px;
+  }
+  .olchar.incomplete { border-color: #e0c9a8; }
+  .olchar .x {
+    border: none; background: transparent; color: var(--ink-3);
+    font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer;
+  }
+  .olchar .x:hover { color: var(--danger); }
+
+  /* ---- 模型多选 ---- */
+  .olmodels { display: flex; flex-direction: column; gap: 5px; }
+  .olmodels label {
+    display: flex; align-items: flex-start; gap: 7px;
+    font-size: 12.5px; padding: 4px 6px; border-radius: 6px;
+    cursor: pointer; line-height: 1.6;
+  }
+  .olmodels label:hover { background: var(--line-2); }
+  .olmodels input {
+    width: 14px; height: 14px; margin-top: 3px;
+    accent-color: var(--accent); flex: 0 0 auto;
+  }
+  .olmodels label.dead { color: var(--ink-3); cursor: not-allowed; }
+  .olmodels label.dead:hover { background: transparent; }
+
+  /* ---- 零件池 ---- */
+  .olpool {
+    max-height: 320px; overflow: auto; margin-top: 7px;
+    border: 1px solid var(--line-2); border-radius: 8px;
+  }
+  .olpool .blank {
+    padding: 14px 12px; font-size: 12.5px; color: var(--ink-3);
+    line-height: 1.8;
+    /* 通用 .blank 是"整页空白"的样式：居中、70px 上下留白、
+       块级加粗。在零件池这种小框里照搬会变成"三行字居中 + 两个
+       像小标题的加粗词"，很难读。这里拉回左对齐、行内加粗。 */
+    text-align: left; background: transparent; border: none;
+  }
+  .olpool .blank b { display: inline; font-size: 12.5px; color: var(--ink-2); }
+  /* 大纲库空态同理，只是它本来就是页面级的一块，留白小一点就行 */
+  #olLib .blank, #oloFbs .blank { padding: 26px 18px; text-align: left; }
+  #oloFbs .blank { padding: 14px 12px; border: none; background: transparent; }
+  .olplot {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 9px; border-bottom: 1px solid var(--line-2);
+    cursor: pointer;
+  }
+  .olplot:last-child { border-bottom: none; }
+  .olplot:hover { background: var(--line-2); }
+  .olplot.on { background: var(--accent-2); }
+  .olplot input {
+    flex: 0 0 auto; width: 15px; height: 15px; margin-top: 3px;
+    accent-color: var(--accent);
+  }
+  .olplot .grow { flex: 1 1 auto; min-width: 0; }
+  .olplot .pt {
+    font-size: 12.5px; font-weight: 600; line-height: 1.6;
+    word-break: break-word;
+  }
+  .olplot .pr {
+    font-size: 11.5px; color: var(--ink-3); line-height: 1.8;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  /* 参考次数要一眼看得出多少 —— 这条决定了"这次该不该再用它" */
+  .olplot .ref { flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3); }
+  .olplot .ref.hot { color: #8a5a2c; font-weight: 600; }
+  .olplot .ref.fresh { color: #2c7a4e; font-weight: 600; }
+
+  /* ---- 出门按钮那一排 ---- */
+  .olgo {
+    display: flex; align-items: center; gap: 9px;
+    flex-wrap: wrap; margin: 16px 0 6px;
+  }
+  .olgo .mdhint { flex: 1 1 240px; }
+
+  /* ---- 分区标题 ---- */
+  .olsec { margin-top: 22px; }
+  .olsec > h3 {
+    margin: 0 0 4px; font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .olsec > h3 .chip { font-size: 11px; }
+  .olsec > .mdhint { margin-bottom: 10px; flex: none; }
+
+  /* ---- 预览区 ---- */
+  .olpv {
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); padding: 12px 13px; margin-top: 12px;
+  }
+  .olpv .pvh {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 13px; font-weight: 600; margin-bottom: 8px;
+  }
+  .olpv .kv {
+    display: flex; gap: 8px; font-size: 12.5px; line-height: 1.9;
+    color: var(--ink-2);
+  }
+  .olpv .kv b { flex: 0 0 88px; color: var(--ink-3); font-weight: 400; }
+  .olpv .kv span { flex: 1 1 auto; min-width: 0; }
+  .olpv .pvnote {
+    margin-top: 9px; padding: 8px 10px; border-radius: 7px;
+    font-size: 12px; line-height: 1.85; white-space: pre-wrap;
+    background: var(--line-2); color: var(--ink-2);
+    border-left: 3px solid var(--accent);
+  }
+  .olpv pre {
+    margin: 9px 0 0; padding: 9px 10px; max-height: 260px; overflow: auto;
+    font-size: 11.5px; line-height: 1.75; white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--line-2); border-radius: 7px; color: var(--ink-2);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .olpv .warns { margin: 0; padding-left: 17px; font-size: 12.5px; line-height: 1.9; }
+  .olpv .warns li.warn { color: #8a5a2c; }
+  .olpv .warns li.bad { color: var(--danger); }
+
+  /* ---- 任务卡 ---- */
+  .olrun {
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); padding: 11px 12px; margin-bottom: 10px;
+  }
+  .olrun .rh {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12.5px;
+  }
+  .olrun .rh .grow { flex: 1 1 auto; }
+  .olrun .rmeta { font-size: 11.5px; color: var(--ink-3); line-height: 1.8; }
+  .olrun .bar {
+    height: 4px; border-radius: 3px; background: var(--line-2);
+    margin: 8px 0 4px; overflow: hidden;
+  }
+  .olrun .bar i {
+    display: block; height: 100%; background: var(--accent);
+    transition: width .3s;
+  }
+  .olrun .rnote {
+    margin-top: 7px; font-size: 12px; line-height: 1.8;
+    color: var(--ink-2); white-space: pre-wrap;
+  }
+  /* 候选并排：每个模型一列，窄屏摞起来。
+     用 flex-wrap 而不是横向滚动 —— 她要"并排比较"，
+     逼她左右拖动就把比较这件事毁了。 */
+  .olcands { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 9px; }
+  .olcand {
+    flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column;
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--bg); overflow: hidden;
+  }
+  .olcand.on { border-color: var(--accent); }
+  .olcand > .ch {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    padding: 8px 10px; border-bottom: 1px solid var(--line-2);
+    font-size: 12.5px; font-weight: 600;
+  }
+  .olcand > .ch .grow { flex: 1 1 auto; }
+  .olcand > .cb {
+    padding: 9px 10px; font-size: 12.5px; line-height: 1.85;
+    max-height: 380px; overflow: auto;
+  }
+  .olcand .ct { font-weight: 600; margin-bottom: 5px; }
+  .olcand .cn {
+    border-left: 2px solid var(--line); padding-left: 8px; margin: 6px 0;
+    font-size: 12px; color: var(--ink-2); white-space: pre-wrap;
+  }
+  .olcand .cf {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    padding: 8px 10px; border-top: 1px solid var(--line-2);
+  }
+  .olcand .cf .grow { flex: 1 1 auto; }
+
+  /* ---- 大纲库列表 ---- */
+  .ollib { display: flex; flex-direction: column; gap: 8px; }
+  .ollibi {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card);
+  }
+  .ollibi:hover { border-color: var(--ink-3); }
+  .ollibi .grow { flex: 1 1 auto; min-width: 0; }
+  .ollibi .t {
+    font-size: 13.5px; font-weight: 600; line-height: 1.6;
+    word-break: break-word;
+  }
+  .ollibi .m {
+    font-size: 11.5px; color: var(--ink-3); line-height: 1.85;
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  }
+  .ollibi .acts {
+    flex: 0 0 auto; display: flex; gap: 5px; flex-wrap: wrap;
+    justify-content: flex-end; max-width: 220px;
+  }
+
+  /* ---- 节点编辑器 ---- */
+  .olnodes { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .olnode {
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); padding: 9px 10px;
+  }
+  .olnode.marked { border-color: #d9b48a; background: #fdf9f4; }
+  .olnode .nh {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    font-size: 12.5px;
+  }
+  .olnode .nh .idx {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .olnode .nh .grow { flex: 1 1 auto; }
+  .olnode .nt {
+    flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600;
+    border: 1px solid transparent; background: transparent;
+    padding: 3px 5px; border-radius: 6px;
+  }
+  .olnode .nt:hover { border-color: var(--line-2); }
+  .olnode .nt:focus {
+    border-color: var(--line); background: var(--line-2); outline: none;
+  }
+  .olnode .nw {
+    width: 78px; flex: 0 0 auto; font-size: 12px; text-align: right;
+  }
+  .olnode .nacts { flex: 0 0 auto; display: flex; gap: 4px; }
+  .olnode .nbody {
+    margin-top: 7px; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 12px;
+  }
+  .olnode .nf { display: flex; gap: 7px; font-size: 12px; line-height: 1.75; }
+  .olnode .nf b {
+    flex: 0 0 84px; font-weight: 400; color: var(--ink-3); text-align: right;
+  }
+  .olnode .nf span { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+  .olnode .nf.empty span { color: var(--ink-3); }
+  .olnode .nsrc { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .olnode .collapsed { display: none; }
+
+  /* ---- 大纲详情里那块收起来的"大字段" ----
+     编辑时五个大输入框会把段落顶到两屏之外，所以收进 <details>。
+     收起来不是藏起来：summary 上把里面有什么列清楚了。 */
+  .olmeta {
+    border: 1px solid var(--line-2); border-radius: 8px;
+    background: var(--line-2); padding: 7px 10px; margin-top: 4px;
+  }
+  .olmeta > summary {
+    font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+    line-height: 1.7;
+  }
+  .olmeta > summary:hover { color: var(--ink); }
+  .olmeta[open] > summary { margin-bottom: 6px; }
+  .olmetabody { padding-top: 2px; }
+  .olmetabody .field:last-child { margin-bottom: 4px; }
+
+  /* ---- 差异 ---- */
+  .oldiff {
+    margin-top: 10px; padding: 10px 11px; border-radius: 8px;
+    background: var(--line-2); font-size: 12.5px; line-height: 1.9;
+    color: var(--ink-2);
+  }
+  .oldiff b { color: var(--ink); }
+  .oldiff .same { color: #2c7a4e; }
+  .oldiff ul { margin: 5px 0 0; padding-left: 18px; }
+
+  /* ---- 节点编辑弹层里的字段 ---- */
+  .olnodeform .nfm {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 11px;
+  }
+  .olnodeform textarea { min-height: 58px; }
 </style>
+
 </head>
 <body class="guest">
 
@@ -1136,6 +1451,168 @@
           <div class="clcatbar" id="plCatBar"></div>
           <div class="clfilters" id="plFilters"></div>
           <div id="plList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 大纲生成 ----------
+         这一页只做"同人短篇"（第一版范围）。知乎短篇和长篇以后再说。
+
+         三个输入是硬的（世界观、角色卡、预期字数），缺一个就不给生成；
+         一句话梗和情节设计是软的（可以不填）。
+         零件池是**后端先筛一道**再给模型的 —— 几百条零件全塞进一次请求
+         会直接超出上下文，所以这里显示的是"这次将会摆给模型看的那一批"。
+
+         生成是后台任务（不是同步请求）：点完立刻返回，进度在下面那块看。
+         多模型时每个模型各出一份候选，并排放，她自己挑。 -->
+    <section class="view" id="view-outline">
+      <header class="vhead">
+        <h1 class="vtitle">大纲生成</h1>
+        <div class="vacts">
+          <button class="btn" id="olWorldBtn">世界观库</button>
+          <button class="btn" id="olCharBtn">角色卡</button>
+          <button class="btn" id="olPromptBtn">补充提示词</button>
+          <button class="btn" id="olReload">刷新</button>
+        </div>
+      </header>
+
+      <div class="statsbar">
+        <div><span class="num" id="olStatPlots">-</span>条可用零件</div>
+        <div><span class="num" id="olStatChars">-</span>张角色卡</div>
+        <div><span class="num" id="olStatOutlines">-</span>篇大纲</div>
+        <div><span class="num" id="olStatLearning">-</span>条学习案例</div>
+      </div>
+
+      <div class="vbody">
+        <div class="clmain">
+          <div class="olcols">
+
+            <!-- ============ 左：输入 ============ -->
+            <div class="olcol">
+              <div class="field">
+                <label>世界观 <span class="chip">必填</span></label>
+                <textarea id="olWorld" rows="7" spellcheck="false"
+                  placeholder="时代地点、门派制度、能力规则、人物身份限制、禁忌与常识……&#10;写什么都会发出去，所以别把整本书粘进来，只写这篇要遵守的设定。"></textarea>
+                <div class="olrow">
+                  <button class="mini" id="olWorldPick">从库选一份</button>
+                  <button class="mini" id="olWorldRead">读取文件</button>
+                  <input type="file" id="olWorldFile" hidden
+                         accept=".txt,.md,.docx,.pdf">
+                  <button class="mini" id="olWorldSave">存进世界观库</button>
+                  <span class="grow"></span>
+                  <span class="mdhint" id="olWorldCnt">0 字</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>角色卡 <span class="chip">至少一张</span></label>
+                <div class="olchars" id="olChars"></div>
+                <div class="olrow">
+                  <button class="mini primary" id="olCharAdd">＋ 关联角色卡</button>
+                  <span class="mdhint">生成时会写成快照存进大纲 —— 以后改卡不影响老大纲。</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>一句话梗 <span class="chip gray">选填</span></label>
+                <input id="olHook" type="text" maxlength="500"
+                       placeholder="这篇的核心冲突。例如：所有人都以为他来复仇，只有死对头知道他其实在求救。">
+                <div class="mdhint">填了就围绕它写。不填的话 AI 自己推一个，并且会在结果里标出来是它推的。</div>
+              </div>
+
+              <div class="field">
+                <label>情节设计 <span class="chip gray">选填</span></label>
+                <textarea id="olDesign" rows="4" spellcheck="false"
+                  placeholder="开头怎么起、中段必须有什么、结局要什么/不要什么、禁用哪些桥段……"></textarea>
+              </div>
+
+              <div class="olcols2">
+                <div class="field">
+                  <label>预期字数 <span class="chip">必填</span></label>
+                  <input id="olWords" type="number" min="1000" max="200000"
+                         step="500" value="8000">
+                  <div class="mdhint" id="olTierNote">字数决定结构规模，不是只显示一个数字。</div>
+                </div>
+                <div class="field">
+                  <label>用哪些模型 <span class="chip gray">可多选</span></label>
+                  <div class="olmodels" id="olModels"></div>
+                  <div class="mdhint" id="olModelNote"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ============ 右：零件与提示词 ============ -->
+            <div class="olcol">
+              <div class="field">
+                <label>剧情零件 <span class="chip" id="olPoolChip">自动筛</span></label>
+                <div class="olrow">
+                  <button class="mini" id="olPoolAuto">自动筛</button>
+                  <button class="mini" id="olPoolManual">我手动选</button>
+                  <button class="mini" id="olPoolRefresh" hidden>重新拉清单</button>
+                  <span class="grow"></span>
+                  <span class="mdhint" id="olPoolNote"></span>
+                </div>
+                <div class="olpool" id="olPool"></div>
+                <div class="mdhint">
+                  只有「已确认」和「已编辑」的零件能进来。来自「仅本地」素材的
+                  已经自动排除，不会发给任何模型。
+                </div>
+              </div>
+
+              <div class="field">
+                <label>补充提示词 <span class="chip gray">选填</span></label>
+                <div class="clprompt">
+                  <div class="clpbody">
+                    <div class="clptabs">
+                      <button class="clptab" id="olPTabPick">快捷选项</button>
+                      <button class="clptab" id="olPTabEdit">自定义</button>
+                      <span class="grow"></span>
+                      <button class="mini primary" id="olPNew">＋ 创建提示词</button>
+                    </div>
+                    <div class="clppane" id="olPPanePick">
+                      <div class="clpsub" id="olPPickMine"></div>
+                      <div class="clpsub" id="olPPickPub"></div>
+                    </div>
+                    <div class="clppane" id="olPPaneEdit" hidden>
+                      <textarea id="olPText" rows="4" maxlength="5000" spellcheck="false"
+                        placeholder="选填。这次生成想让 AI 额外注意什么。&#10;&#10;例如：&#10;· 多写两人之间的对话，少写环境&#10;· 高潮那一段必须有一次当众的冲突&#10;· 不要安排第三者"></textarea>
+                      <div class="clpfoot">
+                        <span class="clpcnt" id="olPCnt">0 / 5000</span>
+                        <span class="clpwarn" id="olPWarn"></span>
+                        <span class="grow"></span>
+                        <button class="mini" id="olPClear">清空</button>
+                        <button class="mini primary" id="olPSave">保存</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mdhint" id="olPNote"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============ 出门按钮 ============ -->
+          <div class="olgo">
+            <button class="btn" id="olPreviewBtn">看看会发出去什么</button>
+            <button class="btn primary" id="olGo">开始生成</button>
+            <label class="switch" title="只影响这次生成，不改任何已存的东西">
+              <input type="checkbox" id="olUseLearn" checked>
+              <span>参考以前标过的「不可用」</span>
+            </label>
+            <span class="mdhint" id="olGoNote"></span>
+          </div>
+          <div id="olPreview"></div>
+
+          <!-- ============ 任务与候选 ============ -->
+          <div id="olRuns"></div>
+
+          <!-- ============ 大纲库 ============ -->
+          <div class="olsec">
+            <h3>大纲库</h3>
+            <div class="mdhint">只有点了「推入大纲库」的才在这里。
+              剧情零件的参考次数也只在这时候才加。</div>
+            <div id="olLib"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -2047,6 +2524,208 @@
   </div>
 </div>
 
+<!-- ---------- 大纲生成：世界观库 ----------
+     世界观是"这次要遵守的设定"，她会调好几版、反复用同一份。
+     所以这里既能从库里挑，也能把当前输入框里的东西按名字存起来。
+     同名覆盖 —— 她调完一版再存一次是常态操作，报错只会挡路。 -->
+<div class="mask" id="mkOlWorld">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>世界观库</h2>
+        <p>存过的设定。点「用这份」会填进输入框，你还能随手改。</p>
+      </div>
+      <button class="x" data-close="mkOlWorld">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>把当前输入框里的内容存起来</label>
+        <div class="olrow">
+          <input type="text" id="olwName" maxlength="60" style="flex:1 1 200px"
+                 placeholder="给它起个名字（同名会覆盖）">
+          <button class="mini primary" id="olwSave">存进库</button>
+          <span class="mdhint" id="olwSaveNote"></span>
+        </div>
+      </div>
+      <div id="olwList"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkOlWorld">关掉</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ---------- 大纲生成：角色卡 ----------
+     一个弹层干三件事：挑（多条多选）、看（点开读全文）、写（新建/编辑）。
+     为什么不拆成三个弹层：她写大纲时会在"这张卡还差点什么"和
+     "再补一张卡"之间来回切，拆开的话每一步都要关一个开一个。 -->
+<div class="mask" id="mkOlChar">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="olcTitle">角色卡</h2>
+        <p id="olcSub">打勾的就是这次要用的。生成时会写成快照存进大纲 ——
+          以后改卡不影响老大纲。</p>
+      </div>
+      <button class="x" data-close="mkOlChar">&times;</button>
+    </header>
+    <div class="content">
+      <!-- 编辑区。默认收起，点「＋ 新建」或某一行的「编辑」才展开 -->
+      <div id="olcForm" hidden>
+        <div class="field">
+          <label>角色名 / 角色位 <span class="req">*</span></label>
+          <input type="text" id="olcName" maxlength="60"
+                 placeholder="例如：沈砚 / 师兄 / 那个姓崔的">
+        </div>
+        <div id="olcFields" class="olnodeform"></div>
+        <div class="olrow">
+          <button class="mini primary" id="olcSave">保存</button>
+          <button class="mini" id="olcCancel">取消编辑</button>
+          <span class="grow"></span>
+          <button class="mini" id="olcDel" hidden>删除这张卡</button>
+          <span class="mdhint" id="olcNote"></span>
+        </div>
+      </div>
+
+      <div class="olrow" id="olcBar">
+        <button class="mini primary" id="olcNew">＋ 新建角色卡</button>
+        <span class="grow"></span>
+        <span class="mdhint" id="olcCount"></span>
+      </div>
+      <div id="olcList"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn primary" data-close="mkOlChar">好了</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ---------- 大纲生成：编辑一个节点 ---------- -->
+<div class="mask" id="mkOlNode">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="olnTitle">编辑这一段</h2>
+        <p>空着的就空着 —— 不是每个字段都对每一段有意义。硬凑出来的
+          空话比空着更糟。</p>
+      </div>
+      <button class="x" data-close="mkOlNode">&times;</button>
+    </header>
+    <div class="content">
+      <div class="olnodeform" id="olnFields"></div>
+      <div class="field">
+        <label>这一段预计写多少字</label>
+        <input type="number" id="olnWords" min="0" max="200000" step="100"
+               style="max-width:180px">
+      </div>
+      <div class="field">
+        <label>参与角色</label>
+        <input type="text" id="olnRoles" placeholder="用逗号分开，例如：沈砚，崔明">
+      </div>
+      <div class="field">
+        <label>这一段用到了哪几条剧情零件</label>
+        <div class="olpool" id="olnSrc"></div>
+      </div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkOlNode">取消</button>
+      <button class="btn primary" id="olnSave">保存这一段</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ---------- 大纲生成：标一个节点"不可用" ----------
+     「标记不可用」和「加入学习」是两件事 —— 她标了不合适，
+     不等于她同意拿这条去影响以后的生成。所以勾选框默认不勾，
+     而且界面上把这两件事分开写清楚。 -->
+<div class="mask" id="mkOlFb">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>这一段哪里不行</h2>
+        <p id="olfSub"></p>
+      </div>
+      <button class="x" data-close="mkOlFb">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>问题出在哪</label>
+        <select id="olfProblem"></select>
+      </div>
+      <div class="field">
+        <label>想补充的话 <span class="hint">选填</span></label>
+        <textarea id="olfNote" rows="3" maxlength="500"
+          placeholder="例如：这里两个人不该直接对质，中间得先有一次错认。"></textarea>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="olfEnabled">
+        <span>把这条加入学习库，以后生成时参考</span>
+      </label>
+      <div class="mdhint" style="margin-top:5px">
+        不勾也照样记下来 —— 只是不会拿去影响以后的生成。
+        你随时能改这个开关。
+      </div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkOlFb">取消</button>
+      <button class="btn primary" id="olfSave">记下来</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ---------- 大纲生成：一份大纲的详情 ----------
+     这是"AI 原稿 vs 她改完的"能当场对照的地方。
+     两份都留着，她改得再狠也回得去。 -->
+<div class="mask" id="mkOlOut">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="oloTitle">大纲</h2>
+        <p id="oloSub"></p>
+      </div>
+      <button class="x" data-close="mkOlOut">&times;</button>
+    </header>
+    <div class="content">
+      <div class="olrow" style="margin-top:0">
+        <button class="mini" id="oloEditOn">开始编辑</button>
+        <button class="mini" id="oloDiff">和 AI 原稿比一比</button>
+        <button class="mini" id="oloSave">保存改动</button>
+        <span class="grow"></span>
+        <button class="mini" id="oloCopy">复制全文</button>
+      </div>
+      <div id="oloHead"></div>
+      <div id="oloDiffBox"></div>
+      <div id="oloNodes" class="olnodes"></div>
+      <!-- 全文（服务端渲染好的那份）。复制走这里 ——
+           为什么要等保存完才有：渲染是服务端做的（render_outline_text），
+           前端自己再写一份的话，两处迟早不一样。 -->
+      <div id="oloTextWrap"></div>
+      <div class="field" style="margin-top:12px">
+        <label>备注 <span class="hint">选填，只给你自己看</span></label>
+        <textarea id="oloNote" rows="2" maxlength="1000"
+          placeholder="例如：这一版的第三段留着，别的下次重写。"></textarea>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="oloLearn">
+        <span>把这份大纲加入学习（以后生成时会参考）</span>
+      </label>
+      <div class="olsec">
+        <h3>标过的「不可用」</h3>
+        <div id="oloFbs"></div>
+      </div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn danger" id="oloDel">删除这份</button>
+      <button class="btn" data-close="mkOlOut">关掉</button>
+    </footer>
+  </div>
+</div>
+
 <script>
 /* ==================================================================
    前端逻辑
@@ -2074,7 +2753,7 @@ const VIEWS = [
     desc: "把一份文件切成一条一条的素材，逐条看、逐条改、能勾选，每条都能定位回原文" },
   { id: "infuse",   name: "剧情内化", icon: "wand",    ready: true,
     desc: "把原始素材提炼成可复用的剧情零件（谁做了什么、动机是什么）" },
-  { id: "outline",  name: "大纲生成", icon: "list",    ready: false,
+  { id: "outline",  name: "大纲生成", icon: "list",    ready: true,
     desc: "从剧情库里挑零件，拼出一篇能直接动笔的细纲" },
   { id: "persona",  name: "人设卡",   icon: "user",    ready: false,
     desc: "角色的性格、关系、说话方式，写对话时随时对照" }
@@ -2240,6 +2919,9 @@ function goView(id) {
   // 素材分类要在第一次进来时才拉数据（省得每次登录都白拉一遍）
   if (id === "classify") loadClassify(false);
   if (id === "infuse") loadPlots(false);
+  // 大纲页同理。离开时不停轮询 —— 生成任务可能还在跑，
+  // 她要能切去看别的页，回来时进度还是新的（见 OL.poll 的说明）。
+  if (id === "outline") loadOutline(false);
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -2978,7 +3660,11 @@ function removeMaterial(id, el) {
 /* ---------------- 弹窗开关 ---------------- */
 
 function openMask(id) { document.getElementById(id).classList.add("on"); }
-function closeMask(id) { document.getElementById(id).classList.remove("on"); }
+/* 关弹层。走 hide() 而不再自己 remove("on") —— hide 会顺手把
+   show() 临时顶上去的 z-index 还原掉。少还原一步的话，这个弹层
+   带着一个"高了一层"的 z-index 留在 DOM 里，下次它和别的弹层
+   叠开时排序就错位了（表现是点不动）。 */
+function closeMask(id) { hide(id); }
 
 /* ---------------- 结果预览（导入文件夹与上传共用一套渲染） ---------------- */
 
@@ -3395,6 +4081,19 @@ const PF_KINDS = {
       + "清空之后内化就只按通用模板来，不再带你写的这几句。\n"
       + "（已经跑完的那些任务不受影响。）",
   },
+  /* 大纲这一档。它的提示词是"每一份候选都捎上"的量级 ——
+     一次生成可能同时跑 4 个模型，所以同样的字数在这一档更贵。
+     这也是 emptyNote 里要提一句"越长越贵"的原因。 */
+  outline: {
+    label: "大纲",
+    defaultUrl: "/api/outline-prompt",
+    emptyNote: "这次不带补充提示词，只按通用模板写。想让它按你的习惯写，"
+             + "就在这儿写几句，或者挑一条存好的。",
+    pickHint: "还没存过。点右上角「＋ 创建提示词」存一条，下次就不用重打了。",
+    clearConfirm: "清空补充提示词？\n\n"
+      + "清空之后大纲就只按通用模板来，不再带你写的这几句。\n"
+      + "（已经生成过的那些候选不受影响。）",
+  },
 };
 
 function pfD(prefix) {
@@ -3666,6 +4365,8 @@ async function pfSaveDefault(kind, prefix) {
     // 内化弹层那边还读着 S.infMeta.user_prompt，一起改掉 ——
     // 否则她接着开弹层时框里还是旧的那句。
     if (kind === "infuse" && S.infMeta) S.infMeta.user_prompt = txt;
+    // 大纲页常驻着这一块，同理。它读的是 OL.prompt（见 loadOutline）。
+    if (kind === "outline" && OL) OL.prompt = txt;
     pfPaint(kind, prefix, pfOpts(prefix));
     toast(txt ? "已保存，以后每次都会带上它" : "已清空");
     return true;
@@ -3801,16 +4502,21 @@ async function deletePromptForm() {
   }
 }
 
-/* 三个位置的配置。集中放一处 —— 免得"打开时重画"和"存完重画"
+/* 四个位置的配置。集中放一处 —— 免得"打开时重画"和"存完重画"
    用了两套设置，那会让刚存好的条目在某一刻突然看不见。
      clP  自动分类弹层   列别人的（这次可以借别人的条目用）
      ifP  内化弹层       列别人的（同上）
      ip   内化的设置层   不列别人的 —— 它要存成一段文本，
-                         别人的内容一旦落成文本就等于公开了 */
+                         别人的内容一旦落成文本就等于公开了
+     olP  大纲页（常驻） 列别人的（跟 clP/ifP 一样是"这次用"）
+   注意 olP 跟前面三个不一样的地方：它**不是弹层里的**，
+   而是大纲页上常驻的一块。所以它得在页面打开时自己画一次 ——
+   见 loadOutline()。 */
 const PF_PANELS = {
   clP: { kind: "classify", showPublic: true },
   ifP: { kind: "infuse", showPublic: true },
   ip: { kind: "infuse", showPublic: false, fillOnPick: true },
+  olP: { kind: "outline", showPublic: true },
 };
 
 function pfOpts(prefix) {
@@ -6924,6 +7630,1849 @@ document.getElementById("pkQ").oninput = () => {
 };
 document.getElementById("pkOk").onclick = applyPick;
 
+
+/* ==================================================================
+   大纲生成
+   ==================================================================
+   这一页的输入分三层，代码里也照着分：
+     硬输入（世界观 / 角色卡 / 预期字数）—— 缺一个就不给生成
+     软输入（一句话梗 / 情节设计 / 补充提示词）—— 可以不填
+     零件池 —— **后端先筛一道**再摆给模型。库里几百条零件
+               全塞进一次请求会直接超上下文，所以界面上显示的是
+               "这次将会摆给模型看的那一批"，不是"库里有几条"。
+
+   生成是**后台任务**（不是同步请求），所以界面分两段看：
+     「任务」区看进度（可以切走再回来）
+     「候选」区看结果（多模型并排，她自己挑一版做成大纲）
+
+   两条贯穿始终的规矩（别在改代码时丢掉）：
+     1. **AI 原稿只由服务端给**。前端就算把 ai_original_json 一起发回去，
+        接口层也会拿库里那份覆盖掉（见 main.py 的 api_save_outline）。
+     2. **参考次数不在这里算**。界面上的"用过 N 次"是读下来的，
+        真正的加减只发生在大纲保存那一刻（outline_plot_refs）。
+   ================================================================== */
+
+const OL = {
+  ready: false,
+  meta: null,               // /api/outline-meta
+  chars: {},                // 勾上的角色卡： id → 卡
+  charList: [],             // 全部角色卡（弹层里用）
+  worlds: [],               // 世界观库清单
+  worldId: 0,               // 从库里挑的那份（没挑就是 0）
+  worldName: "",
+  plots: [],                // 可参与的零件（带参考次数）
+  poolMode: "auto",         // auto | manual
+  picked: {},               // 手动模式勾了哪些
+  autoPool: null,           // 预览算出来的那一批（自动模式用它显示）
+  models: {},               // 勾了哪些模型： key → true
+  promptLoaded: false,
+  prompt: "",               // 一直用的那份补充提示词
+  runs: [],
+  candsFor: 0,              // 已经拉过候选正文的那次任务 id
+  candData: {},             // 候选 id → 完整候选
+  lib: { total: 0, items: [] },
+  work: null,               // 正在看/改的那一份（候选，或库里的大纲）
+  fbs: [],                  // 那一份上记过的反馈
+  nodeSrc: {},              // 节点编辑弹层里勾的来源零件
+  nodeIdx: -1,              // 正在编辑第几段（-1 = 新增）
+  metaOpen: false,          // 详情里"大字段"那块收着还是开着
+  fbNode: "",               // 正在标不可用的那一段
+  editing: false,           // 详情弹层是不是"可编辑"状态
+  poll: null,
+  pollRun: 0
+};
+
+function olEl(id) { return document.getElementById(id); }
+
+/* ---------------- 读数据 ---------------- */
+
+async function loadOutline(force) {
+  try {
+    if (!OL.ready || force) {
+      OL.meta = await api("/api/outline-meta");
+      OL.ready = true;
+      olPaintMeta();
+    }
+    if (!OL.promptLoaded || force) {
+      await pfLoad("outline");
+      OL.prompt = (S.pf.outline || {}).content || "";
+      OL.promptLoaded = true;
+    }
+    // 常驻面板也要画一次（它不像弹层那样"打开时重画"）
+    pfPaint("outline", "olP", pfOpts("olP"));
+
+    await olLoadChars();
+    await olLoadWorlds();
+    await olLoadPlots();
+    await olLoadRuns();
+    await olLoadLib();
+    olPaintWorldCnt();
+    olPaintPoolNote();
+  } catch (e) { toast(e.message, true); }
+}
+
+function olPaintMeta() {
+  const L = ((OL.meta || {}).limits) || {};
+  const w = olEl("olWords");
+  if (w) {
+    w.min = L.target_min || 1000;
+    w.max = L.target_max || 200000;
+  }
+  const h = olEl("olHook");
+  if (h) h.maxLength = L.hook_max || 500;
+  const d = olEl("olDesign");
+  if (d) d.maxLength = L.design_max || 3000;
+  const ww = olEl("olWorld");
+  if (ww) ww.maxLength = L.world_max || 30000;
+  olPaintTier();
+  olPaintModels();
+}
+
+/* 字数 → 结构规模。这张表在后端（WORD_TIERS），前端只是照着显示 ——
+   自己抄一份"8000 字 = 5～8 段"的话，后端一改这边就永远显示老的了。 */
+function olTierOf(words) {
+  const ts = ((OL.meta || {}).tiers) || [];
+  for (let i = 0; i < ts.length; i++) {
+    if (words >= ts[i].min && words <= ts[i].max) return ts[i];
+  }
+  return ts.length ? ts[ts.length - 1] : null;
+}
+
+function olPaintTier() {
+  const box = olEl("olTierNote");
+  if (!box) return;
+  const t = olTierOf(Number(olEl("olWords").value || 0));
+  if (!t) { box.textContent = "字数决定结构规模，不是只显示一个数字。"; return; }
+  const ns = t.nodes || [3, 5];
+  box.innerHTML = "结构规模：<b>" + esc(t.label) + "</b> —— 大概 "
+    + ns[0] + "～" + ns[1] + " 段，" + esc(t.hint) + "。";
+}
+
+function olPaintModels() {
+  const box = olEl("olModels");
+  if (!box) return;
+  const ms = ((OL.meta || {}).models) || [];
+  olSeedModel();   // 第一次画的时候替她勾上第一个能用的（只做一次）
+  if (!ms.length) {
+    box.innerHTML = '<div class="mdhint" style="flex:none">还没配过模型。' +
+      '去右上角「模型设置」加一个、填上 API Key 才能生成。</div>';
+    olEl("olModelNote").textContent = "";
+    return;
+  }
+  box.innerHTML = ms.map(m =>
+    '<label' + (m.usable ? "" : ' class="dead"') + '>' +
+      '<input type="checkbox"' + (OL.models[m.key] ? " checked" : "")
+        + (m.usable ? "" : " disabled") + '>' +
+      '<span>' + esc(m.label || m.key)
+        + (m.usable ? "" : ' <span class="chip gray">没填 Key</span>') +
+        '<br><span style="color:var(--ink-3);font-size:11.5px">'
+        + esc(m.model || "") + '</span></span>' +
+    '</label>').join("");
+  const cbs = box.querySelectorAll("input");
+  ms.forEach((m, i) => {
+    cbs[i].onchange = () => {
+      const max = (((OL.meta || {}).limits) || {}).max_models || 4;
+      if (cbs[i].checked) {
+        const n = Object.keys(OL.models).filter(k => OL.models[k]).length;
+        if (n >= max) {
+          cbs[i].checked = false;
+          toast("一次最多挑 " + max + " 个模型。再多是并发打同一家的限流，"
+                + "而且你也比分不过来。", true);
+          return;
+        }
+        OL.models[m.key] = true;
+      } else {
+        delete OL.models[m.key];
+      }
+      olPaintModelNote();
+    };
+  });
+  olPaintModelNote();
+}
+
+function olPaintModelNote() {
+  const box = olEl("olModelNote");
+  if (!box) return;
+  const n = Object.keys(OL.models).filter(k => OL.models[k]).length;
+  const cases = (((OL.meta || {}).learning) || {}).cases || 0;
+  if (!n) { box.textContent = "勾一个或几个。勾几个就各出一份候选，你挑。"; return; }
+  box.textContent = "已勾 " + n + " 个，会各出一份候选（并发跑，不是排队）。"
+    + (cases ? "另外会参考你标过的 " + cases + " 条「不可用」。" : "");
+}
+
+async function olLoadChars() {
+  const r = await api("/api/characters");
+  OL.charList = r.characters || [];
+  // 勾着的那张要是被删了或停用了，就取消勾选 ——
+  // 不然她会看着"已关联 2 张"，然后每次生成都在服务端被挡回来。
+  const alive = {};
+  OL.charList.forEach(c => {
+    if (OL.chars[c.id] && c.status === "启用") alive[c.id] = c;
+  });
+  OL.chars = alive;
+  olPaintChars();
+  olPaintCharList();
+  olPaintStats();
+}
+
+function olPaintChars() {
+  const box = olEl("olChars");
+  const ids = Object.keys(OL.chars);
+  if (!ids.length) { box.innerHTML = ""; return; }
+  box.innerHTML = ids.map(id => {
+    const c = OL.chars[id];
+    const full = (c.filled || 0) >= (c.field_total || 10);
+    return '<span class="olchar' + (full ? "" : " incomplete") + '">'
+      + '<span class="nm">' + esc(c.name) + '</span>'
+      + (full ? "" : '<span class="chip gray" title="这张卡还没填全，'
+           + 'AI 只能照名字猜">' + (c.filled || 0) + "/" + (c.field_total || 10)
+           + '</span>')
+      + '<button class="x" data-olchar="' + c.id + '" title="取消关联">&times;</button>'
+      + '</span>';
+  }).join("");
+  box.querySelectorAll("[data-olchar]").forEach(b => {
+    b.onclick = () => {
+      delete OL.chars[b.dataset.olchar];
+      olPaintChars();
+      olPaintCharList();
+    };
+  });
+}
+
+function olPaintStats() {
+  fill("olStatPlots", fmtNum(OL.plots.length));
+  fill("olStatChars", fmtNum(OL.charList.length));
+  fill("olStatOutlines", fmtNum((OL.lib || {}).total || 0));
+  fill("olStatLearning", fmtNum((((OL.meta || {}).learning) || {}).cases || 0));
+}
+
+async function olLoadWorlds() {
+  const r = await api("/api/worldviews");
+  OL.worlds = r.worldviews || [];
+  olPaintWorlds();
+}
+
+function olPaintWorlds() {
+  const box = olEl("olwList");
+  if (!OL.worlds.length) {
+    box.innerHTML = '<div class="blank">库里还没有存过世界观。' +
+      '把上面输入框里的设定起个名字存进来，下次就能直接选。</div>';
+    return;
+  }
+  box.innerHTML = OL.worlds.map(w =>
+    '<div class="ollibi">' +
+      '<div class="grow">' +
+        '<div class="t">' + esc(w.name) + '</div>' +
+        '<div class="m"><span>' + fmtNum(w.chars || 0) + ' 字</span>' +
+          '<span>· ' + esc((w.updated_at || "").slice(0, 16)) + '</span>' +
+          (OL.worldId === w.id ? '<span class="chip ok">正在用这份</span>' : "") +
+        '</div>' +
+        (w.preview ? '<div class="m">' + esc(w.preview) + '…</div>' : "") +
+      '</div>' +
+      '<div class="acts">' +
+        '<button class="mini primary" data-olw="use" data-id="' + w.id + '">用这份</button>' +
+        '<button class="mini" data-olw="see" data-id="' + w.id + '">看全文</button>' +
+        '<button class="mini mddel" data-olw="del" data-id="' + w.id + '">删</button>' +
+      '</div>' +
+    '</div>').join("");
+}
+
+function olPaintWorldCnt() {
+  const n = (olEl("olWorld").value || "").length;
+  olEl("olWorldCnt").textContent = fmtNum(n) + " 字"
+    + (OL.worldName ? "（" + OL.worldName + "）" : "");
+}
+
+async function olLoadPlots() {
+  const r = await api("/api/outline-plots?limit=1000");
+  OL.plots = r.plots || [];
+  olPaintPool();
+  olPaintStats();
+}
+
+function olPaintPool() {
+  const box = olEl("olPool");
+  if (OL.poolMode === "auto") {
+    if (OL.autoPool) {
+      box.innerHTML = olPlotRows(OL.autoPool, false);
+      return;
+    }
+    box.innerHTML = '<div class="blank">点下面的「看看会发出去什么」，'
+      + '这次<b>自动筛出</b>的那几条就会摆在这儿。<br><br>'
+      + '自动筛的规矩：先按<b>主类轮转</b>（每一类先挑一条，'
+      + '不让你最近的兴趣全挤在一两个类里），同类里让<b>参考次数少的先上</b>。'
+      + '次数少的优先只是"排队顺序"，不是硬规矩 —— '
+      + '提示词里写死了不许为了用新鲜零件而牺牲逻辑。</div>';
+    return;
+  }
+  if (!OL.plots.length) {
+    box.innerHTML = '<div class="blank">库里还没有「已确认」或「已编辑」的剧情零件。' +
+      '先去【剧情内化】确认几条再来。</div>';
+    return;
+  }
+  box.innerHTML = olPlotRows(OL.plots, true);
+}
+
+function olPlotRows(list, checkable) {
+  return list.map(p => {
+    const on = !!OL.picked[p.id];
+    const rc = p.ref_count || 0;
+    const cls = rc === 0 ? "fresh" : (rc >= 3 ? " hot" : "");
+    return '<div class="olplot' + (on ? " on" : "") + '" data-olplot="' + p.id + '">'
+      + (checkable ? '<input type="checkbox"' + (on ? " checked" : "") + '>' : "")
+      + '<div class="grow">'
+      +   '<div class="pt">' + esc(p.title || "（没起名字）") + '</div>'
+      +   '<div class="pr">'
+      +     (p.category_name ? '<span class="chip gray">' + esc(p.category_name) + '</span>' : "")
+      +     (p.plot_type ? '<span class="chip gray">' + esc(p.plot_type) + '</span>' : "")
+      +     '<span>' + esc((p.summary || "").slice(0, 70)) + '</span>'
+      +   '</div>'
+      + '</div>'
+      + '<span class="ref' + cls + '">'
+      +   (rc === 0 ? "没用过" : "用过 " + rc + " 次") + '</span>'
+      + '</div>';
+  }).join("");
+}
+
+function olPaintPoolNote() {
+  const L = ((OL.meta || {}).limits) || {};
+  const chip = olEl("olPoolChip");
+  const note = olEl("olPoolNote");
+  olEl("olPoolAuto").className = "mini" + (OL.poolMode === "auto" ? " primary" : "");
+  olEl("olPoolManual").className = "mini" + (OL.poolMode === "manual" ? " primary" : "");
+  olEl("olPoolRefresh").hidden = (OL.poolMode !== "manual");
+  if (OL.poolMode === "auto") {
+    chip.textContent = "自动筛";
+    note.textContent = "最多 " + (L.default_pool || 40) + " 条（上限 "
+      + (L.max_pool || 80) + "）";
+  } else {
+    const n = Object.keys(OL.picked).filter(k => OL.picked[k]).length;
+    chip.textContent = "手动选";
+    note.textContent = n ? ("已勾 " + n + " 条") : "还没勾任何一条";
+  }
+}
+
+/* ---------------- 大纲库 ---------------- */
+
+async function olLoadLib() {
+  const d = await api("/api/outlines?limit=100");
+  OL.lib = { total: d.total || 0, items: d.items || [] };
+  olPaintLib();
+  olPaintStats();
+}
+
+function olPaintLib() {
+  const box = olEl("olLib");
+  const items = OL.lib.items || [];
+  if (!items.length) {
+    box.innerHTML = '<div class="blank">大纲库还是空的。生成之后，'
+      + '在候选那一栏点「把这一版做成大纲」，它才会进来 —— '
+      + '也只有进到这里，才会给剧情零件加参考次数。</div>';
+    return;
+  }
+  box.innerHTML = items.map(o =>
+    '<div class="ollibi">'
+    + '<div class="grow">'
+    +   '<div class="t">' + esc(o.title || "（没起标题）") + '</div>'
+    +   '<div class="m">'
+    +     '<span class="chip gray">' + esc(o.outline_type || "") + '</span>'
+    +     (o.world_name ? '<span>' + esc(o.world_name) + '</span>' : "")
+    +     (o.target_words ? '<span>目标 ' + fmtNum(o.target_words) + ' 字</span>' : "")
+    +     (o.model_name ? '<span>' + esc(o.model_name) + '</span>' : "")
+    +     (o.in_learning ? '<span class="chip ok">在学</span>' : "")
+    +     ((o.selected_plot_ids || []).length
+        ? '<span>用了 ' + o.selected_plot_ids.length + ' 条零件</span>' : "")
+    +     '<span>' + esc((o.updated_at || "").slice(0, 16)) + '</span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="acts">'
+    +   '<button class="mini primary" data-ollo="' + o.id + '">打开</button>'
+    +   '<button class="mini" data-ollocopy="' + o.id + '">复制全文</button>'
+    +   '<button class="mini mddel" data-olldel="' + o.id + '">删除</button>'
+    + '</div>'
+    + '</div>').join("");
+}
+
+/* ---------------- 提交用的请求体 ---------------- */
+
+function olBody() {
+  const L = ((OL.meta || {}).limits) || {};
+  const b = {
+    outline_type: ((OL.meta || {}).types || [])[0] || "同人短篇",
+    worldview: (olEl("olWorld").value || "").trim(),
+    world_name: OL.worldName || "",
+    worldview_id: OL.worldId || 0,
+    character_ids: Object.keys(OL.chars).map(Number),
+    one_sentence_hook: (olEl("olHook").value || "").trim(),
+    plot_design: (olEl("olDesign").value || "").trim(),
+    target_words: Number(olEl("olWords").value || 0),
+    model_keys: Object.keys(OL.models).filter(k => OL.models[k]),
+    pool_size: L.default_pool || 40,
+    use_learning: !!olEl("olUseLearn").checked
+  };
+  if (OL.poolMode === "manual") {
+    const ids = Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number);
+    if (!ids.length) {
+      toast("你选了「我手动选」，但一条零件都没勾。勾几条，或者切回「自动筛」。", true);
+      return null;
+    }
+    b.plot_ids = ids;
+  }
+  // 补充提示词：挑中库里某条时只带 id（内容服务端去取），否则带框里那串
+  return Object.assign(b, pfPayload("outline", "olP"));
+}
+
+/* ---------------- 预览 ---------------- */
+
+async function olPreview() {
+  const body = olBody();
+  if (!body) return;
+  const btn = olEl("olPreviewBtn");
+  btn.disabled = true;
+  olEl("olPreview").innerHTML = '<div class="mdhint" style="flex:none">正在算…</div>';
+  try {
+    const pv = await post("/api/outlines/preview", body);
+    // 自动模式下把"这次筛出来的那一批"摊到零件区 ——
+    // 用的是服务端算的同一份，不是前端自己猜的
+    OL.autoPool = (pv.plot_source === "auto") ? pv.plots : null;
+    olPaintPool();
+    olPaintPreview(pv);
+  } catch (e) {
+    olEl("olPreview").innerHTML = "";
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function olPaintPreview(pv) {
+  const box = olEl("olPreview");
+  const ps = pv.problems || [];
+  const bad = ps.filter(p => p.level !== "warn");
+  const tier = pv.tier || {};
+  let h = '<div class="olpv">';
+  h += '<div class="pvh">' + (bad.length ? "还差点东西" : "可以开始了")
+    + ' <span class="chip gray">提示词：'
+    + (pv.prompt_src === "file" ? "你自己那份" : "通用版")
+    + (pv.prompt_version ? " " + esc(pv.prompt_version) : "") + '</span>'
+    + (pv.prompt_warning ? ' <span class="chip warn">模板缺槽位，退回通用版</span>' : "")
+    + '</div>';
+  if (ps.length) {
+    h += '<ul class="warns">' + ps.map(p =>
+      '<li class="' + (p.level === "warn" ? "warn" : "bad") + '">'
+      + esc(p.message) + '</li>').join("") + '</ul>';
+  }
+  h += '<div class="kv"><b>预期字数</b><span>' + fmtNum(pv.target_words) + ' 字 · '
+    + esc(tier.label || "") + ' · 约 ' + ((tier.nodes || []).join("～")) + ' 段</span></div>';
+  h += '<div class="kv"><b>世界观</b><span>' + fmtNum(pv.worldview_chars) + ' 字'
+    + (pv.world_name ? "（" + esc(pv.world_name) + "）" : "") + '</span></div>';
+  h += '<div class="kv"><b>角色卡</b><span>'
+    + (pv.characters || []).map(c => esc(c.name) + "（填了 " + c.filled + "/"
+      + c.field_total + " 项）").join("、") + '</span></div>';
+  h += '<div class="kv"><b>零件</b><span>' + (pv.plots || []).length + ' 条（'
+    + (pv.plot_source === "manual" ? "你手动挑的" : "自动筛的") + '）</span></div>';
+  h += '<div class="kv"><b>模型</b><span>'
+    + (pv.models || []).map(m => esc(m.label)
+      + (m.usable ? "" : '（用不了' + (m.reason ? "：" + esc(m.reason) : "") + '）')
+    ).join("、") + '</span></div>';
+  h += '<div class="kv"><b>会发出去</b><span>约 ' + fmtNum(pv.send_chars)
+    + ' 字</span></div>';
+  if ((pv.blocked_plots || []).length) {
+    h += '<div class="kv"><b>拦住没发</b><span>'
+      + pv.blocked_plots.map(p => esc(p.title)).join("、")
+      + '（来自标了「仅本地」的素材）</span></div>';
+  }
+  if (pv.learning_cases) {
+    h += '<div class="kv"><b>学习参考</b><span>' + pv.learning_cases
+      + ' 条你标过的「不可用」</span></div>';
+  }
+  h += '<div class="pvnote">' + esc(pv.privacy || "") + '</div>';
+  h += '<div class="olrow"><button class="mini" id="olPvMsg">展开要发出去的正文</button>'
+    + '<span class="mdhint" style="flex:1 1 auto">这一屏只是说明，'
+    + '还没有花一分钱。</span></div>';
+  h += '<pre id="olPvPre" hidden>' + esc(pv.messages_preview || "") + '</pre>';
+  h += '</div>';
+  box.innerHTML = h;
+  olEl("olPvMsg").onclick = () => {
+    const pre = olEl("olPvPre");
+    pre.hidden = !pre.hidden;
+    olEl("olPvMsg").textContent = pre.hidden ? "展开要发出去的正文" : "收起正文";
+  };
+}
+
+/* ---------------- 生成与轮询 ---------------- */
+
+async function olGo() {
+  const body = olBody();
+  if (!body) return;
+  if (!body.model_keys.length) {
+    toast("先勾一个模型 —— 没有模型没法生成。", true);
+    return;
+  }
+  const btn = olEl("olGo");
+  btn.disabled = true;
+  try {
+    const r = await post("/api/outlines/generate", body);
+    toast(r.message || "开始生成了，进度在下面那块");
+    if ((r.skipped_models || []).length) {
+      toast(r.skipped_models[0].message, true);
+    }
+    await olLoadRuns();
+    olPoll(r.run_id);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function olIsActive(status) {
+  return (((OL.meta || {}).run_active) || []).indexOf(status) >= 0;
+}
+
+function olPoll(runId) {
+  OL.pollRun = runId;
+  if (OL.poll) clearInterval(OL.poll);
+  OL.poll = setInterval(olPollTick, 2500);
+  olPollTick();
+}
+
+async function olPollTick() {
+  const rid = OL.pollRun;
+  if (!rid) {
+    if (OL.poll) clearInterval(OL.poll);
+    OL.poll = null;
+    return;
+  }
+  let run = null;
+  try {
+    const d = await api("/api/outline-runs/" + rid);
+    run = d.run;
+  } catch (e) {
+    // 轮询失败不吵她 —— 服务重启那一瞬间必然失败一次，下一轮补上
+    return;
+  }
+  const i = OL.runs.findIndex(r => r.id === rid);
+  // 单查带回 input（世界观快照），列表不带 —— 合并时别把 input 弄丢
+  if (i >= 0) {
+    const keepInput = OL.runs[i].input;
+    OL.runs[i] = Object.assign({}, run, keepInput ? { input: keepInput } : {});
+  } else {
+    OL.runs.unshift(run);
+  }
+  if (!olIsActive(run.status)) {
+    if (OL.poll) clearInterval(OL.poll);
+    OL.poll = null;
+    await olLoadCands(run);
+    await olLoadLib();
+  }
+  olPaintRuns();
+}
+
+async function olLoadRuns() {
+  const d = await api("/api/outline-runs?limit=8");
+  OL.runs = d.runs || [];
+  olPaintRuns();
+  const running = OL.runs.find(r => olIsActive(r.status));
+  if (running && !OL.poll) olPoll(running.id);
+}
+
+/* 候选正文按需拉。为什么不跟着任务一起下来：
+   一次 4 份、每份几千字，列表页根本不用看 —— 而且
+   /api/outline-runs 故意不带 raw_response 就是这个道理。 */
+async function olLoadCands(run) {
+  if (!run || OL.candsFor === run.id) return;
+  const list = (run.candidates || []).filter(c => c.status === "已完成");
+  if (!list.length) return;
+  try {
+    const rs = await Promise.all(
+      list.map(c => api("/api/outline-candidates/" + c.id)));
+    const map = {};
+    rs.forEach(x => { map[x.candidate.id] = x.candidate; });
+    OL.candData = map;
+    OL.candsFor = run.id;
+  } catch (e) { /* 拉不到就只显示摘要，不挡别的 */ }
+}
+
+function olPaintRuns() {
+  const box = olEl("olRuns");
+  if (!OL.runs.length) { box.innerHTML = ""; return; }
+  let h = '<div class="olsec"><h3>生成任务</h3>' +
+    '<div class="mdhint">可以切去看别的页，回来进度还是新的 —— ' +
+    '任务在服务端跑，不是挂在这个页面上。</div>';
+  OL.runs.forEach(run => {
+    const total = run.total_models || 0;
+    const done = run.done_models || 0;
+    const failed = run.failed_models || 0;
+    const pct = total ? Math.round(((done + failed) / total) * 100) : 0;
+    const active = olIsActive(run.status);
+    let rh = '<div class="olrun" data-olrun="' + run.id + '">';
+    rh += '<div class="rh">'
+      + '<span class="chip' + (active ? "" : (run.status === "已完成" ? " ok" : ""))
+      + '">' + esc(run.status) + '</span>'
+      + '<span class="mdhint" style="flex:0 0 auto">#' + run.id + '</span>'
+      + '<span class="grow"></span>';
+    if (active) {
+      rh += '<button class="mini" data-olact="cancel" data-id="' + run.id + '">取消</button>';
+    } else if (failed) {
+      rh += '<button class="mini primary" data-olact="retry" data-id="' + run.id
+        + '">补跑失败的 ' + failed + ' 个</button>';
+    }
+    rh += '</div>';
+    rh += '<div class="rmeta">' + run.total_models + ' 个模型 · '
+      + (run.cand_plot_count || 0) + ' 条零件 · 约 '
+      + fmtNum(run.total_input_chars || 0) + ' 字发出去 · '
+      + esc(run.created_at || "") + '</div>';
+    rh += '<div class="bar"><i style="width:' + pct + '%"></i></div>';
+    rh += '<div class="rmeta">' + done + " 好 / " + failed + " 没成 / "
+      + Math.max(0, total - done - failed) + ' 在跑</div>';
+    if (run.note) rh += '<div class="rnote">' + esc(run.note) + '</div>';
+    if (run.error) rh += '<div class="rnote" style="color:var(--danger)">'
+      + esc(run.error) + '</div>';
+    if (run.saved_outline_id) {
+      rh += '<div class="rnote">已经有一版推进大纲库了（#'
+        + run.saved_outline_id + '）。</div>';
+    }
+    // 跑完的才画候选 —— 跑到一半的候选只有"生成中"三个字，看着像坏了
+    if (!active) {
+      rh += '<div class="olcands">'
+        + (run.candidates || []).map(c => olCandCard(c)).join("") + '</div>';
+    }
+    rh += '</div>';
+    h += rh;
+  });
+  h += '</div>';
+  box.innerHTML = h;
+}
+
+function olCandCard(c) {
+  const full = OL.candData[c.id];
+  const j = (full && full.content_json) || null;
+  let body = "";
+  if (c.status !== "已完成") {
+    body = '<div style="color:var(--ink-3)">' + esc(c.status)
+      + (c.error ? "：" + esc(c.error) : "") + '</div>';
+  } else if (!j) {
+    body = '<div style="color:var(--ink-3)">正文还没拉下来，点下面那个按钮再看。</div>';
+  } else {
+    const nodes = j.nodes || [];
+    const total = ((j.word_budget || {}).total) || 0;
+    body = '<div class="ct">'
+      + esc(((j.title_candidates || [])[0]) || "（没起标题）") + '</div>';
+    if (j.story_core) body += '<div>' + esc(j.story_core) + '</div>';
+    body += '<div class="m" style="font-size:11.5px;color:var(--ink-3);'
+      + 'margin-top:5px;line-height:1.8">' + nodes.length + ' 段 · 约 '
+      + fmtNum(total) + ' 字 · 用到 ' + ((j.used_plot_ids || []).length)
+      + ' 条零件 · ' + (j.logic_risks || []).length + ' 条逻辑风险</div>';
+    body += nodes.slice(0, 6).map((n, i) =>
+      '<div class="cn">' + (i + 1) + ". " + esc(n.node_title || "")
+      + "（" + fmtNum(n.estimated_words || 0) + " 字）"
+      + (n.event ? "<br>" + esc(String(n.event).slice(0, 100)) : "")
+      + '</div>').join("");
+    if (nodes.length > 6) {
+      body += '<div style="color:var(--ink-3)">……还有 ' + (nodes.length - 6)
+        + ' 段</div>';
+    }
+  }
+  let ch = '<div class="ch">' + esc(c.model_name || c.model_key)
+    + (c.adopted ? ' <span class="chip ok">已推入</span>' : '')
+    + '<span class="grow"></span>'
+    + '<span class="mdhint" style="flex:0 0 auto">'
+    + (c.elapsed_ms ? (Math.round(c.elapsed_ms / 100) / 10) + " 秒" : "")
+    + (c.output_chars ? " · " + fmtNum(c.output_chars) + " 字" : "")
+    + '</span></div>';
+  if ((c.warnings || []).length) {
+    ch += '<div style="padding:6px 10px 0"><span class="chip warn">'
+      + c.warnings.length + ' 条提醒</span></div>';
+    ch += '<div style="padding:4px 10px 0;font-size:12px;line-height:1.8;color:#8a5a2c">'
+      + c.warnings.map(w => esc(w)).join("<br>") + '</div>';
+  }
+  let acts = "";
+  if (c.status === "已完成") {
+    acts = '<button class="mini primary" data-olcand="' + c.id + '" data-run="'
+      + c.run_id + '">把这一版做成大纲</button>';
+  }
+  return '<div class="olcand' + (c.adopted ? " on" : "") + '">' + ch
+    + '<div class="cb">' + body + '</div>'
+    + '<div class="cf">' + acts + '</div></div>';
+}
+
+/* ---------------- 把一版候选变成大纲 ---------------- */
+
+async function olAdopt(candId, runId) {
+  const c = OL.candData[candId];
+  if (!c) {
+    toast("这一版的内容还没拉下来，稍等一下再点", true);
+    return;
+  }
+  const j = JSON.parse(JSON.stringify(c.content_json || {}));
+  if (!(j.nodes || []).length) {
+    toast("这一版里一个段落都没有，没法做成大纲", true);
+    return;
+  }
+  // 世界观/角色卡这些输入，一律取**生成那一刻的快照**（服务端存着），
+  // 不取界面上现在写着的 —— 她生成完可能又改了世界观，
+  // 用新的那份存进大纲，以后复盘就跟 AI 实际看到的不一样了。
+  let inp = null;
+  try {
+    const d = await api("/api/outline-runs/" + runId);
+    inp = (d.run || {}).input || null;
+    const i = OL.runs.findIndex(r => r.id === runId);
+    if (i >= 0 && inp) OL.runs[i].input = inp;
+  } catch (e) { /* 拿不到就退回界面上的值 */ }
+  inp = inp || {};
+
+  OL.work = {
+    outline_id: 0,
+    candidate_id: c.id,
+    run_id: runId,
+    model_key: c.model_key,
+    model_name: c.model_name,
+    prompt_version: c.prompt_version,
+    title: ((j.title_candidates || [])[0]) || "",
+    world_name: inp.world_name || OL.worldName || "",
+    worldview_id: inp.worldview_id || OL.worldId || 0,
+    world_input_snapshot: inp.worldview || (olEl("olWorld").value || "").trim(),
+    character_ids: inp.character_ids || Object.keys(OL.chars).map(Number),
+    character_snapshot: inp.character_snapshot || [],
+    one_sentence_hook: inp.one_sentence_hook || (olEl("olHook").value || "").trim(),
+    hook_ai_derived: !document.getElementById("olHook").value.trim(),
+    plot_design: inp.plot_design || (olEl("olDesign").value || "").trim(),
+    target_words: inp.target_words || Number(olEl("olWords").value || 0),
+    ai_json: JSON.parse(JSON.stringify(c.content_json || {})),
+    draft: j,
+    in_learning: false,
+    user_note: "",
+    dirty: true,
+    diff: null
+  };
+  olSyncUsed();
+  OL.fbs = [];
+  await olOpenWork(true);
+}
+
+async function olOpenWork(startEditing) {
+  const w = OL.work;
+  if (!w) return;
+  if (w.outline_id) {
+    try {
+      const d = await api("/api/outlines/" + w.outline_id + "/feedback");
+      OL.fbs = d.feedback || [];
+    } catch (e) { OL.fbs = []; }
+  }
+  OL.editing = !!startEditing;
+  olEl("oloTitle").textContent = w.title || "大纲";
+  olEl("oloSub").textContent = w.outline_id
+    ? ("大纲库 #" + w.outline_id + "。AI 原稿一直留着，随便改。")
+    : "还没存进大纲库。改完点「保存改动」。";
+  olEl("oloNote").value = w.user_note || "";
+  olEl("oloLearn").checked = !!w.in_learning;
+  olEl("oloEditOn").hidden = OL.editing;
+  olEl("oloSave").hidden = !OL.editing;
+  olPaintWork();
+  show("mkOlOut");
+  const c = document.querySelector("#mkOlOut .content");
+  if (c) c.scrollTop = 0;
+}
+
+/* 节点里挂着的来源零件收成一份总清单。
+   计划要求"采用了哪些零件、以及各自被放在什么位置" ——
+   位置天然就在节点上，所以这里从节点倒推总清单，
+   不让她手填一个跟节点对不上的第二份。 */
+function olSyncUsed() {
+  const w = OL.work;
+  const seen = {}, out = [];
+  let total = 0;
+  (w.draft.nodes || []).forEach(n => {
+    total += Number(n.estimated_words || 0);
+    (n.source_plot_ids || []).forEach(id => {
+      if (!seen[id]) { seen[id] = true; out.push(id); }
+    });
+  });
+  w.draft.used_plot_ids = out;
+  w.draft.word_budget = { total: total, node_total: total };
+}
+
+function olFieldLabel(key) {
+  if (key === "estimated_words") return "字数";
+  const fs = ((OL.meta || {}).node_fields) || [];
+  const f = fs.find(x => x.key === key);
+  return f ? f.label : key;
+}
+
+function olPaintWork() {
+  olPaintWorkHead();
+  olPaintNodes();
+  olPaintDiff();
+  olPaintFbs();
+  olPaintText();
+}
+
+function olPaintWorkHead() {
+  const w = OL.work;
+  const j = w.draft || {};
+  const nodes = j.nodes || [];
+  const total = nodes.reduce((s, n) => s + Number(n.estimated_words || 0), 0);
+  const labels = { story_core: "故事核心", theme_tone: "主题与基调",
+                   overview: "故事总览", climax: "高潮和转折", ending: "结局" };
+  const big = Object.keys(labels);
+
+  let h = '<div class="olpv" style="margin-top:10px">';
+  h += '<div class="pvh">'
+    + (w.outline_id ? ("大纲库 #" + w.outline_id) : "还没存")
+    + ' <span class="chip gray">' + esc(w.model_name || w.model_key || "手写") + '</span>'
+    + ' <span class="chip gray">' + nodes.length + ' 段 · 约 '
+    + fmtNum(total) + ' 字</span>'
+    + (w.target_words ? ' <span class="chip gray">目标 ' + fmtNum(w.target_words)
+        + ' 字</span>' : '')
+    + ((j.logic_risks || []).length ? ' <span class="chip warn">'
+        + j.logic_risks.length + ' 条逻辑风险</span>' : '')
+    + '</div>';
+
+  h += '<div class="field"><label>标题</label>'
+    + (OL.editing
+        ? '<input type="text" id="oloT" maxlength="120" value="' + esc(w.title || "") + '">'
+        : '<div style="font-size:13.5px;font-weight:600">'
+          + esc(w.title || "（没起标题）") + '</div>')
+    + '</div>';
+
+  // 【为什么编辑时把这几块收进 <details>】她要改的九成是段落。
+  // 平铺的话，五个大输入框加一个逻辑风险框会把段落顶到两屏之外 ——
+  // 每次想改一段都得先滚过一堆"这次不想动"的东西。
+  // 收起来之后打开弹层第一眼看见的就是段落。值一直留在 DOM 里，
+  // 收起状态照样读得到（见 olReadWorkForm）。
+  let inner = "";
+
+  if (OL.editing) {
+    inner += '<div class="field"><label>标题候选 <span class="hint">一行一个</span></label>'
+      + '<textarea data-olk="title_candidates" rows="3">'
+      + esc((j.title_candidates || []).join("\n")) + '</textarea></div>';
+  } else if ((j.title_candidates || []).length) {
+    inner += '<div class="kv"><b>标题候选</b><span>'
+      + (j.title_candidates || []).map(t => esc(t)).join("　·　") + '</span></div>';
+  }
+
+  big.forEach(k => {
+    const v = (k === "climax" && typeof j[k] === "object" && j[k])
+      ? (j[k].description || "") : (j[k] || "");
+    if (OL.editing) {
+      inner += '<div class="field"><label>' + labels[k] + '</label>'
+        + '<textarea data-olk="' + k + '" rows="2">' + esc(v) + '</textarea></div>';
+    } else {
+      inner += '<div class="kv"><b>' + labels[k] + '</b><span>'
+        + esc(v || "（没写）") + '</span></div>';
+    }
+  });
+
+  if ((j.character_functions || []).length) {
+    inner += '<div class="kv"><b>角色功能</b><span>'
+      + j.character_functions.map(f =>
+          esc(f.role || "（没写角色）")
+          + (f.goal ? "：想要" + esc(f.goal) : "")
+          + (f.obstacle ? "，卡在" + esc(f.obstacle) : "")
+          + (f.change ? "，最后" + esc(f.change) : "")
+        ).join("<br>") + '</span></div>';
+  }
+
+  if (OL.editing) {
+    inner += '<div class="field"><label>逻辑风险 <span class="hint">一行一条。'
+      + 'AI 自己指出的疑点，别删掉 —— 写正文时正好用来避坑</span></label>'
+      + '<textarea data-olk="logic_risks" rows="3">'
+      + esc((j.logic_risks || []).join("\n")) + '</textarea></div>';
+  } else if ((j.logic_risks || []).length) {
+    inner += '<div class="kv"><b>逻辑风险</b><span>'
+      + (j.logic_risks || []).map(r => esc(r)).join("<br>") + '</span></div>';
+  }
+
+  if (OL.editing) {
+    h += '<details class="olmeta"' + (OL.metaOpen ? " open" : "")
+      + '><summary>故事核心 / 主题 / 总览 / 高潮 / 结局 / 逻辑风险 —— 点开改'
+      + '</summary><div class="olmetabody">' + inner + '</div></details>';
+  } else {
+    h += inner;
+  }
+
+  h += '</div>';
+  olEl("oloHead").innerHTML = h;
+  if (OL.editing) {
+    olEl("oloT").oninput = () => { OL.work.title = olEl("oloT").value; };
+    // 每次重画（挪一段、拆一段都会重画）详情都是新节点，
+    // 不记住开合状态的话，她刚点开的那块会在下一个动作后自己合上。
+    const mb = document.querySelector("#oloHead .olmeta");
+    if (mb) mb.ontoggle = () => { OL.metaOpen = mb.open; };
+  }
+}
+
+function olNodeHtml(n, i, nAll) {
+  const marked = (OL.fbs || []).some(f =>
+    f.kind === "node_unusable" && f.node_id === n.node_id);
+  const fs = ((OL.meta || {}).node_fields) || [];
+  let body = fs.filter(f => f.key !== "node_title").map(f => {
+    let v = n[f.key];
+    if (Array.isArray(v)) v = v.join("、");
+    v = String(v || "").trim();
+    return '<div class="nf' + (v ? "" : " empty") + '"><b>'
+      + esc(f.label) + '</b><span>' + (v ? esc(v) : "（空着）") + '</span></div>';
+  }).join("");
+  const src = (n.source_plot_ids || []).map(id => {
+    const p = OL.plots.find(x => x.id === id);
+    return '<span class="chip gray">#' + id + " "
+      + esc(p ? (p.title || "") : "（库里的零件）") + '</span>';
+  }).join("");
+  const acts = OL.editing
+    ? '<button class="mini" data-oln="up" data-i="' + i + '" title="往前挪一段">↑</button>'
+      + '<button class="mini" data-oln="down" data-i="' + i + '" title="往后挪一段">↓</button>'
+      + '<button class="mini" data-oln="edit" data-i="' + i + '">改</button>'
+      + '<button class="mini" data-oln="split" data-i="' + i + '" title="这一段塞了'
+        + '两件事，拆成两段">拆</button>'
+      + (i < nAll - 1
+          ? '<button class="mini" data-oln="merge" data-i="' + i
+            + '" title="和下一段并成一段">并</button>'
+          : "")
+      + '<button class="mini mddel" data-oln="del" data-i="' + i + '">删</button>'
+    : "";
+  return '<div class="olnode' + (marked ? " marked" : "") + '">'
+    + '<div class="nh">'
+    +   '<span class="idx">' + (i + 1) + '</span>'
+    +   '<span class="nt">' + esc(n.node_title || ("第 " + (i + 1) + " 段")) + '</span>'
+    +   '<span class="chip gray">' + fmtNum(n.estimated_words || 0) + ' 字</span>'
+    +   (marked ? '<span class="chip warn">标过不可用</span>' : "")
+    +   '<span class="grow"></span>'
+    +   '<button class="mini" data-oln="fold" data-i="' + i + '">收起</button>'
+    +   '<button class="mini" data-oln="mark" data-i="' + i + '">这一段不行</button>'
+    +   acts
+    + '</div>'
+    + '<div class="nbody">' + body + '</div>'
+    + (src ? '<div class="nsrc">' + src + '</div>' : "")
+    + '</div>';
+}
+
+function olPaintNodes() {
+  const box = olEl("oloNodes");
+  const nodes = (OL.work.draft.nodes || []);
+  let h = "";
+  if (!nodes.length) {
+    h = '<div class="blank">一段都没有。</div>';
+  } else {
+    h = nodes.map((n, i) => olNodeHtml(n, i, nodes.length)).join("");
+  }
+  if (OL.editing) {
+    h += '<div class="olrow"><button class="mini primary" data-oln="add" data-i="-1">'
+      + '＋ 加一段</button><span class="mdhint">加出来的是空段，'
+      + '自己写。改完记得点最上面的「保存改动」。</span></div>';
+  }
+  box.innerHTML = h;
+  // 收起 / 展开：把每个节点里除标题行以外的部分藏掉。
+  // 段落多的时候（十几段）不收起的话，一屏放不下两段，
+  // 她"通读一遍"这件事就做不成了。
+  if (OL.folded) {
+    box.querySelectorAll(".olnodes .olnode").forEach((el, i) => {
+      if (OL.folded.indexOf(i) < 0) return;
+      el.querySelectorAll(".nbody, .nsrc").forEach(x => x.classList.add("collapsed"));
+      const b = el.querySelector('[data-oln="fold"]');
+      if (b) b.textContent = "展开";
+    });
+  }
+}
+
+function olPaintDiff() {
+  const box = olEl("oloDiffBox");
+  const w = OL.work;
+  const d = w.diff;
+  if (!d) {
+    box.innerHTML = w.outline_id
+      ? '<div class="oldiff">改动还没保存，所以差异先不算。'
+        + '点上面的「和 AI 原稿比一比」能看服务端存着的那一版差异。</div>'
+      : "";
+    return;
+  }
+  if (!d.changed) {
+    box.innerHTML = '<div class="oldiff"><b class="same">这一版和 AI 原稿一模一样。</b>'
+      + '<br>（不是你改得少 —— 是这一次真的一个字都没动。）</div>';
+    return;
+  }
+  const L = [];
+  if ((d.removed_nodes || []).length) {
+    L.push("删掉了 " + d.removed_nodes.length + " 段："
+      + d.removed_nodes.map(n => esc(n.node_title || n.node_id)).join("、"));
+  }
+  if ((d.added_nodes || []).length) {
+    L.push("加了 " + d.added_nodes.length + " 段："
+      + d.added_nodes.map(n => esc(n.node_title || n.node_id)).join("、"));
+  }
+  if ((d.changed_nodes || []).length) {
+    L.push("改了 " + d.changed_nodes.length + " 段："
+      + d.changed_nodes.map(n => esc(n.node_title || n.node_id)
+        + "（" + (n.fields || []).map(k => olFieldLabel(k)).join("、") + "）"
+      ).join("；"));
+  }
+  if (d.reordered) L.push("段落的先后顺序变了。");
+  if ((d.meta_changed || []).length) {
+    L.push("故事核心 / 主题 / 总览 / 高潮 / 结局里动了："
+      + (d.meta_changed || []).map(k => olFieldLabel(k)).join("、"));
+  }
+  if ((d.plots_removed || []).length) L.push("拿掉了零件 "
+    + d.plots_removed.map(p => "#" + p).join("、") + "。");
+  if ((d.plots_added || []).length) L.push("加了零件 "
+    + d.plots_added.map(p => "#" + p).join("、") + "。");
+  L.push("字数：" + fmtNum(d.words_before || 0) + " → "
+    + fmtNum(d.words_after || 0));
+  box.innerHTML = '<div class="oldiff"><b>和 AI 原稿比，你动了这些：</b>'
+    + "<ul>" + L.map(x => "<li>" + x + "</li>").join("") + "</ul></div>";
+}
+
+function olPaintFbs() {
+  const box = olEl("oloFbs");
+  const list = (OL.fbs || []).filter(f => f.kind === "node_unusable");
+  if (!list.length) {
+    box.innerHTML = '<div class="mdhint" style="flex:none">还没标过。'
+      + '哪一段不合适，就在那一段上点「这一段不行」—— '
+      + '标了就留着痕，以后能让下一次生成避开同样的坑（得你勾上才算）。</div>';
+    return;
+  }
+  box.innerHTML = list.map(f =>
+    '<div class="ollibi">' +
+      '<div class="grow">' +
+        '<div class="t">' + esc(f.problem || "（没选原因）") + '</div>' +
+        '<div class="m"><span>' + esc(f.node_id) + '</span>'
+          + '<span>· ' + esc((f.created_at || "").slice(0, 16)) + '</span>'
+          + (f.note ? '<span>· ' + esc(f.note) + '</span>' : "")
+        + '</div>' +
+      '</div>' +
+      '<div class="acts">'
+        + '<button class="mini' + (f.enabled ? " primary" : "") + '" data-olfb="'
+          + f.id + '" data-on="' + (f.enabled ? "1" : "0") + '">'
+          + (f.enabled ? "已加入学习" : "加入学习") + '</button>'
+      + '</div>' +
+    '</div>').join("");
+}
+
+/* 全文那一块：只有存过才有（服务端渲染好的那份）。
+   刚推入、还没保存时留空，并说清楚为什么。 */
+function olPaintText() {
+  const w = OL.work;
+  const box = olEl("oloTextWrap");
+  box.innerHTML = w.outline_id
+    ? ""
+    : '<div class="mdhint" style="flex:none;margin-top:8px">' +
+      '保存之后这里会出现一份可直接复制的全文（服务端渲染的，' +
+      '跟你屏幕上这份一致）。</div>';
+}
+
+/* ---------------- 编辑动作 ---------------- */
+
+function olNewNodeId() {
+  const used = {};
+  (OL.work.draft.nodes || []).forEach(n => { used[n.node_id] = true; });
+  let i = 1;
+  while (used["n" + i]) i++;
+  return "n" + i;
+}
+
+function olMoveNode(i, delta) {
+  const ns = OL.work.draft.nodes;
+  const j = i + delta;
+  if (j < 0 || j >= ns.length) return;
+  const t = ns[i];
+  ns[i] = ns[j];
+  ns[j] = t;
+  OL.work.dirty = true;
+  olPaintNodes();
+}
+
+function olDelNode(i) {
+  const ns = OL.work.draft.nodes;
+  if (!confirm("删掉第 " + (i + 1) + " 段？\n\n"
+    + "（只从这里删。AI 原稿里那段还在，随时能比出来。）")) return;
+  ns.splice(i, 1);
+  OL.work.dirty = true;
+  olSyncUsed();
+  olPaintNodes();
+}
+
+function olAddNode() {
+  const n = { node_id: olNewNodeId(), estimated_words: 0,
+              participating_roles: [], source_plot_ids: [] };
+  (((OL.meta || {}).node_fields) || []).forEach(f => { n[f.key] = ""; });
+  OL.work.draft.nodes.push(n);
+  OL.work.dirty = true;
+  olSyncUsed();
+  olPaintNodes();
+}
+
+/* 拆分：只把"字数"劈成两半，文字一个字都不替她分。
+   为什么不让系统猜该从哪句断开：她点拆分是因为"这一段塞了两件事"，
+   那两件事分别属于哪一半，只有她知道。系统瞎断出来的东西
+   她还得删掉重写，不如直接给一个空的。 */
+function olSplitNode(i) {
+  const ns = OL.work.draft.nodes;
+  const a = ns[i];
+  const total = Number(a.estimated_words || 0);
+  const half = Math.round(total / 2);
+  const b = { node_id: olNewNodeId(), estimated_words: half,
+              participating_roles: [], source_plot_ids: [] };
+  (((OL.meta || {}).node_fields) || []).forEach(f => { b[f.key] = ""; });
+  b.node_title = (a.node_title || ("第 " + (i + 1) + " 段")) + "（后半段·待补）";
+  a.estimated_words = total - half;
+  ns.splice(i + 1, 0, b);
+  OL.work.dirty = true;
+  olSyncUsed();
+  olPaintNodes();
+  toast("拆成两段了。后半段是空的，你把该写在那儿的内容填进去。");
+}
+
+function olMergeNode(i) {
+  const ns = OL.work.draft.nodes;
+  if (i + 1 >= ns.length) return;
+  const a = ns[i], b = ns[i + 1];
+  (((OL.meta || {}).node_fields) || []).forEach(f => {
+    if (f.key === "node_title") return;
+    const va = String(a[f.key] || "").trim();
+    const vb = String(b[f.key] || "").trim();
+    a[f.key] = [va, vb].filter(Boolean).join("；");
+  });
+  const uniq = (x, y, cap) => {
+    const out = [];
+    (x || []).concat(y || []).forEach(v => { if (out.indexOf(v) < 0) out.push(v); });
+    return out.slice(0, cap);
+  };
+  a.participating_roles = uniq(a.participating_roles, b.participating_roles, 12);
+  a.source_plot_ids = uniq(a.source_plot_ids, b.source_plot_ids, 20);
+  a.estimated_words = Number(a.estimated_words || 0)
+    + Number(b.estimated_words || 0);
+  ns.splice(i + 1, 1);
+  OL.work.dirty = true;
+  olSyncUsed();
+  olPaintNodes();
+  toast("两段并成了一段。文字是接起来的（中间用「；」），自己顺手理一下。");
+}
+
+function olEditNode(i) {
+  const n = OL.work.draft.nodes[i];
+  OL.nodeIdx = i;
+  olEl("olnTitle").textContent = "编辑第 " + (i + 1) + " 段";
+  olEl("olnFields").innerHTML = (((OL.meta || {}).node_fields) || []).map(f =>
+    '<div class="field"><label>' + esc(f.label) + '</label>'
+    + (f.key === "node_title"
+        ? '<input type="text" id="olnf_' + f.key + '" maxlength="80">'
+        : '<textarea id="olnf_' + f.key + '" rows="2" maxlength="2000"></textarea>')
+    + '</div>').join("");
+  const n0 = n || {};
+  (((OL.meta || {}).node_fields) || []).forEach(f => {
+    let v = n0[f.key];
+    if (Array.isArray(v)) v = v.join("、");
+    olEl("olnf_" + f.key).value = v || "";
+  });
+  olEl("olnWords").value = Number(n0.estimated_words || 0);
+  olEl("olnRoles").value = (n0.participating_roles || []).join("，");
+  OL.nodeSrc = {};
+  // 只认这次池子里的零件（模型偶尔会编一个不存在的编号）
+  const known = {};
+  OL.plots.forEach(p => { known[p.id] = true; });
+  (n0.source_plot_ids || []).forEach(x => {
+    if (known[x]) OL.nodeSrc[x] = true;
+  });
+  olPaintNodeSrc();
+  show("mkOlNode");
+  const c = document.querySelector("#mkOlNode .content");
+  if (c) c.scrollTop = 0;
+}
+
+function olPaintNodeSrc() {
+  const box = olEl("olnSrc");
+  if (!OL.plots.length) {
+    box.innerHTML = '<div class="blank">这次没有可用的零件清单。</div>';
+    return;
+  }
+  box.innerHTML = OL.plots.map(p =>
+    '<div class="olplot' + (OL.nodeSrc[p.id] ? " on" : "") + '" data-olnp="' + p.id + '">'
+    + '<input type="checkbox"' + (OL.nodeSrc[p.id] ? " checked" : "") + '>'
+    + '<div class="grow"><div class="pt">' + esc(p.title || "（没起名字）") + '</div>'
+    + '<div class="pr"><span>' + esc((p.summary || "").slice(0, 60)) + '</span></div></div>'
+    + '<span class="ref' + ((p.ref_count || 0) === 0 ? " fresh" : "") + '">'
+    + ((p.ref_count || 0) === 0 ? "没用过" : "用过 " + p.ref_count + " 次")
+    + '</span></div>').join("");
+}
+
+function olSaveNode() {
+  const w = OL.work;
+  const i = OL.nodeIdx;
+  const fields = ((OL.meta || {}).node_fields) || [];
+  const n = {
+    node_id: i >= 0 ? w.draft.nodes[i].node_id : olNewNodeId(),
+    estimated_words: Math.max(0, Number(olEl("olnWords").value || 0)),
+    participating_roles: (olEl("olnRoles").value || "")
+      .split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean).slice(0, 12),
+    source_plot_ids: Object.keys(OL.nodeSrc)
+      .filter(k => OL.nodeSrc[k]).map(Number).slice(0, 20)
+  };
+  fields.forEach(f => { n[f.key] = (olEl("olnf_" + f.key).value || "").trim(); });
+  if (!n.node_title) {
+    n.node_title = "第 " + ((i >= 0 ? i : w.draft.nodes.length) + 1) + " 段";
+  }
+  if (i >= 0) w.draft.nodes[i] = n; else w.draft.nodes.push(n);
+  w.dirty = true;
+  olSyncUsed();
+  hide("mkOlNode");
+  olPaintWork();
+  toast("这一段改好了（还没存进大纲库，记得点「保存改动」）");
+}
+
+function olMarkNode(i) {
+  const n = OL.work.draft.nodes[i];
+  OL.fbNode = n.node_id;
+  const sel = olEl("olfProblem");
+  const ps = ((OL.meta || {}).problems) || [];
+  sel.innerHTML = '<option value="">选一个…</option>'
+    + ps.map(x => '<option value="' + esc(x) + '">' + esc(x) + '</option>').join("");
+  sel.value = "";
+  olEl("olfNote").value = "";
+  // 默认不勾"加入学习"：她标了不合适，不等于同意拿这条去影响以后生成。
+  // 这个默认值是计划里写死的（只有明确选择才进学习案例），别改。
+  olEl("olfEnabled").checked = false;
+  olEl("olfSub").textContent = "第 " + (i + 1) + " 段："
+    + (n.node_title || n.node_id);
+  show("mkOlFb");
+}
+
+async function olSaveFb() {
+  const w = OL.work;
+  const prob = olEl("olfProblem").value;
+  if (!prob) { toast("先选一个问题出在哪", true); return; }
+  if (!w.outline_id) {
+    hide("mkOlFb");
+    toast("先点「保存改动」把它存进大纲库，才记得下这条 —— "
+          + "反馈是挂在大纲库那一份上的。", true);
+    return;
+  }
+  try {
+    const r = await post("/api/outlines/" + w.outline_id + "/feedback", {
+      node_id: OL.fbNode,
+      problem: prob,
+      note: (olEl("olfNote").value || "").trim(),
+      enabled: !!olEl("olfEnabled").checked
+    });
+    hide("mkOlFb");
+    toast(r.message || "记下了");
+    if (r.stats && OL.meta) OL.meta.learning = r.stats;
+    olPaintStats();
+    const d = await api("/api/outlines/" + w.outline_id + "/feedback");
+    OL.fbs = d.feedback || [];
+    olPaintWork();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 保存 / 差异 / 复制 / 删除 ---------------- */
+
+/* 把界面上的值收回 work。保存前必做 ——
+   不然她改完标题、故事核心、备注，点保存却一个都没存进去。 */
+function olReadWorkForm() {
+  const w = OL.work;
+  const t = olEl("oloT");
+  if (t) w.title = t.value.trim();
+  w.user_note = olEl("oloNote").value;
+  w.in_learning = olEl("oloLearn").checked;
+  const box = olEl("oloHead");
+  box.querySelectorAll("[data-olk]").forEach(ta => {
+    const k = ta.dataset.olk;
+    const v = ta.value || "";
+    if (k === "title_candidates" || k === "logic_risks") {
+      w.draft[k] = v.split("\n").map(s => s.trim()).filter(Boolean);
+    } else {
+      w.draft[k] = v.trim();
+    }
+  });
+  olSyncUsed();
+}
+
+async function olSaveWork() {
+  const w = OL.work;
+  if (!w) return false;
+  olReadWorkForm();
+  const body = {
+    outline_id: w.outline_id || undefined,
+    run_id: w.run_id || undefined,
+    candidate_id: w.candidate_id || undefined,
+    model_key: w.model_key || undefined,
+    model_name: w.model_name || undefined,
+    prompt_version: w.prompt_version || undefined,
+    title: w.title || "",
+    world_input_snapshot: w.world_input_snapshot || "",
+    world_name: w.world_name || "",
+    worldview_id: w.worldview_id || undefined,
+    character_ids: w.character_ids || [],
+    one_sentence_hook: w.one_sentence_hook || "",
+    hook_ai_derived: !!w.hook_ai_derived,
+    plot_design: w.plot_design || "",
+    target_words: w.target_words || 0,
+    current_json: w.draft,
+    selected_plot_ids: w.draft.used_plot_ids || [],
+    in_learning: w.in_learning,
+    user_note: w.user_note,
+    user_prompt_snapshot: OL.prompt || "",
+    prompt_name: (S.pf.outline && S.pf.outline.pick && S.pf.outline.pick.name) || "",
+    prompt_ref_id: (S.pf.outline && S.pf.outline.pick && S.pf.outline.pick.id) || 0
+  };
+  try {
+    const r = await post("/api/outlines", body);
+    w.outline_id = r.outline_id;
+    // 已经落地了，之后都走 outline_id 这条路 —— 留着 candidate_id 的话，
+    // 下次保存又会被当成"首次推入"，服务端再取一次候选原稿。
+    w.candidate_id = 0;
+    w.diff = r.diff;
+    w.dirty = false;
+    (r.warnings || []).forEach(x => toast(x));
+    toast(r.message || "已存进大纲库");
+    await olLoadLib();
+    const d = await api("/api/outlines/" + w.outline_id + "/feedback");
+    OL.fbs = d.feedback || [];
+    olEl("oloTitle").textContent = w.title || "大纲";
+    olEl("oloSub").textContent = "大纲库 #" + w.outline_id
+      + "。AI 原稿一直留着，随便改。";
+    olPaintWork();
+    olLoadPlots();     // 参考次数变了，零件池上的数字要跟着变
+    return true;
+  } catch (e) {
+    toast(e.message, true);
+    return false;
+  }
+}
+
+async function olShowDiff() {
+  const w = OL.work;
+  if (!w.outline_id) {
+    toast("先点「保存改动」存进大纲库，才比得出差异 —— "
+          + "差异要拿 AI 原稿一起比，那份原稿在服务端。", true);
+    return;
+  }
+  try {
+    const d = await api("/api/outlines/" + w.outline_id);
+    w.diff = d.outline.diff;
+    olPaintDiff();
+    const dl = document.querySelector("#mkOlOut .content");
+    if (dl) {
+      const box = olEl("oloDiffBox");
+      if (box) box.scrollIntoView({ block: "nearest" });
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function olCopyText() {
+  const w = OL.work;
+  if (!w) return;
+  // 没存过 / 改过没存 → 先存。渲染是服务端做的，前端自己再写一份
+  // 迟早跟它对不上（这就是"两处表示同一件事"的老问题）。
+  if (!w.outline_id || w.dirty) {
+    const ok = await olSaveWork();
+    if (!ok) return;
+  }
+  try {
+    const d = await api("/api/outlines/" + w.outline_id);
+    const txt = d.outline.current_text || "";
+    const box = olEl("oloTextWrap");
+    box.innerHTML = '<div class="field" style="margin-top:12px">'
+      + '<label>全文 <span class="hint">直接选中复制，或者点上面的「复制全文」</span></label>'
+      + '<textarea id="oloText" rows="14" spellcheck="false">'
+      + esc(txt) + '</textarea></div>';
+    const ta = olEl("oloText");
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast("全文已复制（也摊在下面了，随时能再选一次）");
+    } catch (e2) {
+      // 有些环境不给剪贴板权限 —— 那就把内容摊出来让她自己选，
+      // 不能说"复制失败"就完了
+      ta.select();
+      toast("剪贴板没给权限，全文已经摊在下面了，自己全选复制一下");
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function olDeleteOutline(id) {
+  if (!confirm("删掉这份大纲？\n\n"
+    + "两条要说清楚的：\n"
+    + "· 剧情零件的参考次数不会减 —— 那一次它确实被用过。\n"
+    + "· 删了就找不回来了（AI 原稿也一起没）。")) return;
+  try {
+    const r = await send("/api/outlines/" + id, "DELETE", {});
+    toast(r.message || "已删除");
+    hide("mkOlOut");
+    OL.work = null;
+    await olLoadLib();
+    olLoadPlots();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 角色卡弹层 ---------------- */
+
+function olPaintCharList() {
+  const box = olEl("olcList");
+  const list = OL.charList || [];
+  olEl("olcCount").textContent = list.length
+    ? (list.length + " 张卡，已关联 " + Object.keys(OL.chars).length + " 张")
+    : "";
+  if (!list.length) {
+    box.innerHTML = '<div class="blank">一张卡都没有。点上面「＋ 新建角色卡」'
+      + '先写一张 —— 至少一张才能生成大纲。</div>';
+    return;
+  }
+  box.innerHTML = list.map(c => {
+    const on = !!OL.chars[c.id];
+    const dead = c.status !== "启用";
+    return '<div class="olplot' + (on ? " on" : "") + '" data-olc="' + c.id + '">'
+      + '<input type="checkbox"' + (on ? " checked" : "")
+        + (dead ? " disabled" : "") + '>'
+      + '<div class="grow">'
+      +   '<div class="pt">' + esc(c.name)
+      +     (dead ? ' <span class="chip gray">已停用</span>' : "") + '</div>'
+      +   '<div class="pr">'
+      +     '<span class="chip gray">填了 ' + (c.filled || 0) + "/"
+      +       (c.field_total || 10) + ' 项</span>'
+      +     (c.identity ? '<span>' + esc(c.identity) + '</span>' : "")
+      +     (c.personality ? '<span>' + esc(c.personality.slice(0, 40)) + '</span>' : "")
+      +   '</div>'
+      + '</div>'
+      + '<button class="mini" data-olcedit="' + c.id + '">编辑</button>'
+      + '</div>';
+  }).join("");
+}
+
+function olCharForm(c) {
+  const fs = (((OL.meta || {}).char_fields) || [])
+    .filter(f => f.key !== "name");
+  olEl("olcName").value = c ? (c.name || "") : "";
+  olEl("olcFields").innerHTML = fs.map(f =>
+    '<div class="field"><label>' + esc(f.label) + '</label>'
+    + '<textarea id="olcf_' + f.key + '" rows="2" maxlength="1000"></textarea></div>')
+    .join("");
+  fs.forEach(f => {
+    olEl("olcf_" + f.key).value = c ? (c[f.key] || "") : "";
+  });
+  olEl("olcDel").hidden = !c;
+  olEl("olcDel").dataset.id = c ? c.id : "";
+  olEl("olcSave").dataset.id = c ? c.id : "";
+  olEl("olcNote").textContent = c
+    ? "改完不会影响已经保存过的大纲（它们存的是当时的快照）。"
+    : "";
+  olEl("olcForm").hidden = false;
+  olEl("olcBar").hidden = true;
+  setTimeout(() => olEl("olcName").focus(), 30);
+}
+
+async function olSaveChar() {
+  const id = olEl("olcSave").dataset.id;
+  const name = (olEl("olcName").value || "").trim();
+  if (!name) { toast("角色名得填一个", true); return; }
+  const body = { name: name };
+  ((((OL.meta || {}).char_fields) || []).filter(f => f.key !== "name"))
+    .forEach(f => {
+      const el = olEl("olcf_" + f.key);
+      if (el) body[f.key] = (el.value || "").trim();
+    });
+  try {
+    if (id) await patch("/api/characters/" + id, body);
+    else await post("/api/characters", body);
+    toast(id ? "改好了" : "建好了");
+    olEl("olcForm").hidden = true;
+    olEl("olcBar").hidden = false;
+    await olLoadChars();
+    // 新建的那张顺手勾上 —— 她刚写完就是奔着用去的
+    if (!id) {
+      const row = OL.charList.find(x => x.name === name);
+      if (row) { OL.chars[row.id] = row; olPaintChars(); olPaintCharList(); }
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function olDelChar(id) {
+  if (!confirm("删掉这张角色卡？\n\n已经保存过的大纲里还留着它的快照，"
+    + "所以那些大纲不受影响。")) return;
+  try {
+    await send("/api/characters/" + id, "DELETE", {});
+    delete OL.chars[id];
+    olEl("olcForm").hidden = true;
+    olEl("olcBar").hidden = false;
+    await olLoadChars();
+    toast("已删除");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 提示词：这一页的面板（常驻，不是弹层） ----------------
+   走的是共用那套 pf* 组件，前缀 olP —— 控件 id 就是
+   olPTabPick / olPText / olPPickMine…… 加这一档只改了 PF_KINDS
+   和 PF_PANELS 各一行，函数一个都没动（这是那套组件当初的设计意图）。 */
+
+olEl("olPText").oninput = () => pfPaintCount("outline", "olP");
+olEl("olPTabPick").onclick = () => pfSetTab("outline", "olP", "pick", pfOpts("olP"));
+olEl("olPTabEdit").onclick = () => pfSetTab("outline", "olP", "edit", pfOpts("olP"));
+olEl("olPNew").onclick = () => openPromptForm("outline", null);
+olEl("olPPanePick").onclick = e => {
+  const el = e.target.closest("[data-pf]");
+  if (!el) return;
+  pfPickOne("outline", "olP", el, pfOpts("olP"));
+};
+olEl("olPSave").onclick = () => pfSaveDefault("outline", "olP");
+olEl("olPClear").onclick = () => {
+  if (!confirm(PF_KINDS.outline.clearConfirm)) return;
+  pfClearDefault("outline", "olP");
+};
+
+/* ---------------- 页面上的按钮 ---------------- */
+
+olEl("olReload").onclick = async () => {
+  await loadOutline(true);
+  toast("已刷新");
+};
+olEl("olWorldBtn").onclick = () => {
+  olPaintWorlds();
+  show("mkOlWorld");
+  setTimeout(() => olEl("olwName").focus(), 30);
+};
+olEl("olWorldPick").onclick = olEl("olWorldBtn").onclick;
+olEl("olWorldSave").onclick = () => {
+  olPaintWorlds();
+  show("mkOlWorld");
+  setTimeout(() => olEl("olwName").focus(), 30);
+};
+olEl("olCharBtn").onclick = () => {
+  olEl("olcForm").hidden = true;
+  olEl("olcBar").hidden = false;
+  olPaintCharList();
+  show("mkOlChar");
+};
+olEl("olCharAdd").onclick = olEl("olCharBtn").onclick;
+// 补充提示词那一块就在这一页上，不用弹层 —— 点这个按钮把它滚到眼前
+olEl("olPromptBtn").onclick = () => {
+  const box = olEl("olPNote");
+  if (box) box.scrollIntoView({ block: "center", behavior: "smooth" });
+  pfSetTab("outline", "olP", "edit", pfOpts("olP"));
+  setTimeout(() => olEl("olPText").focus(), 260);
+};
+
+olEl("olWorld").oninput = olPaintWorldCnt;
+olEl("olWorld").onchange = olPaintWorldCnt;
+olEl("olWords").oninput = olPaintTier;
+olEl("olWorldRead").onclick = () => olEl("olWorldFile").click();
+olEl("olWorldFile").onchange = async () => {
+  const f = olEl("olWorldFile").files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  const btn = olEl("olWorldRead");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/worldview-read", { method: "POST", body: fd });
+    olEl("olWorld").value = r.text || "";
+    OL.worldId = 0;
+    OL.worldName = r.name || "";
+    olPaintWorldCnt();
+    toast("读好了，" + fmtNum(r.chars || 0) + " 字。还没存进世界观库，"
+          + "可以先改，改完点「存进世界观库」。");
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    olEl("olWorldFile").value = "";
+  }
+};
+
+olEl("olPoolAuto").onclick = () => {
+  OL.poolMode = "auto";
+  olPaintPool();
+  olPaintPoolNote();
+};
+olEl("olPoolManual").onclick = () => {
+  OL.poolMode = "manual";
+  olPaintPool();
+  olPaintPoolNote();
+};
+olEl("olPoolRefresh").onclick = async () => {
+  await olLoadPlots();
+  toast("清单已重新拉过（参考次数是最新的）");
+};
+olEl("olPool").onclick = e => {
+  const row = e.target.closest("[data-olplot]");
+  if (!row) return;
+  if (OL.poolMode !== "manual") {
+    toast("现在是「自动筛」。想自己挑，先点「我手动选」。");
+    return;
+  }
+  const id = Number(row.dataset.olplot);
+  if (OL.picked[id]) delete OL.picked[id]; else OL.picked[id] = true;
+  olPaintPool();
+  olPaintPoolNote();
+};
+
+olEl("olPreviewBtn").onclick = olPreview;
+olEl("olGo").onclick = olGo;
+
+/* 任务区与大纲库区都用委托：这两个容器里的东西是 innerHTML 画出来的，
+   每次重画都会把里面的按钮换成新节点，逐个绑定必然漏。 */
+olEl("olRuns").onclick = async e => {
+  const cand = e.target.closest("[data-olcand]");
+  if (cand) {
+    await olAdopt(Number(cand.dataset.olcand), Number(cand.dataset.run));
+    return;
+  }
+  const b = e.target.closest("[data-olact]");
+  if (!b) return;
+  const id = Number(b.dataset.id);
+  b.disabled = true;
+  try {
+    if (b.dataset.olact === "cancel") {
+      if (!confirm("取消这个任务？\n\n要说清楚一件事：已经发出去的模型调用"
+        + "掐不断，那几份会跑完、结果会留着。还没轮到的不会再发。")) {
+        b.disabled = false;
+        return;
+      }
+      const r = await post("/api/outline-runs/" + id + "/cancel", {});
+      toast(r.message || "已取消");
+    } else {
+      const r = await post("/api/outline-runs/" + id + "/retry", {});
+      toast(r.message || "已重试，只补没跑成的");
+    }
+    await olLoadRuns();
+  } catch (e2) {
+    toast(e2.message, true);
+    b.disabled = false;
+  }
+};
+
+olEl("olLib").onclick = async e => {
+  const open = e.target.closest("[data-ollo]");
+  if (open) {
+    try {
+      const d = await api("/api/outlines/" + open.dataset.ollo);
+      olSetWorkFromOutline(d.outline);
+      olOpenWork(false);
+    } catch (e2) { toast(e2.message, true); }
+    return;
+  }
+  const cp = e.target.closest("[data-ollocopy]");
+  if (cp) {
+    try {
+      const d = await api("/api/outlines/" + cp.dataset.ollocopy);
+      const txt = d.outline.current_text || "";
+      await olClip(txt);
+    } catch (e2) { toast(e2.message, true); }
+    return;
+  }
+  const del = e.target.closest("[data-olldel]");
+  if (del) await olDeleteOutline(Number(del.dataset.olldel));
+};
+
+function olSetWorkFromOutline(o) {
+  OL.work = {
+    outline_id: o.id,
+    candidate_id: 0,           // 库里的大纲走 outline_id 那条路
+    run_id: o.run_id || 0,
+    model_key: o.model_key,
+    model_name: o.model_name,
+    prompt_version: o.prompt_version,
+    title: o.title,
+    world_name: o.world_name,
+    worldview_id: o.worldview_id || 0,
+    world_input_snapshot: o.world_input_snapshot || "",
+    character_ids: o.character_ids || [],
+    character_snapshot: o.character_snapshot || [],
+    one_sentence_hook: o.one_sentence_hook || "",
+    hook_ai_derived: !!o.hook_ai_derived,
+    plot_design: o.plot_design || "",
+    target_words: o.target_words || 0,
+    ai_json: o.ai_original_json || {},
+    draft: JSON.parse(JSON.stringify(o.current_json || {})),
+    in_learning: !!o.in_learning,
+    user_note: o.user_note || "",
+    dirty: false,
+    diff: o.diff || null
+  };
+}
+
+async function olClip(txt) {
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast("全文已复制，直接粘去写吧");
+    return true;
+  } catch (e) {
+    toast("剪贴板没给权限，我把全文放到下面了，你自己全选复制一下", true);
+    const box = olEl("oloTextWrap");
+    box.innerHTML = '<div class="field" style="margin-top:12px">'
+      + '<label>全文</label><textarea id="oloText" rows="14" spellcheck="false">'
+      + esc(txt) + '</textarea></div>';
+    const ta = olEl("oloText");
+    if (ta) ta.select();
+    return false;
+  }
+}
+
+/* ---------------- 大纲详情弹层里的按钮 ---------------- */
+
+olEl("oloEditOn").onclick = () => {
+  OL.editing = true;
+  olEl("oloEditOn").hidden = true;
+  olEl("oloSave").hidden = false;
+  olPaintWork();
+  toast("可以改了。改完点「保存改动」—— AI 原稿一直留着。");
+};
+olEl("oloSave").onclick = olSaveWork;
+olEl("oloDiff").onclick = olShowDiff;
+olEl("oloCopy").onclick = olCopyText;
+olEl("oloDel").onclick = () => {
+  if (OL.work && OL.work.outline_id) olDeleteOutline(OL.work.outline_id);
+};
+olEl("oloNote").oninput = () => { if (OL.work) OL.work.user_note = olEl("oloNote").value; };
+olEl("oloLearn").onchange = () => {
+  if (OL.work) OL.work.in_learning = olEl("oloLearn").checked;
+};
+olEl("oloNodes").onclick = e => {
+  const b = e.target.closest("[data-oln]");
+  if (!b) return;
+  const act = b.dataset.oln;
+  const i = Number(b.dataset.i);
+  if (act === "add") olAddNode();
+  else if (act === "edit") olEditNode(i);
+  else if (act === "split") olSplitNode(i);
+  else if (act === "merge") olMergeNode(i);
+  else if (act === "del") olDelNode(i);
+  else if (act === "mark") olMarkNode(i);
+  else if (act === "up") olMoveNode(i, -1);
+  else if (act === "down") olMoveNode(i, 1);
+  else if (act === "fold") {
+    OL.folded = OL.folded || [];
+    const k = OL.folded.indexOf(i);
+    if (k >= 0) OL.folded.splice(k, 1); else OL.folded.push(i);
+    olPaintNodes();
+  }
+};
+olEl("oloFbs").onclick = async e => {
+  const b = e.target.closest("[data-olfb]");
+  if (!b) return;
+  const id = Number(b.dataset.olfb);
+  const on = b.dataset.on === "1" ? 0 : 1;
+  try {
+    const r = await post("/api/outline-feedback/" + id + "/toggle?enabled=" + on, {});
+    if (r.stats && OL.meta) OL.meta.learning = r.stats;
+    olPaintStats();
+    await olOpenWorkRefreshFbs();
+    toast(on ? "已加入学习，以后生成会参考这条" : "已移出学习库");
+  } catch (e2) { toast(e2.message, true); }
+};
+
+async function olOpenWorkRefreshFbs() {
+  const w = OL.work;
+  if (!w || !w.outline_id) return;
+  const d = await api("/api/outlines/" + w.outline_id + "/feedback");
+  OL.fbs = d.feedback || [];
+  olPaintFbs();
+}
+
+/* ---------------- 角色卡弹层里的互动 ---------------- */
+
+olEl("olcNew").onclick = () => { olCharForm(null); olEl("olcTitle").textContent = "新建角色卡"; };
+olEl("olcCancel").onclick = () => {
+  olEl("olcForm").hidden = true;
+  olEl("olcBar").hidden = false;
+};
+olEl("olcSave").onclick = olSaveChar;
+olEl("olcDel").onclick = () => olDelChar(Number(olEl("olcDel").dataset.id));
+olEl("olcList").onclick = e => {
+  const ed = e.target.closest("[data-olcedit]");
+  if (ed) {
+    const c = OL.charList.find(x => x.id === Number(ed.dataset.olcedit));
+    if (!c) return;
+    olEl("olcTitle").textContent = "编辑角色卡";
+    olCharForm(c);
+    return;
+  }
+  const row = e.target.closest("[data-olc]");
+  if (!row) return;
+  const c = OL.charList.find(x => x.id === Number(row.dataset.olc));
+  if (!c || c.status !== "启用") return;
+  if (OL.chars[c.id]) delete OL.chars[c.id]; else OL.chars[c.id] = c;
+  olPaintChars();
+  olPaintCharList();
+};
+
+/* ---------------- 世界观弹层里的互动 ---------------- */
+
+olEl("olwSave").onclick = async () => {
+  const name = (olEl("olwName").value || "").trim();
+  const content = (olEl("olWorld").value || "").trim();
+  if (!name) { toast("给它起个名字，下次才找得回来", true); return; }
+  if (!content) { toast("输入框里还没有内容", true); return; }
+  try {
+    const r = await post("/api/worldviews", { name: name, content: content });
+    OL.worldId = r.worldview.id;
+    OL.worldName = r.worldview.name;
+    olEl("olwName").value = "";
+    olPaintWorldCnt();
+    await olLoadWorlds();
+    toast("已存进世界观库。同名的话是覆盖，不会多出一份。");
+  } catch (e) { toast(e.message, true); }
+};
+
+olEl("olwList").onclick = async e => {
+  const b = e.target.closest("[data-olw]");
+  if (!b) return;
+  const id = Number(b.dataset.id);
+  try {
+    if (b.dataset.olw === "use") {
+      const r = await api("/api/worldviews/" + id);
+      olEl("olWorld").value = r.worldview.content || "";
+      OL.worldId = r.worldview.id;
+      OL.worldName = r.worldview.name;
+      olPaintWorldCnt();
+      olPaintWorlds();
+      hide("mkOlWorld");
+      toast("已填进输入框。可以随手改 —— 改完再点「存进世界观库」就覆盖回去了。");
+    } else if (b.dataset.olw === "see") {
+      const r = await api("/api/worldviews/" + id);
+      olEl("olWorld").value = r.worldview.content || "";
+      OL.worldId = r.worldview.id;
+      OL.worldName = r.worldview.name;
+      olPaintWorldCnt();
+      hide("mkOlWorld");
+      toast("这份的全文已经填进输入框（没改库里的）");
+    } else if (b.dataset.olw === "del") {
+      if (!confirm("删掉这份世界观？\n\n已经保存过的大纲里还留着它的快照，"
+        + "所以那些大纲不受影响。")) return;
+      await send("/api/worldviews/" + id, "DELETE", {});
+      if (OL.worldId === id) { OL.worldId = 0; OL.worldName = ""; }
+      await olLoadWorlds();
+      olPaintWorldCnt();
+      toast("已删除");
+    }
+  } catch (e2) { toast(e2.message, true); }
+};
+
+/* ---------------- 节点弹层里的互动 ---------------- */
+
+olEl("olnSave").onclick = olSaveNode;
+olEl("olnSrc").onclick = e => {
+  const row = e.target.closest("[data-olnp]");
+  if (!row) return;
+  const id = Number(row.dataset.olnp);
+  if (OL.nodeSrc[id]) delete OL.nodeSrc[id]; else OL.nodeSrc[id] = true;
+  olPaintNodeSrc();
+};
+
+/* ---------------- 反馈弹层 ---------------- */
+
+olEl("olfSave").onclick = olSaveFb;
+
+/* ---------------- 起个头：默认勾一个能用的模型 ----------------
+   一个都不勾的话，她点「开始生成」会被退回来一次 ——
+   白白跑一趟才发现"哦要先勾模型"。所以第一次画模型清单时
+   替她勾上第一个能用的，她仍然随时能改。
+   只在**第一次**勾，不是每次重画都勾 —— 否则她取消勾选之后
+   一刷新又被自动勾上，那个"取消"就永远不生效。 */
+let olModelSeeded = false;
+function olSeedModel() {
+  if (olModelSeeded) return;
+  olModelSeeded = true;
+  if (Object.keys(OL.models).some(k => OL.models[k])) return;
+  const ok = (((OL.meta || {}).models) || []).find(m => m.usable);
+  if (ok) OL.models[ok.key] = true;
+}
 
 /* ---------------- 启动 ---------------- */
 

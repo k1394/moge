@@ -815,7 +815,17 @@ PROMPT_KIND_CLASSIFY = USER_PROMPT_KIND_CLASSIFY
 #   所以凡是按 kind 取的地方**一律显式传 kind**，不靠默认值。
 PROMPT_KIND_INFUSE = "infuse"
 
-PROMPT_KINDS = (PROMPT_KIND_CLASSIFY, PROMPT_KIND_INFUSE)
+# 大纲生成自己的那一档。
+#
+# 【为什么大纲也要有自己的一档，而不是共用内化那一档】
+#   内化的提示词讲的是"怎么把一张卡抽象成一条零件"，
+#   大纲的讲的是"怎么把零件串成一篇能直接动笔的细纲"。
+#   这是两个完全不同的问题，同一句话在两边都不成立。
+#   共用一档的下场很具体：她给大纲调好一句话，去跑内化时
+#   在列表里也看得见它 —— 挑错了不会报错，只会白花一笔钱。
+PROMPT_KIND_OUTLINE = "outline"
+
+PROMPT_KINDS = (PROMPT_KIND_CLASSIFY, PROMPT_KIND_INFUSE, PROMPT_KIND_OUTLINE)
 
 
 def check_prompt_kind(kind):

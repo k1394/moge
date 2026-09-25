@@ -48,6 +48,8 @@ try:
     from backend import auth, db, importer, parsers
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import outline_ai as oai
+    from backend import outline_db as odb
     from backend import plots_db as plots
     from backend import plots_ai as pai
     from backend import segmentation as sg
@@ -58,6 +60,8 @@ except ImportError:                                   # pragma: no cover
     from backend import auth, db, importer, parsers
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import outline_ai as oai
+    from backend import outline_db as odb
     from backend import plots_db as plots
     from backend import plots_ai as pai
     from backend import segmentation as sg
@@ -86,6 +90,10 @@ async def lifespan(app: FastAPI):
     # plot_candidates）。同样是纯新增空表。必须在 plots.migrate() 之后 ——
     # 落库时要往 plots / plot_cards 里写，那两张得先存在。
     pai.migrate()
+    # 大纲生成那七张表（角色卡 / 世界观 / 大纲库 / 任务 / 候选 / 引用明细 /
+    # 学习反馈）。同样是纯新增空表，没有 ALTER、不碰任何已有表。
+    # 必须在 plots.migrate() 之后 —— 列候选零件要读 plots。
+    odb.migrate()
     # 把上次运行留下的"还在跑"的任务收尾。
     # 必须放在启动时做：后台任务跑在进程内的线程里，进程一没线程就没了，
     # 但任务表里还写着 running —— 界面上会永远显示"分类中"而进度不动。
@@ -93,6 +101,9 @@ async def lifespan(app: FastAPI):
     # 内化任务同理。它会顺手把"没轮到的"卡片记成失败，
     # 所以点「重试」只会补这些，已经跑过的那几十批不会重花钱。
     pai.reap_orphan_runs()
+    # 大纲任务同理：不清理的话，服务重启后界面上那个进度条永远转，
+    # 而且新任务会被"已经有一个在跑"挡住，她只能去手工改库。
+    oai.reap_orphan_runs()
     db.purge_expired_sessions()
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
@@ -2191,3 +2202,622 @@ def api_infuse_prompt_put(req: InfusePromptIn,
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "length": len(c), "max": pai.USER_PROMPT_MAX}
+
+
+# ======================================================================
+# 大纲生成
+#
+# 这一组接口分成四块，边界很清楚：
+#   角色卡 / 世界观   —— 大纲的输入资料，她平时维护，跟大纲互不影响
+#   生成任务          —— 发起、看进度、取消、重试
+#   大纲库            —— 只有"推入"才进来的正式成品
+#   学习反馈          —— 差异记录 + 她手动标的"不可用"
+#
+# 三个必须守住的东西（写在最前面，免得后面加接口时忘掉）：
+#   1. **AI 原稿由服务端给，不信前端传的**。前端传来的"原稿"可能已经
+#      被她改过（或者被别的东西污染）。真正可信的那一份存在
+#      outline_candidates 里，保存大纲时服务端自己去取。
+#   2. **切分/内化/大纲各归各的表**，大纲这边只读 plots，一个字不写回去。
+#   3. 每个接口都走 Depends(auth.current_user)，owner 从门票里取，
+#      绝不信前端传来的用户名或 owner_id。
+# ======================================================================
+
+
+class CharacterIn(BaseModel):
+    """新建 / 修改一张角色卡。八个字段对应计划里列的那八项。"""
+    name: str = ""
+    identity: Optional[str] = None
+    personality: Optional[str] = None
+    goal: Optional[str] = None
+    fear: Optional[str] = None
+    relations: Optional[str] = None
+    speech: Optional[str] = None
+    must_do: Optional[str] = None
+    never_do: Optional[str] = None
+    note: Optional[str] = None
+    status: Optional[str] = None
+
+
+class WorldviewIn(BaseModel):
+    """存一段世界观。同名会被覆盖（她调完一版再存一次是常态操作）。"""
+    name: str = ""
+    content: Optional[str] = None
+
+
+class OutlineGenIn(BaseModel):
+    """发起一次大纲生成。
+
+    prompt_id 的语义跟分类 / 内化完全一致：
+      两个都传时 prompt_id 说了算（"我刚挑了一条"比"框里还剩半句话"明确）。
+      挑中的可能是别人公开出来的那一条 —— 内容由服务端自己去取。
+
+    plot_ids 的三种含义：
+      不传    → 后端按"主类轮转 + 新鲜度"自动筛一个池子
+      传列表  → 就用她勾的这几条（仍然会挡掉仅本地和状态不对的）
+      传 []   → 等于不传（空列表跟没传一个意思）
+
+    model_keys 可以给多个（最多 4 个），它们各自独立生成。
+    """
+    outline_type: str = ""
+    worldview: Optional[str] = None
+    world_name: Optional[str] = None
+    worldview_id: Optional[int] = None
+    character_ids: List[int] = []
+    one_sentence_hook: Optional[str] = None
+    plot_design: Optional[str] = None
+    target_words: Optional[int] = None
+    model_keys: List[str] = []
+    plot_ids: Optional[List[int]] = None
+    pool_size: Optional[int] = None
+    user_prompt: Optional[str] = None
+    prompt_id: Optional[int] = None
+    use_learning: Optional[bool] = None
+
+
+class OutlineSaveIn(BaseModel):
+    """把一份大纲推入大纲库（或改一份已有的）。
+
+    candidate_id 给了的话，**AI 原稿由服务端从那行候选里取** ——
+    前端回传的 current_json 只是"她改到哪了"，不能当原稿用。
+    """
+    outline_id: Optional[int] = None
+    run_id: Optional[int] = None
+    candidate_id: Optional[int] = None
+    model_key: Optional[str] = None
+    model_name: Optional[str] = None
+    title: Optional[str] = None
+    world_input_snapshot: Optional[str] = None
+    world_name: Optional[str] = None
+    worldview_id: Optional[int] = None
+    character_ids: List[int] = []
+    one_sentence_hook: Optional[str] = None
+    hook_ai_derived: bool = False
+    plot_design: Optional[str] = None
+    target_words: Optional[int] = None
+    current_json: Optional[Dict] = None
+    current_text: Optional[str] = None
+    selected_plot_ids: List[int] = []
+    manual_plot_ids: List[int] = []
+    plot_positions: Optional[Dict] = None
+    user_note: Optional[str] = None
+    in_learning: bool = False
+    prompt_ref_id: Optional[int] = None
+    prompt_name: Optional[str] = None
+    prompt_version: Optional[str] = None
+    user_prompt_snapshot: Optional[str] = None
+
+
+class OutlinePatchIn(BaseModel):
+    """改一份已保存的大纲。**AI 原稿不在可改字段里** —— 那条路关死了。"""
+    title: Optional[str] = None
+    user_note: Optional[str] = None
+    in_learning: Optional[bool] = None
+    target_words: Optional[int] = None
+    world_input_snapshot: Optional[str] = None
+    current_json: Optional[Dict] = None
+    selected_plot_ids: Optional[List[int]] = None
+
+
+class OutlineFeedbackIn(BaseModel):
+    """标一个 AI 节点"不可用"。原因从后端下发的清单里选，不让她自由填。
+
+    enabled 默认 **False**：计划第九节写的是
+    `只有用户明确选择加入学习的反馈，才进入可供后续提示词参考的学习案例`。
+    "标记不可用"和"加入学习"是两件事 —— 她标了不合适，
+    不等于她同意拿这条去影响以后的生成。所以默认不进，勾了才进。
+    这个默认值别改：改了就是替她做决定。
+    """
+    node_id: str = ""
+    problem: str = ""
+    note: str = ""
+    enabled: bool = False
+
+
+def _odb_call(fn, *a, **kw):
+    """把数据层抛的 ValueError 翻成 400。
+
+    数据层的校验消息本来就是写给她看的人话（"至少要关联一张角色卡。"），
+    直接转出去就行 —— 不用在接口层再抄一遍判断。
+    """
+    try:
+        return fn(*a, **kw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ----------------------------------------------------------------------
+# 角色卡（人设卡）
+#
+# 【为什么这一版的接口先开在这儿】
+# 计划让大纲"关联角色卡"，而左侧栏的【人设卡】还没做。
+# 所以先把数据和接口建起来，大纲页里能新建/选择/编辑。
+# 以后点开【人设卡】那一页，读的是**同一张表同一批接口**，
+# 不会再建第二套 —— 那正是计划禁止的"互相冲突的角色体系"。
+# ----------------------------------------------------------------------
+
+@app.get("/api/character-meta")
+def api_character_meta(user: dict = Depends(auth.current_user)):
+    """角色卡有哪些字段、每项上限多少。前端不自己抄一份。"""
+    return {
+        "fields": [{"key": f, "label": odb.CHAR_FIELD_LABELS[f]}
+                   for f in odb.CHAR_FIELDS],
+        "statuses": list(odb.ALL_CHAR_STATUS),
+        "limits": {"name_max": odb.CHAR_NAME_MAX,
+                   "field_max": odb.CHAR_FIELD_MAX,
+                   "note_max": odb.CHAR_NOTE_MAX},
+    }
+
+
+@app.get("/api/characters")
+def api_characters(status: str = "", keyword: str = "",
+                   limit: int = Query(500, ge=1, le=2000),
+                   user: dict = Depends(auth.current_user)):
+    """角色卡列表。默认全给（含停用的），带状态标记。"""
+    return {"characters": odb.list_characters(user["owner"], status or None,
+                                              keyword or None, limit),
+            "statuses": list(odb.ALL_CHAR_STATUS)}
+
+
+@app.post("/api/characters")
+def api_create_character(req: CharacterIn,
+                         user: dict = Depends(auth.current_user)):
+    """新建一张角色卡。重名会 400，不覆盖已有那张。"""
+    c = _odb_call(odb.create_character, user["owner"], _given(req),
+                  created_by=user["username"])
+    return {"ok": True, "character": c}
+
+
+@app.get("/api/characters/{cid}")
+def api_character(cid: int, user: dict = Depends(auth.current_user)):
+    c = odb.get_character(user["owner"], cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这张角色卡")
+    return {"character": c}
+
+
+@app.patch("/api/characters/{cid}")
+def api_update_character(cid: int, req: CharacterIn,
+                         user: dict = Depends(auth.current_user)):
+    """改一张角色卡。只改传进来的字段（PATCH 语义）。
+
+    注意：改角色卡**不会**影响已经保存过的大纲 ——
+    大纲里存的是保存那一刻的快照。这正是要快照的原因。
+    """
+    c = _odb_call(odb.update_character, user["owner"], cid, _given(req))
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这张角色卡")
+    return {"ok": True, "character": c,
+            "note": "改好了。已经保存过的大纲不受影响（它们存的是当时的快照）。"}
+
+
+@app.delete("/api/characters/{cid}")
+def api_delete_character(cid: int, user: dict = Depends(auth.current_user)):
+    if not odb.delete_character(user["owner"], cid):
+        raise HTTPException(status_code=404, detail="没有这张角色卡")
+    return {"ok": True, "message": "已删除。保存过的大纲里还留着它的快照。"}
+
+
+# ----------------------------------------------------------------------
+# 世界观库
+# ----------------------------------------------------------------------
+
+@app.get("/api/worldviews")
+def api_worldviews(with_content: int = 0,
+                   user: dict = Depends(auth.current_user)):
+    """世界观清单。默认只给名字和字数和一段预览，不带全文。"""
+    return {"worldviews": odb.list_worldviews(user["owner"],
+                                              with_content=bool(with_content)),
+            "limits": {"name_max": odb.WORLD_NAME_MAX,
+                       "content_max": odb.WORLD_CONTENT_MAX}}
+
+
+@app.post("/api/worldviews")
+def api_save_worldview(req: WorldviewIn,
+                       user: dict = Depends(auth.current_user)):
+    """存一段世界观。同名覆盖（不报错）—— 理由见数据层里的注释。"""
+    w = _odb_call(odb.create_worldview, user["owner"], req.name,
+                  req.content or "")
+    return {"ok": True, "worldview": w}
+
+
+@app.get("/api/worldviews/{wid}")
+def api_worldview(wid: int, user: dict = Depends(auth.current_user)):
+    w = odb.get_worldview(user["owner"], wid)
+    if not w:
+        raise HTTPException(status_code=404, detail="没有这份世界观")
+    return {"worldview": w}
+
+
+@app.delete("/api/worldviews/{wid}")
+def api_delete_worldview(wid: int, user: dict = Depends(auth.current_user)):
+    if not odb.delete_worldview(user["owner"], wid):
+        raise HTTPException(status_code=404, detail="没有这份世界观")
+    return {"ok": True, "message": "已删除。保存过的大纲里还留着它的快照。"}
+
+
+@app.post("/api/worldview-read")
+async def api_worldview_read(user: dict = Depends(auth.current_user),
+                             file: UploadFile = File(...)):
+    """读一个世界观 txt，**只把文字还给她，不入素材库**。
+
+    【为什么这条单独开一个接口，不直接复用 /api/upload】
+    /api/upload 的终点是 db.save_material() —— 它会把文件存进素材库。
+    但世界观是**大纲表单里的一段输入**，不是一条素材：
+    存进去的话，她的总素材库里会凭空多出一堆"世界观.txt"，
+    而且那一段还会被切分、分类、内化。
+    所以这里只解析、只返回文本，落库那一步交给她自己按"存进世界观库"。
+
+    【为什么还允许 docx/pdf】她的设定可能是从别处拷来的文档。
+    界面上的提示写 txt，但多支持几种格式只会有好处，不会挡路。
+    """
+    tmp_dir = os.path.join(BASE_DIR, "data", "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    shown = _safe_name(file.filename)
+    ext = os.path.splitext(shown)[1].lower()
+    if ext not in parsers.PARSERS:
+        raise HTTPException(
+            status_code=400,
+            detail="暂不支持 %s 格式。世界观用 txt 最稳，docx / pdf 也能读。"
+                   % (ext or "（没有扩展名）"))
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="这个文件是空的。")
+
+    tmp_path = os.path.join(tmp_dir, secrets.token_hex(8) + ext)
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(raw)
+        r = parsers.parse_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except BaseException:
+            pass
+
+    if not r["ok"]:
+        raise HTTPException(status_code=400,
+                            detail="读不了这个文件：%s" % (r["note"] or "未知原因"))
+    text = (r["text"] or "").strip()
+    if not text:
+        raise HTTPException(status_code=400,
+                            detail="这个文件里没有可读的文字"
+                                   "（扫描件、纯图片的 PDF 会这样）。")
+    if len(text) > odb.WORLD_CONTENT_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail="这份文件读出来 %d 字，超过了世界观上限 %d 字。"
+                   "世界观是「这次要遵守的设定」，不用把整本书粘进来。"
+                   % (len(text), odb.WORLD_CONTENT_MAX))
+    return {"ok": True, "name": os.path.splitext(shown)[0], "filename": shown,
+            "chars": len(text), "text": text, "note": r["note"],
+            "message": "读好了，%d 字。还没有存进世界观库 —— "
+                       "你可以先改，改完再点保存。" % len(text)}
+
+
+# ----------------------------------------------------------------------
+# 大纲生成：元信息与输入
+# ----------------------------------------------------------------------
+
+@app.get("/api/outline-meta")
+def api_outline_meta(user: dict = Depends(auth.current_user)):
+    """大纲生成页初始化要用的所有"选项菜单"，一次全给。
+
+    【为什么中文标签一律从后端发下去】
+    字数档、节点字段名、反馈原因、状态词 —— 这些值的**唯一定义处**
+    都在 backend/outline_db.py。前端要是自己抄一份，我这边改一个字
+    （比如"高潮和转折"改成"转折点"），前端就永远显示老的了，
+    而且不会有任何报错。跟状态轴只定义在 segmentation.py 是同一条规矩。
+    """
+    pub = llm.public_models()
+    return {
+        "types": list(odb.ALL_OUTLINE_TYPES),
+        "tiers": [{"key": t["key"], "label": t["label"], "min": t["min"],
+                   "max": t["max"], "nodes": list(t["nodes"]),
+                   "hint": t["hint"]} for t in odb.WORD_TIERS],
+        "problems": list(odb.PROBLEM_TYPES),
+        "node_fields": [{"key": k, "label": odb.NODE_FIELD_LABELS[k]}
+                        for k in odb.NODE_FIELDS],
+        "char_fields": [{"key": f, "label": odb.CHAR_FIELD_LABELS[f]}
+                        for f in odb.CHAR_FIELDS],
+        "plot_usable_statuses": list(odb.PLOT_USABLE_STATUS),
+        "plot_all_statuses": list(plots.ALL_PLOT_STATUS),
+        "run_statuses": list(oai.ALL_RUN_STATUS),
+        "run_active": list(oai.RUN_ACTIVE),
+        "models": [{"key": m["key"], "label": m["label"], "model": m["model"],
+                    "has_key": m["has_key"], "enabled": m.get("enabled", True),
+                    "usable": bool(m["has_key"] and m.get("enabled", True))}
+                   for m in pub],
+        "limits": {
+            "target_min": odb.TARGET_WORDS_MIN,
+            "target_max": odb.TARGET_WORDS_MAX,
+            "target_warn": odb.TARGET_WORDS_WARN,
+            "hook_max": odb.HOOK_MAX,
+            "design_max": odb.DESIGN_MAX,
+            "note_max": odb.OUTLINE_NOTE_MAX,
+            "title_max": odb.OUTLINE_TITLE_MAX,
+            "world_max": odb.WORLD_CONTENT_MAX,
+            "max_models": oai.MAX_MODELS,
+            "default_pool": oai.DEFAULT_POOL,
+            "max_pool": oai.MAX_POOL,
+            "max_nodes": odb.MAX_NODES,
+            "user_prompt_max": oai.USER_PROMPT_MAX,
+        },
+        "learning": odb.learning_stats(user["owner"]),
+        "prompt_version": oai.prompt_version(),
+    }
+
+
+@app.get("/api/outline-plots")
+def api_outline_plots(keyword: str = "", include_blocked: int = 0,
+                      limit: int = Query(1000, ge=1, le=3000),
+                      user: dict = Depends(auth.current_user)):
+    """能参与大纲生成的零件清单（带参考次数）。
+
+    参考次数是**现算**的（被多少份已保存的大纲采用过），
+    不是 plots 表上的一列 —— 两处能表示同一件事就一定会有一天对不上。
+    """
+    items = odb.list_candidate_plots(user["owner"], keyword or None,
+                                     bool(include_blocked), limit)
+    return {"plots": items, "count": len(items),
+            "usable_statuses": list(odb.PLOT_USABLE_STATUS)}
+
+
+@app.post("/api/outlines/preview")
+def api_outline_preview(req: OutlineGenIn,
+                        user: dict = Depends(auth.current_user)):
+    """点「开始生成」之前先看这个：会发什么、发多少、发给谁。
+
+    计划第十一节第 6 条要求的三样（字数、模型、隐私提示）全在里面。
+    一个字都不写库，也不花一分钱。
+    """
+    pv = _odb_call(oai.preview_input, user["owner"], _given(req))
+    return pv
+
+
+# ----------------------------------------------------------------------
+# 大纲生成：任务
+# ----------------------------------------------------------------------
+
+@app.post("/api/outlines/generate")
+def api_outline_generate(req: OutlineGenIn,
+                         user: dict = Depends(auth.current_user)):
+    """发起生成。立刻返回 run_id，活儿在后台线程里干。
+
+    【为什么不能在这个请求里等结果】计划第十四.11 明确禁止。
+    多模型一次要跑一两分钟，同步等的话浏览器会超时、
+    服务端线程被占着，而她只会看到"转圈然后失败"。
+    """
+    body = _given(req)
+    res, _run_id = oai.create_run(user["owner"], body, background=True)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400,
+                            detail=res.get("message") or "发起生成失败")
+    return res
+
+
+@app.get("/api/outline-runs")
+def api_outline_runs(limit: int = Query(20, ge=1, le=100),
+                     user: dict = Depends(auth.current_user)):
+    rows = oai.list_runs(user["owner"], limit)
+    return {"runs": rows, "count": len(rows)}
+
+
+@app.get("/api/outline-runs/{rid}")
+def api_outline_run(rid: int, user: dict = Depends(auth.current_user)):
+    """一个任务的进度 + 每个模型的候选摘要。
+
+    **不带 raw_response**（又长又乱），要看内容走 /api/outline-candidates/{id}。
+    """
+    r = oai.get_run(rid, user["owner"])
+    if not r:
+        raise HTTPException(status_code=404, detail="没有这个大纲任务")
+    return {"run": r}
+
+
+@app.get("/api/outline-candidates/{cid}")
+def api_outline_candidate(cid: int, user: dict = Depends(auth.current_user)):
+    """一份候选的全文（含结构化 JSON 和渲染好的文本）。"""
+    c = oai.get_candidate(cid, user["owner"])
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这份候选")
+    return {"candidate": c}
+
+
+@app.post("/api/outline-runs/{rid}/cancel")
+def api_outline_cancel(rid: int, user: dict = Depends(auth.current_user)):
+    """取消。**已经在路上的模型不会被打断** —— 如实告诉她。
+
+    说清楚这件事比"假装取消很干净"重要得多：
+    她以为点了取消就不花钱了，结果账单里多出几笔，那才是真的坑。
+    """
+    _odb_call(oai.cancel_run, rid, user["owner"])
+    return {"ok": True,
+            "message": "已取消。可是已经在跑的那几个模型会跑完"
+                       "（模型调用发出去就掐不断了），"
+                       "它们的结果会留着，你可以直接拿去用。"}
+
+
+@app.post("/api/outline-runs/{rid}/retry")
+def api_outline_retry(rid: int, user: dict = Depends(auth.current_user)):
+    """重试。**只补真正没跑成的模型**，跑成的绝不重花钱。"""
+    res, _new_id = _odb_call(oai.retry_run, rid, user["owner"], True)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400,
+                            detail=res.get("message") or "重试失败")
+    return res
+
+
+# ----------------------------------------------------------------------
+# 大纲库
+# ----------------------------------------------------------------------
+
+@app.get("/api/outlines")
+def api_outlines(keyword: str = "",
+                 limit: int = Query(100, ge=1, le=500),
+                 offset: int = Query(0, ge=0),
+                 user: dict = Depends(auth.current_user)):
+    return odb.list_outlines(user["owner"], keyword or None, limit, offset)
+
+
+@app.post("/api/outlines")
+def api_save_outline(req: OutlineSaveIn,
+                     user: dict = Depends(auth.current_user)):
+    """推入大纲库。**这是剧情零件参考次数唯一会变的地方。**
+
+    计划第八节：`用户点击"推入大纲库"后才算正式保存。`
+    """
+    body = _given(req)
+
+    # ---- AI 原稿由服务端取，不信前端 ----
+    # 【为什么这一步不能省】前端回传的 ai_original_json 有可能是
+    # 被改过的（她在编辑框里改完顺手一起发回来，是很自然的事）。
+    # 而"AI 原稿"的定义是**生成那一刻的样子**，它一旦被污染，
+    # 以后所有"AI 和她差在哪"的分析全部失真，而且再也回不来。
+    # 所以只要带的是候选 id，就一律用库里那一份。
+    cid = body.get("candidate_id")
+    if cid:
+        cand = oai.get_candidate(int(cid), user["owner"])
+        if not cand:
+            raise HTTPException(status_code=404, detail="没有这份候选")
+        if cand["status"] != oai.CAND_DONE:
+            raise HTTPException(status_code=400,
+                                detail="这份候选还没生成完（%s），先等它跑完。"
+                                       % cand["status"])
+        body["ai_original_json"] = cand["content_json"]
+        body["run_id"] = body.get("run_id") or cand["run_id"]
+        body["model_key"] = body.get("model_key") or cand["model_key"]
+        body["model_name"] = body.get("model_name") or cand["model_name"]
+        body["prompt_version"] = body.get("prompt_version") or cand["prompt_version"]
+        body["has_ai_original"] = True
+    elif not body.get("outline_id"):
+        # 没有候选 id、也不是在改一份已有的 —— 那就没有"AI 原稿"这回事。
+        # 把当前版当成原稿，并且**如实标记"没有原稿"**：
+        # 不标记的话，她会收到一句"这一版和 AI 原稿一模一样"，
+        # 可她压根没用 AI，只会以为系统坏了。
+        body["ai_original_json"] = body.get("current_json")
+        body["has_ai_original"] = False
+    else:
+        # 改一份已有的大纲：原稿用库里存着的那份（数据层会自己去取）。
+        body["has_ai_original"] = True
+
+    res = _odb_call(odb.save_outline, user["owner"], body)
+    res["ok"] = True
+    res["message"] = ("已存进大纲库。" if res["created"] else "已更新大纲库里的那一份。")
+    if res["refs"]:
+        res["message"] += "本次涉及 %d 条剧情零件，参考次数已更新。" % len(res["refs"])
+    return res
+
+
+@app.get("/api/outlines/{oid}")
+def api_outline(oid: int, user: dict = Depends(auth.current_user)):
+    o = odb.get_outline(user["owner"], oid)
+    if not o:
+        raise HTTPException(status_code=404, detail="没有这份大纲")
+    return {"outline": o}
+
+
+@app.patch("/api/outlines/{oid}")
+def api_update_outline(oid: int, req: OutlinePatchIn,
+                       user: dict = Depends(auth.current_user)):
+    """改当前版。AI 原稿一个字都不动（那条路在数据层就关死了）。"""
+    o = _odb_call(odb.update_outline, user["owner"], oid, _given(req))
+    if not o:
+        raise HTTPException(status_code=404, detail="没有这份大纲")
+    return {"ok": True, "outline": o,
+            "message": "改好了。AI 原稿还留着，随时能对比。"}
+
+
+@app.delete("/api/outlines/{oid}")
+def api_delete_outline(oid: int, user: dict = Depends(auth.current_user)):
+    """删一份大纲。
+
+    **剧情零件的参考次数不会减** —— 计划第四.1 节定的：
+    删除或撤回一份大纲时，不直接修改历史计数。
+    （那一次它确实被用过了。真要撤，得有可审计的反向操作。）
+    """
+    if not odb.delete_outline(user["owner"], oid):
+        raise HTTPException(status_code=404, detail="没有这份大纲")
+    return {"ok": True,
+            "message": "已删除。剧情零件的参考次数不会减 —— "
+                       "那一次它确实被用过。历史计数算的是「用过没有」，"
+                       "不是「现在还留着没有」。"}
+
+
+# ----------------------------------------------------------------------
+# 大纲学习
+# ----------------------------------------------------------------------
+
+@app.get("/api/outlines/{oid}/feedback")
+def api_outline_feedback(oid: int, kind: str = "",
+                         user: dict = Depends(auth.current_user)):
+    if not odb.get_outline(user["owner"], oid):
+        raise HTTPException(status_code=404, detail="没有这份大纲")
+    return {"feedback": odb.list_feedback(user["owner"], oid, kind or None),
+            "problems": list(odb.PROBLEM_TYPES),
+            "stats": odb.learning_stats(user["owner"])}
+
+
+@app.post("/api/outlines/{oid}/feedback")
+def api_add_feedback(oid: int, req: OutlineFeedbackIn,
+                     user: dict = Depends(auth.current_user)):
+    """标一个节点"不可用"。
+
+    enabled 由她勾 —— 计划第九节：`只有用户明确选择加入学习的反馈，
+    才进入可供后续提示词参考的学习案例`。所以默认不进，
+    她勾了才进。别在这边替她默认打开。
+    """
+    fid = _odb_call(odb.add_feedback, user["owner"], oid, odb.FEEDBACK_NODE,
+                    req.node_id, req.problem, req.note, req.enabled)
+    if not fid:
+        raise HTTPException(status_code=404, detail="没有这份大纲")
+    return {"ok": True, "feedback_id": fid,
+            "message": "记下了。" + ("以后生成时会参考这条。" if req.enabled
+                                   else "没有加入学习（你没勾）。"),
+            "stats": odb.learning_stats(user["owner"])}
+
+
+@app.post("/api/outline-feedback/{fid}/toggle")
+def api_toggle_feedback(fid: int, enabled: int = 1,
+                        user: dict = Depends(auth.current_user)):
+    """把一条反馈纳入 / 移出学习库。"""
+    if not odb.set_feedback_enabled(user["owner"], fid, bool(enabled)):
+        raise HTTPException(status_code=404, detail="没有这条反馈")
+    return {"ok": True, "stats": odb.learning_stats(user["owner"])}
+
+
+# ----------------------------------------------------------------------
+# 大纲的补充提示词（跟分类 / 内化共用那张表，靠 kind 分开）
+# ----------------------------------------------------------------------
+
+@app.get("/api/outline-prompt")
+def api_outline_prompt_get(user: dict = Depends(auth.current_user)):
+    return {"content": oai.get_user_prompt(user["owner"]),
+            "max": oai.USER_PROMPT_MAX,
+            "kind": oai.USER_PROMPT_KIND_OUTLINE}
+
+
+@app.put("/api/outline-prompt")
+def api_outline_prompt_put(req: InfusePromptIn,
+                           user: dict = Depends(auth.current_user)):
+    c = _odb_call(oai.set_user_prompt, user["owner"], req.content)
+    return {"ok": True, "length": len(c), "max": oai.USER_PROMPT_MAX}

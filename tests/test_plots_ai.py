@@ -319,9 +319,19 @@ def http_tests():
         A.ok("POST", "/api/material-classification/materials/%d/segment-runs" % m2,
              {"rule": "line"})
 
-        code, err = A.call("GET", "/api/prompt-library?kind=outline")
+        # 不认识的用途必须 400。用一个**真的不认识**的值 ——
+        # 之前这里写的是 outline，那时候白名单只有 classify/infuse；
+        # 后来大纲那一档加进来，outline 成了合法值，这条就变成了
+        # "合法值却被要求 400"，测试自己先错了。
+        code, err = A.call("GET", "/api/prompt-library?kind=根本没有这一档")
         check("★ 不认识的用途要 400（不能安静返回空列表）",
               code == 400, "HTTP %s %s" % (code, json.dumps(err, ensure_ascii=False)[:60]))
+
+        # 大纲那一档现在合法了，而且要能读、且读的是它自己那份
+        ol_lib = A.ok("GET", "/api/prompt-library?kind=outline")
+        check("大纲档能读（不再是「不认识」）",
+              ol_lib["kind"] == "outline" and ol_lib["mine"] == [],
+              json.dumps(ol_lib, ensure_ascii=False)[:60])
 
         pi = A.ok("POST", "/api/prompt-library",
                   {"name": "内化话术", "content": "提炼换成别人名也成立的剧情",
