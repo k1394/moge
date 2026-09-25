@@ -465,7 +465,7 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None):
     if not base.lower().startswith(("http://", "https://")):
         raise LlmError(
             "「%s」的 API 地址不像网址（现在填的是「%s」）。\n"
-            "要填服务商文档里那个**接口地址**，一般以 /v1 结尾，"
+            "要填服务商文档里那个「接口地址」，一般以 /v1 结尾，"
             "比如 https://api.siliconflow.cn/v1\n"
             "注意不是控制台首页地址。" % (label, base))
     if base.endswith("/chat/completions"):
@@ -514,7 +514,7 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None):
                 raise LlmError(
                     "「%s」说密钥不认（HTTP %d）。三个常见原因，挨个看一眼：\n"
                     "  ① Key 抄错了（前后有没有多空格、有没有漏字符）\n"
-                    "  ② **Key 不是这家的** —— 比如充的是第三方（硅基流动之类的）"
+                    "  ② 「Key 不是这家的」 —— 比如充的是第三方（硅基流动之类的）"
                     "或中转站的额度，却填进了官方那一条。"
                     "这种要去「模型设置」把「API 地址」也一起改成第三方的，"
                     "模型名通常也要改（如 deepseek-ai/DeepSeek-V3.2）\n"

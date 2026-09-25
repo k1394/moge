@@ -733,7 +733,7 @@ def _privacy_note(ctx, chars):
     parts.append("合计约 %d 字。" % chars)
     if ctx["blocked"]:
         parts.append(
-            "另外有 %d 条零件来自标了「仅本地」的素材，**已经自动排除、不会发出**。"
+            "另外有 %d 条零件来自标了「仅本地」的素材，已经自动排除、不会发出。"
             % len(ctx["blocked"]))
     parts.append("这些都是你自己的数据，除了你选的模型之外不会给任何人。")
     return "\n".join(parts)
