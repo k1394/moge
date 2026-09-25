@@ -286,6 +286,26 @@
   }
   .iflim { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
   .iflim input[type=number] { width: 82px; }
+
+  /* ---- 选素材清单（剧情内化页那个「AI 批量内化」入口用） ---- */
+  .pmrow {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 12px; border: 1px solid var(--line);
+    border-radius: 9px; background: #fff; margin-bottom: 8px;
+    cursor: pointer; transition: border-color .14s, background .14s;
+  }
+  .pmrow:hover { border-color: var(--accent); background: #fffaf7; }
+  .pmrow .grow { flex: 1 1 auto; min-width: 0; }
+  .pmrow .nm {
+    font-size: 13.5px; color: var(--ink); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pmrow .meta { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+  .pmrow .go { flex: 0 0 auto; font-size: 12.5px; color: var(--accent); }
+  .pmrow.zero { opacity: .62; }
+  .pmrow.zero:hover { border-color: var(--line); background: #fff; cursor: default; }
+  .pmrow.zero .go { color: var(--ink-3); }
+
   .mini.primary {
     background: var(--accent); border-color: var(--accent); color: #fff;
   }
@@ -1092,8 +1112,14 @@
       <header class="vhead">
         <h1 class="vtitle">剧情内化</h1>
         <div class="vacts">
+          <!-- 主入口。放在最显眼的位置是因为它是这一页**唯一能启动的动作** ——
+               之前内化的入口只长在【总素材库】每份素材的按钮排里
+               （跟「切分 / 查看 / 删除」并排、一样是灰色小按钮），
+               她在这一页翻来翻去找不到，以为这个功能还没做。
+               现在这一页自己就能起步：点它 → 挑一份素材 → 直接进内化弹层。 -->
+          <button class="btn primary" id="plInfuseBtn">AI 批量内化</button>
           <button class="btn" id="plPromptBtn">补充提示词</button>
-          <button class="btn primary" id="plNewBtn">＋ 新建剧情零件</button>
+          <button class="btn" id="plNewBtn">＋ 新建剧情零件</button>
           <button class="btn" id="plReload">刷新</button>
         </div>
       </header>
@@ -1614,16 +1640,37 @@
         <div class="mdhint" id="ifModelNote"></div>
       </div>
 
+      <!-- 补充提示词。跟「自动分类」那个框是**同一套控件、同一套规则**，
+           只是存的档次不同（那边进"分类"档，这边进"内化"档）。
+           三个入口（不是下拉）：从库里挑一条 / 现写一段 / 当场新建一条。 -->
       <div class="field">
         <label>补充提示词 <span class="chip gray">选填</span></label>
-        <textarea id="ifPrompt" rows="4" maxlength="5000" spellcheck="false"
-          placeholder="选填。这里写的话，会连同卡片一起发给大模型。&#10;&#10;例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
-        <div class="clpfoot">
-          <span class="clpcnt" id="ifPCnt">0 / 5000</span>
-          <span class="clpwarn" id="ifPWarn"></span>
-          <span class="grow"></span>
-          <button class="mini" id="ifPClear">清空</button>
-          <button class="mini primary" id="ifPSave">保存</button>
+        <div class="clprompt">
+          <div class="clpbody">
+            <div class="clptabs">
+              <button class="clptab" id="ifPTabPick">快捷选项</button>
+              <button class="clptab" id="ifPTabEdit">自定义</button>
+              <span class="grow"></span>
+              <button class="mini primary" id="ifPNew">＋ 创建提示词</button>
+            </div>
+
+            <div class="clppane" id="ifPPanePick">
+              <div class="clpsub" id="ifPPickMine"></div>
+              <div class="clpsub" id="ifPPickPub"></div>
+            </div>
+
+            <div class="clppane" id="ifPPaneEdit" hidden>
+              <textarea id="ifPText" rows="4" maxlength="5000" spellcheck="false"
+                placeholder="选填。这里写的话，会连同卡片一起发给大模型。&#10;&#10;例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
+              <div class="clpfoot">
+                <span class="clpcnt" id="ifPCnt">0 / 5000</span>
+                <span class="clpwarn" id="ifPWarn"></span>
+                <span class="grow"></span>
+                <button class="mini" id="ifPClear">清空</button>
+                <button class="mini primary" id="ifPSave">保存</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="mdhint" id="ifPNote"></div>
       </div>
@@ -1673,24 +1720,75 @@
     </header>
     <div class="content">
       <div class="field">
-        <textarea id="ipText" rows="8" maxlength="5000" spellcheck="false"
-          placeholder="例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
-        <div class="clpfoot">
-          <span class="clpcnt" id="ipCnt">0 / 5000</span>
-          <span class="clpwarn" id="ipWarn"></span>
-          <span class="grow"></span>
-          <button class="mini" id="ipClear">清空</button>
-          <button class="mini primary" id="ipSave">保存</button>
+        <label>我的要求 <span class="chip gray">选填</span></label>
+        <div class="clprompt">
+          <div class="clpbody">
+            <div class="clptabs">
+              <button class="clptab" id="ipTabPick">快捷选项</button>
+              <button class="clptab" id="ipTabEdit">自定义</button>
+              <span class="grow"></span>
+              <button class="mini primary" id="ipNew">＋ 创建提示词</button>
+            </div>
+
+            <div class="clppane" id="ipPanePick">
+              <div class="clpsub" id="ipPickMine"></div>
+              <div class="clpsub" id="ipPickPub"></div>
+            </div>
+
+            <div class="clppane" id="ipPaneEdit" hidden>
+              <textarea id="ipText" rows="8" maxlength="5000" spellcheck="false"
+                placeholder="例如：&#10;· 重点提炼拉扯和冲突升级，平铺直叙的过场不用出零件&#10;· 「他」都指师兄，别按第三人称叙述判&#10;· 拿不准的宁可标「拿不准」，我要自己看，别替我硬凑"></textarea>
+              <div class="clpfoot">
+                <span class="clpcnt" id="ipCnt">0 / 5000</span>
+                <span class="clpwarn" id="ipWarn"></span>
+                <span class="grow"></span>
+                <button class="mini" id="ipClear">清空</button>
+                <button class="mini primary" id="ipSave">保存</button>
+              </div>
+            </div>
+          </div>
         </div>
+        <div class="mdhint" id="ipNote"></div>
         <div class="mdhint">
-          想立刻对某份素材跑一次内化，回<b>【总素材库】</b>点那份文件的
-          <b>「AI 内化」</b>—— 那儿能看到这次会送多少张。
+          想让某一份素材立刻跑一次内化，点上面那个
+          <b>「AI 批量内化」</b>，挑一份素材就行 —— 那儿能看到这次会送多少张。
         </div>
       </div>
     </div>
     <footer>
       <span style="flex:1"></span>
       <button class="btn" data-close="mkInfPrompt">关掉</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ AI 批量内化：先挑素材 ============
+     【为什么要有这一层】
+       内化的入口原来只长在【总素材库】每份素材的按钮排里，
+       她在【剧情内化】页找不到，以为功能没做。
+       这一层把"挑哪份素材"这件事搬进剧情内化页：
+       点右上角「AI 批量内化」→ 看见每份素材能送多少张 → 挑一份 → 直接开跑。
+
+     【为什么不用下拉框】
+       她要的信息不只是"文件叫什么"，还有"这份还剩多少张没跑过"。
+       下拉框里塞不下这些数字，而且挑之前看不见就等于要凭记忆猜。 -->
+<div class="mask" id="mkPickMat">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>AI 批量内化</h2>
+        <p>挑一份素材，AI 会把里面的卡片提炼成"换个角色名还成立"的剧情零件，
+           放进【剧情内化库】。</p>
+      </div>
+      <button class="x" data-close="mkPickMat">&times;</button>
+    </header>
+    <div class="content">
+      <div id="pmList"></div>
+      <div class="mdhint" id="pmNote"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkPickMat">关闭</button>
     </footer>
   </div>
 </div>
@@ -2006,12 +2104,7 @@ function svgIcon(name) {
          (ICONS[name] || ICONS.list) + '</svg>';
 }
 
-const S = { view: "library", keyword: "", tag: "", current: null,
-            // 提示词库：mine = 我存的（带内容），public = 别人公开的（**不带内容**）
-            clLib: null,
-            // 补充提示词（现在住在「自动分类」弹层里）。
-            // null 表示还没读过 —— paintClPrompt 会把 null 当空值处理。
-            clPrompt: null };
+const S = { view: "library", keyword: "", tag: "", current: null };
 const A = { mode: "login", user: null, firstTime: false, unclaimed: 0, busy: false };
 
 /* 置信度低于这个数，就算"AI 自己也没把握"，界面上要标出来让人先看。
@@ -2500,7 +2593,6 @@ S.cls = {};        // material_id -> 后端给的分类状态
 S.clsMeta = null;  // 接口顺带返回的分类器信息 + 模型清单（选模型要用）
 S.models = [];     // 模型设置面板里的那几条配置（密钥是打码的）
 S.runPick = null;  // 「开始自动分类」面板里她挑的方法和模型
-S.clPrompt = null; // 分类页的补充提示词 {content, max, open}
 S.catPick = null;  // 「手动归类」面板里她挑的主类和副标签
 S.clsPoll = null;  // 轮询定时器
 S.clsBusy = {};    // material_id -> true，防止同一个按钮被连点两次
@@ -3245,145 +3337,231 @@ async function loadClassify(force) {
    由服务端自己去取内容 —— 前端全程碰不到原文。
    ⚠️ 所以挑中"别人那条"之后，**绝不能**去读它的 content 塞进输入框。 */
 
-async function loadClPrompt() {
-  const keep = S.clPrompt || {};
-  try {
-    const r = await api("/api/classify-prompt");
-    S.clPrompt = { content: r.content || "", max: r.max || 5000,
-                   tab: keep.tab || "pick",
-                   pick: keep.pick || null };
-  } catch (e) {
-    // 读不到就当空的，绝不因为这一条让整个弹层打不开
-    S.clPrompt = { content: "", max: 5000, tab: "pick", pick: null };
-  }
-  await loadClLibrary();
-  paintClPrompt();
+/* ==================================================================
+   提示词选择器（「素材分类」和「剧情内化」共用这一套）
+   ----------------------------------------------------------------
+   三个地方要选提示词：
+
+     · 自动分类弹层   clP   这次用（能挑自己存的，也能借别人公开的）
+     · 内化弹层       ifP   这次用（同上）
+     · 内化的设置层   ip    一直用（**只列自己存的**，理由见下）
+
+   三处的元素 id 都是「前缀 + 同一组后缀」：
+
+     {p}TabPick / {p}TabEdit        两个页签
+     {p}PanePick / {p}PaneEdit      两个面板
+     {p}PickMine / {p}PickPub       库里条目的两个挂载点
+     {p}Text / {p}Cnt / {p}Warn     输入框、字数、超长提醒
+     {p}Clear / {p}Save             清空 / 保存
+     {p}Note                        一行结论（"这次到底带什么去问"）
+
+   【为什么合并成一套】
+     这三个框踩的是同一套规则：同一个上限、同样在超长时说清超了多少、
+     同样"清空后要点保存才生效"。各写一份迟早会分叉 ——
+     那时候她会觉得"为什么这边能存那边不能"。
+
+   【"公开"这件事故意做得很绕，别改错】
+     公开 = 别人可以拿它去跑，**但永远看不到内容**。
+     所以：别人那批连 content 都不会发到浏览器（后端就不给），
+     界面上只能显示名字 + 「内容不公开」。
+     挑中别人那条之后，发出去的是 prompt_id，由服务端自己去取内容 ——
+     前端全程碰不到原文。
+     ⚠️ 所以挑中"别人那条"之后，**绝不能**去读它的 content 塞进输入框。
+     「一直用」那个设置层因此**只列自己存的**：它要的产物是一段文本
+     （存进 user_prompts），而别人的内容一旦落成文本就等于公开了。
+   ================================================================== */
+
+S.pf = {};       // kind → {content, max, tab, pick}
+S.pfLib = {};    // kind → {mine, public, max, error}
+
+const PF_KINDS = {
+  classify: {
+    label: "分类",
+    defaultUrl: "/api/classify-prompt",
+    emptyNote: "这次不带补充提示词，只按主类的判据判。想让它按你的习惯判，"
+             + "就在这儿写几句，或者挑一条存好的。",
+    pickHint: "还没存过。点右上角「＋ 创建提示词」存一条，下次就不用重打了。",
+    clearConfirm: "清空补充提示词？\n\n"
+      + "清空之后自动分类就只按分类判据来判，不再带你写的这几句。\n"
+      + "（已经跑完的那些任务不受影响。）",
+  },
+  infuse: {
+    label: "内化",
+    defaultUrl: "/api/infuse-prompt",
+    emptyNote: "这次不带补充提示词，只按通用模板判。想让它按你的习惯提炼，"
+             + "就在这儿写几句，或者挑一条存好的。",
+    pickHint: "还没存过。点右上角「＋ 创建提示词」存一条，下次就不用重打了。",
+    clearConfirm: "清空补充提示词？\n\n"
+      + "清空之后内化就只按通用模板来，不再带你写的这几句。\n"
+      + "（已经跑完的那些任务不受影响。）",
+  },
+};
+
+function pfD(prefix) {
+  const g = id => document.getElementById(prefix + id);
+  return { tabPick: g("TabPick"), tabEdit: g("TabEdit"),
+           panePick: g("PanePick"), paneEdit: g("PaneEdit"),
+           pickMine: g("PickMine"), pickPub: g("PickPub"),
+           text: g("Text"), cnt: g("Cnt"), warn: g("Warn"),
+           clear: g("Clear"), save: g("Save"), note: g("Note") };
 }
 
-async function loadClLibrary() {
+function pfS(kind) {
+  if (!S.pf[kind]) {
+    S.pf[kind] = { content: "", max: 5000, tab: "pick", pick: null };
+  }
+  return S.pf[kind];
+}
+
+/* 读"一直用"的那份 + 这一档的库。弹层每次打开都重读：
+   上一轮跑完到现在，她可能在别的地方改过。 */
+async function pfLoad(kind) {
+  const keep = S.pf[kind] || {};
   try {
-    const r = await api("/api/prompt-library");
-    S.clLib = { mine: r.mine || [], public: r.public || [],
-                max: r.max || {} };
+    const r = await api(PF_KINDS[kind].defaultUrl);
+    S.pf[kind] = { content: r.content || "", max: r.max || 5000,
+                   tab: keep.tab || "pick", pick: keep.pick || null };
+  } catch (e) {
+    // 读不到就当空的，绝不因为这一条让整个弹层打不开
+    S.pf[kind] = { content: "", max: 5000, tab: "pick", pick: null };
+  }
+  await pfLoadLib(kind);
+  return S.pf[kind];
+}
+
+async function pfLoadLib(kind) {
+  try {
+    // kind 必须显式带上：分类那档和内化那档各管各的，串了不会报错 ——
+    // 只会让她在做内化时挑到一条讲"怎么判主类"的话，白花钱。
+    const r = await api("/api/prompt-library?kind=" + encodeURIComponent(kind));
+    S.pfLib[kind] = { mine: r.mine || [], public: r.public || [],
+                      max: r.max || {} };
   } catch (e) {
     // 库读不到不该让整页打不开：只是"快捷选项"那一档空了。
     // 但要说一句，不然她会以为"我存的提示词怎么没了"。
-    S.clLib = { mine: [], public: [], max: {}, error: e.message };
+    S.pfLib[kind] = { mine: [], public: [], max: {}, error: e.message };
   }
+  return S.pfLib[kind];
 }
 
 /* 当前"选中"的提示词（可能是我自己的，也可能是别人的公开条目）。
    返回 null 表示没有选，走自由文本。 */
-function clPromptPick() {
-  const st = S.clPrompt;
-  return (st && st.pick) || null;
-}
+function pfPick(kind) { return pfS(kind).pick; }
 
-function paintClPrompt() {
-  const st = S.clPrompt || { content: "", max: 5000, tab: "pick" };
-  const body = document.getElementById("clPBody");
-  if (!body) return;
-
-  // 搬进弹层之后不再折叠：这一屏的作用就是"定这次带什么话去问"，
-  // 把它折起来等于让最关键的一件事默认看不见。
-  body.hidden = false;
-  const pick = st.pick;
-
-  // tab 态
+function pfPaint(kind, prefix, opts) {
+  opts = opts || {};
+  const dom = pfD(prefix);
+  const st = pfS(kind);
   const tab = st.tab || "pick";
-  const tp = document.getElementById("clPTabPick");
-  const te = document.getElementById("clPTabEdit");
-  const paneP = document.getElementById("clPPanePick");
-  const paneE = document.getElementById("clPPaneEdit");
-  if (tp && te && paneP && paneE) {
-    tp.className = "clptab" + (tab === "pick" ? " on" : "");
-    te.className = "clptab" + (tab === "edit" ? " on" : "");
-    paneP.hidden = (tab !== "pick");
-    paneE.hidden = (tab !== "edit");
-  }
+  if (dom.tabPick) dom.tabPick.className = "clptab" + (tab === "pick" ? " on" : "");
+  if (dom.tabEdit) dom.tabEdit.className = "clptab" + (tab === "edit" ? " on" : "");
+  if (dom.panePick) dom.panePick.hidden = (tab !== "pick");
+  if (dom.paneEdit) dom.paneEdit.hidden = (tab !== "edit");
 
-  const ta = document.getElementById("clPText");
-  // 这里只在"不是她正在敲的那个框"时灌内容 ——
+  // 只在"不是她正在敲的那个框"时灌内容 ——
   // 否则每次重画都会把她刚敲到一半的字重置掉。
   // 挑中库里某条时输入框留空：内容由服务端去取，
   // 界面上根本没有原文可灌（别人那条尤其如此）。
-  if (ta && document.activeElement !== ta) ta.value = pick ? "" : st.content;
+  if (dom.text && document.activeElement !== dom.text) {
+    dom.text.value = st.pick ? "" : (st.content || "");
+  }
+  pfPaintCount(kind, prefix);
+  pfPaintList(kind, prefix, opts);
+}
 
-  paintClPCount();
-  paintClPickList();
+function pfPaintCount(kind, prefix) {
+  const dom = pfD(prefix);
+  const st = pfS(kind);
+  if (!dom.text) return;
+  const n = (dom.text.value || "").length;
+  const max = st.max || 5000;
+  if (dom.cnt) {
+    dom.cnt.textContent = fmtNum(n) + " / " + fmtNum(max);
+    dom.cnt.className = "clpcnt" + (n > max ? " warn" : "");
+  }
+  if (dom.warn) {
+    // 超长在后端也会被拒，但在这里先拦住更好 —— 让她当场知道自己写太长了，
+    // 而不是填完一堆、点了按钮才被退回来。
+    dom.warn.textContent = n > max
+      ? ("超了 " + fmtNum(n - max) + " 字，发不出去。这句要每批都重发一遍，"
+         + "太长会明显变慢、变贵 —— 精简一下更划算。")
+      : "";
+  }
+  // 顺手把"这次带什么"那一行刷新一下：她一边敲字，那一行也跟着变，
+  // 才不会出现"框里写着 200 字、下面还说'这次不带提示词'"这种自相矛盾。
+  pfPaintNote(kind, prefix);
 }
 
 /* 一行结论：这次到底带什么去问。
    她的原话是"用户可以在框里放上要给 ai 看的要求" —— 那她关心的就是
-   "我放的东西真的会发出去吗"。这一行直接回答它，不用她去对照 tab 和输入框推。 */
-function paintClPNote() {
-  const note = document.getElementById("clPNote");
-  if (!note) return;
-  const st = S.clPrompt || {};
+   "我放的东西真的会发出去吗"。这一行直接回答它，不用她去对照页签和输入框推。 */
+function pfPaintNote(kind, prefix) {
+  const dom = pfD(prefix);
+  if (!dom.note) return;
+  const st = pfS(kind);
   const pick = st.pick;
-  const ta = document.getElementById("clPText");
-  const n = ta ? ta.value.length : 0;
+  const n = dom.text ? (dom.text.value || "").length : 0;
 
   if (pick) {
-    note.innerHTML = pick.mine
+    dom.note.innerHTML = pick.mine
       ? ("这次带上：<b>" + esc(pick.name) + "</b>（你自己存的）")
       : ("这次带上：<b>" + esc(pick.name) + "</b> —— 别人公开出来的，"
          + "内容对你也保密，直接由服务端拿去用。");
   } else if (n) {
-    note.innerHTML = "这次带上：<b>自定义的 " + fmtNum(n) + " 字</b>。" +
-      "每一批素材都会捎上它，所以越长跑得越慢、越贵。";
+    dom.note.innerHTML = "这次带上：<b>自定义的 " + fmtNum(n) + " 字</b>。"
+      + "每一批素材都会捎上它，所以越长跑得越慢、越贵。";
   } else {
-    note.innerHTML = "这次不带补充提示词，只按主类的判据判。" +
-      "想让它按你的习惯判，就在这儿写几句，或者挑一条存好的。";
+    dom.note.innerHTML = PF_KINDS[kind].emptyNote;
   }
 }
 
-/* 快捷选项那一档：我的 + 别人的公开条目 */
-function paintClPickList() {
-  const lib = S.clLib || { mine: [], public: [] };
-  const st = S.clPrompt || {};
-  const cur = st.pick || null;
-  const mMount = document.getElementById("clPPickMine");
-  const pMount = document.getElementById("clPPickPub");
-  if (!mMount || !pMount) return;
+/* 快捷选项那一档：我的 + （可能）别人的公开条目。
+   opts.public === false 时不画"别人公开的"那一栏 —— 「一直用」那个
+   设置层要的产物是一段文本，别人的内容落成文本就等于公开了。 */
+function pfPaintList(kind, prefix, opts) {
+  opts = opts || {};
+  const dom = pfD(prefix);
+  const lib = S.pfLib[kind] || { mine: [], public: [] };
+  const cur = pfS(kind).pick || null;
+  if (!dom.pickMine) return;
 
-  const none = '<button class="mini" data-plib="none">不用提示词</button>';
+  const none = '<button class="mini" data-pf="none">不用提示词</button>';
 
   // ---- 我的 ----
   let h = "<h4>我存的（点一下就用它）</h4>";
   if (!lib.mine.length) {
     h += '<div class="meta" style="font-size:12px;color:var(--ink-3)">'
-       + (lib.error ? ("读取失败：" + esc(lib.error))
-                    : "还没存过。点右上角「＋ 创建提示词」存一条，下次就不用重打了。")
+       + (lib.error ? ("读取失败：" + esc(lib.error)) : PF_KINDS[kind].pickHint)
        + "</div>";
   } else {
     lib.mine.forEach(p => {
-      h += clPickRow(p, cur && cur.id === p.id && cur.mine, true);
+      h += pfPickRow(p, cur && cur.id === p.id && cur.mine, true);
     });
   }
   h += '<div style="margin-top:8px">' + none + "</div>";
-  mMount.innerHTML = h;
+  dom.pickMine.innerHTML = h;
 
   // ---- 别人的公开条目 ----
-  if (!lib.public.length) {
-    pMount.innerHTML = "";
+  if (!dom.pickPub) return;
+  if (opts.public === false || !lib.public.length) {
+    dom.pickPub.innerHTML = "";
   } else {
     let g = "<h4>别人公开的（能用，但看不到内容）</h4>";
     lib.public.forEach(p => {
-      g += clPickRow(p, cur && cur.id === p.id && !cur.mine, false);
+      g += pfPickRow(p, cur && cur.id === p.id && !cur.mine, false);
     });
-    pMount.innerHTML = g;
+    dom.pickPub.innerHTML = g;
   }
 }
 
-function clPickRow(p, on, mine) {
+function pfPickRow(p, on, mine) {
   const vis = mine
     ? '<span class="chip gray">' + (p.visibility === "public" ? "已公开" : "私有") + "</span>"
     : '<span class="chip gray">内容不公开</span>';
   const acts = mine
-    ? '<button class="mini" data-plib="edit" data-id="' + p.id + '">编辑</button>'
+    ? '<button class="mini" data-pf="edit" data-id="' + p.id + '">编辑</button>'
     : "";
-  return '<div class="clppick' + (on ? " on" : "") + '" data-plib="use"'
+  return '<div class="clppick' + (on ? " on" : "") + '" data-pf="use"'
        + ' data-id="' + p.id + '" data-mine="' + (mine ? "1" : "0") + '"'
        + ' data-name="' + esc(p.name) + '">'
        + '<div class="grow">'
@@ -3399,44 +3577,115 @@ function clPickRow(p, on, mine) {
        + "</div>";
 }
 
-function paintClPCount() {
-  const ta = document.getElementById("clPText");
-  const cnt = document.getElementById("clPCnt");
-  const warn = document.getElementById("clPWarn");
-  if (!ta || !cnt) return;
-  const max = (S.clPrompt && S.clPrompt.max) || 5000;
-  const n = ta.value.length;
-  cnt.textContent = n + " / " + max;
-  cnt.className = "clpcnt" + (n > max ? " warn" : "");
-  if (warn) {
-    // 超长在后端也会被拒，但在这里先拦住更好 —— 让她当场知道自己写太长了，
-    // 而不是填完一堆、点了开始分类才被退回来。
-    warn.textContent = n > max
-      ? ("超了 " + (n - max) + " 字，发不出去。这句要每批都重发一遍，"
-         + "太长会明显变慢、变贵 —— 精简一下更划算。")
-      : "";
-  }
-  // 顺手把"这次带什么"那一行刷新一下：她一边敲字，那一行也跟着变，
-  // 才不会出现"框里写着 200 字、下面还说'这次不带提示词'"这种自相矛盾。
-  paintClPNote();
-}
-
 /* 提交时到底带什么。
    选中了库里某条 → 只带 id（内容由服务端取，前端不碰）；
    否则 → 带输入框里的自由文本。 */
-function clPromptPayload() {
-  const pick = clPromptPick();
+function pfPayload(kind, prefix) {
+  const pick = pfPick(kind);
   if (pick) return { prompt_id: pick.id };
-  const ta = document.getElementById("clPText");
-  return { user_prompt: ta ? ta.value : "" };
+  const dom = pfD(prefix);
+  return { user_prompt: dom.text ? dom.text.value : "" };
 }
 
-/* 兼容老调用点：还有别处用 clPromptValue()。
+/* 兼容老调用点：还有别处要用"框里的那串字"。
    挑中库里某条时返回 null —— 让调用方知道"这次走 prompt_id 那条路"。 */
-function clPromptValue() {
-  if (clPromptPick()) return null;
-  const ta = document.getElementById("clPText");
-  return ta ? ta.value : "";
+function pfValue(kind, prefix) {
+  if (pfPick(kind)) return null;
+  const dom = pfD(prefix);
+  return dom.text ? dom.text.value : "";
+}
+
+function pfSetTab(kind, prefix, tab, opts) {
+  const st = pfS(kind);
+  st.tab = tab;
+  pfPaint(kind, prefix, opts);
+}
+
+/* 点「快捷选项」里的一个条目，或"不用提示词"。
+   opts.fillOnPick=true 时把那条的**内容**填进输入框（只有自己存的才有内容）。
+   默认是"引用式"：只记 id、框里留空 —— 挑中的要是别人的那条，
+   界面上根本没有原文可填，硬填就是泄漏。 */
+function pfPickOne(kind, prefix, el, opts) {
+  opts = opts || {};
+  const st = pfS(kind);
+  const act = el.dataset.pf;
+
+  if (act === "use") {
+    const mine = el.dataset.mine === "1";
+    const id = Number(el.dataset.id);
+    if (opts.fillOnPick) {
+      const row = (((S.pfLib[kind] || {}).mine) || []).find(x => x.id === id);
+      st.pick = null;
+      st.content = row ? (row.content || "") : "";
+      st.tab = "edit";
+      pfPaint(kind, prefix, opts);
+      toast("已把「" + el.dataset.name + "」填进框里，改完点「保存」");
+      return;
+    }
+    st.pick = { id: id, name: el.dataset.name, mine: mine };
+    // 选库里的条目时把自由文本清掉 —— 两个都留着的话，
+    // 后端以 prompt_id 为准，而她看着输入框里还有字会以为一起发了。
+    st.content = "";
+    st.tab = "pick";
+    pfPaint(kind, prefix, opts);
+    toast(mine ? ("这次用「" + el.dataset.name + "」")
+               : ("这次用别人的「" + el.dataset.name + "」（内容不公开，"
+                  + "由服务端直接拿去用）"));
+  } else if (act === "none") {
+    st.pick = null;
+    // 取消选中之后停在"自定义"上，她多半是要现写几句
+    st.tab = "edit";
+    pfPaint(kind, prefix, opts);
+    toast("这次不带提示词");
+  } else if (act === "edit") {
+    openPromptForm(kind, Number(el.dataset.id));
+  }
+}
+
+/* 把"自定义"框里的文字存成**一直用**的那份。
+   这是"以后每次都带上"的意思，跟"从库里挑一条"不是一回事 ——
+   那条只影响这一次。 */
+async function pfSaveDefault(kind, prefix) {
+  const dom = pfD(prefix);
+  const st = pfS(kind);
+  const txt = dom.text ? dom.text.value : "";
+  const max = st.max || 5000;
+  if (txt.length > max) {
+    if (dom.warn) {
+      dom.warn.textContent = "超了 " + fmtNum(txt.length - max) + " 字，删短一点再存";
+    }
+    toast("补充提示词太长了", true);
+    return false;
+  }
+  try {
+    await send(PF_KINDS[kind].defaultUrl, "PUT", { content: txt });
+    st.content = txt;
+    // 存下去的就是这段字，跟库里任何一条都不再有引用关系了
+    st.pick = null;
+    if (dom.warn) dom.warn.textContent = "";
+    // 内化弹层那边还读着 S.infMeta.user_prompt，一起改掉 ——
+    // 否则她接着开弹层时框里还是旧的那句。
+    if (kind === "infuse" && S.infMeta) S.infMeta.user_prompt = txt;
+    pfPaint(kind, prefix, pfOpts(prefix));
+    toast(txt ? "已保存，以后每次都会带上它" : "已清空");
+    return true;
+  } catch (e) {
+    if (dom.warn) dom.warn.textContent = e.message;
+    toast(e.message, true);
+    return false;
+  }
+}
+
+/* 清空这个框（先问一句）+ 顺手把存着的那份也清掉。
+   "清空"和"保存空串"在她看来是同一件事，分成两步做只会留下
+   一个"框空了但后端还存着"的错位状态。 */
+async function pfClearDefault(kind, prefix) {
+  const dom = pfD(prefix);
+  const st = pfS(kind);
+  if (dom.text) { dom.text.value = ""; dom.text.focus(); }
+  st.pick = null;
+  pfPaintCount(kind, prefix);
+  await pfSaveDefault(kind, prefix);
 }
 
 /* ---------------- 创建 / 编辑提示词弹层 ---------------- */
@@ -3469,11 +3718,19 @@ function paintPlibVisNote() {
       + "内容只存在你这台机器上，不会发给别人。）";
 }
 
-function openPromptForm(id) {
-  const lib = S.clLib || { mine: [] };
+/* 创建 / 编辑一条提示词。
+   kind 是**必须的**：这条存进哪一档（分类 / 内化）。
+   为什么不从 DOM 里猜当前在哪个弹层：弹层可以叠开，
+   "最后打开的那个"未必是发起创建的那个 —— 猜错就把内化的提示词
+   存进分类那一档，两边界面都看不到它（数据没丢，但等于丢了）。 */
+function openPromptForm(kind, id) {
+  kind = kind || "classify";
+  S.plibKind = kind;
+  const lib = S.pfLib[kind] || { mine: [] };
   const p = id ? (lib.mine || []).find(x => x.id === id) : null;
-  document.getElementById("plibTitle").textContent = p ? "编辑提示词" : "创建提示词";
   const g = k => document.getElementById(k);
+  g("plibTitle").textContent = (p ? "编辑" : "创建")
+    + PF_KINDS[kind].label + "提示词";
   g("plibName").value = p ? p.name : "";
   g("plibContent").value = p ? (p.content || "") : "";
   g("plibUsage").value = p ? (p.usage_note || "") : "";
@@ -3482,7 +3739,6 @@ function openPromptForm(id) {
   g("plibDel").hidden = !p;
   g("plibDel").dataset.id = p ? p.id : "";
   g("plibSave").dataset.id = p ? p.id : "";
-  // "自己使用不需要提交审核"这个提醒照她的原产品写着，能少一份犹豫
   paintPlibCounters();
   paintPlibVisNote();
   show("mkPlib");
@@ -3492,7 +3748,9 @@ function openPromptForm(id) {
 async function savePromptForm() {
   const g = k => document.getElementById(k);
   const id = g("plibSave").dataset.id;
+  const kind = S.plibKind || "classify";
   const body = {
+    kind: kind,          // 新建时决定存进哪一档（改名时后端会忽略它）
     name: g("plibName").value.trim(),
     content: g("plibContent").value,
     usage_note: g("plibUsage").value,
@@ -3509,14 +3767,14 @@ async function savePromptForm() {
       // 新建完直接选中它 —— 她刚写完这条就是为了用它，
       // 不该还要再去"快捷选项"里点一下。
       if (r.item) {
-        S.clPrompt = S.clPrompt || { content: "", max: 5000 };
-        S.clPrompt.pick = { id: r.item.id, name: r.item.name, mine: true };
-        S.clPrompt.tab = "pick";
+        const st = pfS(kind);
+        st.pick = { id: r.item.id, name: r.item.name, mine: true };
+        st.tab = "pick";
       }
     }
     hide("mkPlib");
-    await loadClLibrary();
-    paintClPrompt();
+    await pfLoadLib(kind);
+    pfRepaint(kind);
     toast(id ? "已保存" : "提示词已存好，这次就用它");
   } catch (e) {
     toast(e.message, true);
@@ -3526,21 +3784,50 @@ async function savePromptForm() {
 async function deletePromptForm() {
   const id = document.getElementById("plibDel").dataset.id;
   if (!id) return;
+  const kind = S.plibKind || "classify";
   if (!confirm("删掉这条提示词？\n\n（已经跑过的任务记录还会留着它的名字，"
                + "只是以后不能在快捷选项里选了）")) return;
   try {
     await send("/api/prompt-library/" + id, "DELETE", {});
     // 删掉的正好是当前选中的那条 → 取消选中，免得发一个不存在的 id
-    if (clPromptPick() && clPromptPick().id === Number(id)) {
-      S.clPrompt.pick = null;
-    }
+    const st = pfS(kind);
+    if (st.pick && st.pick.id === Number(id)) st.pick = null;
     hide("mkPlib");
-    await loadClLibrary();
-    paintClPrompt();
+    await pfLoadLib(kind);
+    pfRepaint(kind);
     toast("已删除");
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+/* 三个位置的配置。集中放一处 —— 免得"打开时重画"和"存完重画"
+   用了两套设置，那会让刚存好的条目在某一刻突然看不见。
+     clP  自动分类弹层   列别人的（这次可以借别人的条目用）
+     ifP  内化弹层       列别人的（同上）
+     ip   内化的设置层   不列别人的 —— 它要存成一段文本，
+                         别人的内容一旦落成文本就等于公开了 */
+const PF_PANELS = {
+  clP: { kind: "classify", showPublic: true },
+  ifP: { kind: "infuse", showPublic: true },
+  ip: { kind: "infuse", showPublic: false, fillOnPick: true },
+};
+
+function pfOpts(prefix) {
+  const cfg = PF_PANELS[prefix] || {};
+  return { public: cfg.showPublic !== false,
+           fillOnPick: !!cfg.fillOnPick };
+}
+
+/* 某一档的库变了（新建 / 改名 / 删除）→ 把用到这一档的面板都重画一次。
+   不重画的话，她刚存好的那条要等下次开弹层才出现，看着像没存上。 */
+function pfRepaint(kind) {
+  Object.keys(PF_PANELS).forEach(prefix => {
+    if (PF_PANELS[prefix].kind !== kind) return;
+    const dom = pfD(prefix);
+    if (!dom.pickMine) return;
+    pfPaint(kind, prefix, pfOpts(prefix));
+  });
 }
 
 /* 读"文件这一层"的清单和统计。
@@ -4695,7 +4982,8 @@ function openClsRun(mid, act, el) {
   // 上一轮跑完到现在，她可能刚在别处改过自己存的那条。
   // 读回来之后再补一次 crNote —— 那段说明里有"会带上 N 字"这种数字，
   // 用读之前的旧数字说事，她会对不上账。
-  loadClPrompt().then(() => {
+  pfLoad("classify").then(() => {
+    pfPaint("classify", "clP", pfOpts("clP"));
     const n = document.getElementById("crNote");
     if (n && S.runPick && S.runPick.mid === mid) n.innerHTML = runNoteHtml();
   });
@@ -4722,7 +5010,7 @@ function runNoteHtml() {
       "原文本身只存在你电脑上，分类不会改动它一个字。");
     // 提示词这件事必须提前说 —— 她写的时候在另一个页面，
     // 站在这儿她才想起来"对了，会带上那几句吗"。
-    const pick = clPromptPick();
+    const pick = pfPick("classify");
     if (pick) {
       // 挑的要是别人的那条，这里不能说"你的提示词" ——
       // 她确实没写过它，说错了她会以为自己写的内容丢了。
@@ -4732,9 +5020,9 @@ function runNoteHtml() {
         : ("会带上别人公开的<b>「" + esc(pick.name) + "」</b>"
            + "（内容不公开，服务端直接拿去用），每一条片段都会捎上它。"));
     } else {
-      const up = clPromptValue();
+      const up = pfValue("classify", "clP");
       const n = up === null
-        ? ((S.clPrompt && S.clPrompt.content || "").length) : up.length;
+        ? ((pfS("classify").content || "").length) : up.length;
       if (n) {
         lines.push("会带上你在上面写的<b>补充提示词（" + fmtNum(n) +
           " 字）</b>，每一条片段都会捎上它。");
@@ -4764,11 +5052,11 @@ async function runCls() {
   //   · 在"快捷选项"里挑了一条 → 只发 prompt_id，内容由服务端自己取
   //     （挑的要是别人公开的，前端根本没有原文可发 —— 这是有意的）
   //   · 否则 → 发"自定义"框里的自由文本
-  const pl = clPromptPayload();
+  const pl = pfPayload("classify", "clP");
   if (pl.prompt_id) {
     body.prompt_id = pl.prompt_id;
   } else {
-    if (pl.user_prompt.length > ((S.clPrompt && S.clPrompt.max) || 5000)) {
+    if (pl.user_prompt.length > pfS("classify").max) {
       toast("补充提示词超长了，把它删短一些再跑", true);
       return;
     }
@@ -5253,74 +5541,30 @@ document.getElementById("clReload").onclick = async () => {
 };
 
 /* ---- 补充提示词：三个入口切换、计数、保存、清空 ----
-   （原来还有个"展开/收起"，搬进弹层之后去掉了 —— 弹层里没有收起来的理由） */
-document.getElementById("clPText").oninput = paintClPCount;
+   （原来还有个"展开/收起"，搬进弹层之后去掉了 —— 弹层里没有收起来的理由）
+   下面这几行只接自动分类那一个位置（前缀 clP）；
+   内化的两个位置在它们自己那一节里接。 */
+document.getElementById("clPText").oninput = () => pfPaintCount("classify", "clP");
 
-/* 三个入口的切换 */
-function setClTab(tab) {
-  S.clPrompt = S.clPrompt || { content: "", max: 5000 };
-  S.clPrompt.tab = tab;
-  paintClPrompt();
-}
+function setClTab(tab) { pfSetTab("classify", "clP", tab, pfOpts("clP")); }
 document.getElementById("clPTabPick").onclick = () => setClTab("pick");
 document.getElementById("clPTabEdit").onclick = () => setClTab("edit");
-document.getElementById("clPNew").onclick = () => openPromptForm(null);
+document.getElementById("clPNew").onclick = () => openPromptForm("classify", null);
 
 /* 快捷选项里点条目 —— 用事件委托，因为整个列表是每次重画的，
    逐个绑 onclick 会在重画之后全部失效。 */
 document.getElementById("clPPanePick").onclick = e => {
-  const el = e.target.closest("[data-plib]");
+  const el = e.target.closest("[data-pf]");
   if (!el) return;
-  const act = el.dataset.plib;
-  if (act === "use") {
-    const mine = el.dataset.mine === "1";
-    S.clPrompt.pick = { id: Number(el.dataset.id),
-                        name: el.dataset.name, mine: mine };
-    // 选库里的条目时把自由文本清掉 —— 两个都留着的话，
-    // 后端以 prompt_id 为准，而她看着输入框里还有字会以为一起发了。
-    S.clPrompt.content = "";
-    S.clPrompt.tab = "pick";
-    paintClPrompt();
-    toast(mine ? ("这次用「" + el.dataset.name + "」")
-               : ("这次用别人的「" + el.dataset.name + "」（内容不公开，"
-                  + "由服务端直接拿去用）"));
-  } else if (act === "none") {
-    S.clPrompt.pick = null;
-    paintClPrompt();
-    toast("这次不带提示词");
-  } else if (act === "edit") {
-    openPromptForm(Number(el.dataset.id));
-  }
+  pfPickOne("classify", "clP", el, pfOpts("clP"));
 };
-document.getElementById("clPSave").onclick = async () => {
-  const v = document.getElementById("clPText").value;
-  const max = (S.clPrompt && S.clPrompt.max) || 5000;
-  if (v.length > max) {
-    toast("超了 " + (v.length - max) + " 字，先删掉一些再保存", true);
-    return;
-  }
-  try {
-    const r = await post("/api/classify-prompt", { content: v });
-    S.clPrompt = { content: r.content || "", max: r.max || 5000,
-                   tab: "edit", pick: null };
-    paintClPrompt();
-    toast(r.content ? "提示词已保存" : "提示词已清空");
-  } catch (e) { toast(e.message, true); }
-};
-document.getElementById("clPClear").onclick = async () => {
+document.getElementById("clPSave").onclick = () => pfSaveDefault("classify", "clP");
+document.getElementById("clPClear").onclick = () => {
   const ta = document.getElementById("clPText");
-  if (ta.value && !confirm("清空补充提示词？\n\n"
-      + "清空之后自动分类就只按分类判据来判，不再带你写的这几句。\n"
-      + "（已经跑完的那些任务不受影响。）")) return;
-  ta.value = "";
-  paintClPCount();
-  try {
-    const r = await post("/api/classify-prompt", { content: "" });
-    S.clPrompt = { content: "", max: r.max || 5000,
-                   tab: "edit", pick: null };
-    paintClPrompt();
-    toast("提示词已清空");
-  } catch (e) { toast(e.message, true); }
+  const picked = pfS("classify").pick;
+  if (((ta && ta.value) || picked) &&
+      !confirm(PF_KINDS.classify.clearConfirm)) return;
+  pfClearDefault("classify", "clP");
 };
 
 /* 创建 / 编辑提示词弹层 */
@@ -5629,15 +5873,13 @@ async function openInfuse(mid) {
   if (!S.infWired) wireInfuse();
   show("mkInfuse");
 
-  // 模型清单和提示词上限只在第一次开的时候拉一次就够（它们是配置，不是数据）。
+  // 模型清单只在第一次开的时候拉一次就够（它是配置，不是数据）；
+  // 提示词每次开都重读 —— 上一轮跑完到现在，她可能在别的地方改过。
   try {
     if (!S.infMeta) S.infMeta = await api("/api/infuse-meta");
     paintInfModels();
-    // 她存的那句每次开都重读一遍 —— 上一轮跑完到现在，
-    // 她可能在别的地方改过它。
-    const ta = document.getElementById("ifPrompt");
-    ta.value = (S.infMeta && S.infMeta.user_prompt) || "";
-    paintInfPromptCount("ifPrompt", "ifPCnt");
+    await pfLoad("infuse");
+    pfPaint("infuse", "ifP", pfOpts("ifP"));
   } catch (e) {
     document.getElementById("ifModelNote").textContent = "拿不到模型清单：" + e.message;
   }
@@ -5649,15 +5891,32 @@ async function openInfuse(mid) {
 function wireInfuse() {
   S.infWired = true;
   document.getElementById("ifGo").onclick = infRun;
-  document.getElementById("ifPSave").onclick =
-    () => saveInfPrompt("ifPrompt", "ifPWarn", false);
-  document.getElementById("ifPClear").onclick = () => {
-    document.getElementById("ifPrompt").value = "";
-    paintInfPromptCount("ifPrompt", "ifPCnt");
-    toast("框里清空了。要点「保存」才会真的清掉存着的那份");
+
+  // 提示词这一块整个交给共用的那套（跟自动分类同一个选择器）。
+  // 前缀 ifP → 控件 id 是 ifPTabPick / ifPText / ifPPickMine ……
+  document.getElementById("ifPText").oninput =
+    () => pfPaintCount("infuse", "ifP");
+  document.getElementById("ifPTabPick").onclick =
+    () => pfSetTab("infuse", "ifP", "pick", pfOpts("ifP"));
+  document.getElementById("ifPTabEdit").onclick =
+    () => pfSetTab("infuse", "ifP", "edit", pfOpts("ifP"));
+  document.getElementById("ifPNew").onclick = () => openPromptForm("infuse", null);
+  document.getElementById("ifPPanePick").onclick = e => {
+    const el = e.target.closest("[data-pf]");
+    if (!el) return;
+    pfPickOne("infuse", "ifP", el, pfOpts("ifP"));
   };
-  document.getElementById("ifPrompt").oninput =
-    () => paintInfPromptCount("ifPrompt", "ifPCnt");
+  document.getElementById("ifPSave").onclick = async () => {
+    // 存下来的是"以后每次内化都带上它"那一份 —— 跟自动分类那个保存键同一件事。
+    await pfSaveDefault("infuse", "ifP");
+  };
+  document.getElementById("ifPClear").onclick = () => {
+    const ta = document.getElementById("ifPText");
+    const picked = pfS("infuse").pick;
+    if (((ta && ta.value) || picked) &&
+        !confirm(PF_KINDS.infuse.clearConfirm)) return;
+    pfClearDefault("infuse", "ifP");
+  };
 
   // 勾选框和"只跑前 N 张"一改就重算 —— 这两个控件存在的意义
   // 就是影响"要送多少张"，改了不重算等于骗她。
@@ -5696,53 +5955,14 @@ function paintInfModelNote() {
     : "现在一个能填了 Key 的模型都没有 —— 点左边导航上的「模型设置」填一个再回来。";
 }
 
-/* ---------------- 补充提示词：两个框共用这一套 ----------------
-   两个框（内化弹层里的"这次用"、设置弹层里的"一直用"）
-   读写的是**同一份东西**，规则也必须一样：同样的上限、
-   同样在超长时先说清超了多少、同样"清空后要点保存才生效"。
-   各写一份迟早会分叉 —— 那时候她会觉得"为什么这边能存那边不能"。 */
+/* ---------------- 内化的两个提示词框 ----------------
+   两个框（内化弹层里的"这一次用"、设置弹层里的"我一直以来的要求"）
+   读写的是**同一份东西**（user_prompts 里 kind='infuse' 那一行），
+   所以规则必须一样：同样的上限、同样在超长时先说清超了多少、
+   同样"清空后要点保存才生效"。
 
-function promptMax() {
-  return (S.infMeta && S.infMeta.user_prompt_max) || 5000;
-}
-
-function paintInfPromptCount(taId, cntId) {
-  const ta = document.getElementById(taId);
-  const el = document.getElementById(cntId);
-  if (!ta || !el) return;
-  const max = promptMax();
-  const n = (ta.value || "").length;
-  el.textContent = fmtNum(n) + " / " + fmtNum(max);
-  // 超了就把数字标红 —— 光把框标红她看不出"是字数的问题"。
-  el.classList.toggle("warn", n > max);
-}
-
-async function saveInfPrompt(taId, warnId, silent) {
-  const ta = document.getElementById(taId);
-  const warn = document.getElementById(warnId);
-  const max = promptMax();
-  const txt = ta.value || "";
-  if (txt.length > max) {
-    // 服务端也会 400，但先在这儿说清"是哪个数超了"，
-    // 别让她对着一个"请求失败 400"猜。
-    if (warn) warn.textContent = "超了 " + fmtNum(txt.length - max) + " 字，删短一点再存";
-    if (!silent) toast("补充提示词太长了", true);
-    return false;
-  }
-  try {
-    await send("/api/infuse-prompt", "PUT", { content: txt });
-    if (warn) warn.textContent = "";
-    // 存完把本地缓存也改掉：她接着开内化弹层时，框里要立刻是新的这句，
-    // 不能等下一次拉接口。
-    if (S.infMeta) S.infMeta.user_prompt = txt;
-    if (!silent) toast(txt ? "已保存，以后每次内化都会带上它" : "已清空");
-    return true;
-  } catch (e) {
-    if (warn) warn.textContent = e.message;
-    if (!silent) toast(e.message, true);
-    return false;
-  }
-}
+   具体规则都在共用的那套里（见文件里「提示词选择器」那一节），
+   这里只负责把这两个位置的控件接上去。 */
 
 /* 剧情内化页那个独立入口：坐下来把"我一直以来的要求"调好。 */
 async function openInfPrompt() {
@@ -5753,25 +5973,36 @@ async function openInfPrompt() {
     toast(e.message, true);
     return;
   }
-  const ta = document.getElementById("ipText");
-  ta.value = (S.infMeta && S.infMeta.user_prompt) || "";
-  document.getElementById("ipWarn").textContent = "";
-  paintInfPromptCount("ipText", "ipCnt");
+  await pfLoad("infuse");
+  pfPaint("infuse", "ip", pfOpts("ip"));
   show("mkInfPrompt");
-  setTimeout(() => ta.focus(), 80);
+  setTimeout(() => document.getElementById("ipText").focus(), 80);
 }
 
 // 这个弹层的控件是静态的，脚本跑到这里时它们已经在 DOM 里了，
 // 直接绑一次就够（不像状态条那样会被重画）。
-document.getElementById("ipSave").onclick =
-  () => saveInfPrompt("ipText", "ipWarn", false);
-document.getElementById("ipClear").onclick = () => {
-  document.getElementById("ipText").value = "";
-  paintInfPromptCount("ipText", "ipCnt");
-  toast("框里清空了。要点「保存」才会真的清掉存着的那份");
+document.getElementById("ipText").oninput = () => pfPaintCount("infuse", "ip");
+document.getElementById("ipTabPick").onclick =
+  () => pfSetTab("infuse", "ip", "pick", pfOpts("ip"));
+document.getElementById("ipTabEdit").onclick =
+  () => pfSetTab("infuse", "ip", "edit", pfOpts("ip"));
+document.getElementById("ipNew").onclick = () => openPromptForm("infuse", null);
+document.getElementById("ipPanePick").onclick = e => {
+  const el = e.target.closest("[data-pf]");
+  if (!el) return;
+  // fillOnPick：点一条 = 把它的**内容**填进框里（只有自己存的才有内容），
+  // 她可以在上面接着改，改完点保存。
+  // 这跟分类那边"点了就锁死引用"不一样 —— 这边的产物本来就是要一段文本。
+  pfPickOne("infuse", "ip", el, pfOpts("ip"));
 };
-document.getElementById("ipText").oninput =
-  () => paintInfPromptCount("ipText", "ipCnt");
+document.getElementById("ipSave").onclick = () => pfSaveDefault("infuse", "ip");
+document.getElementById("ipClear").onclick = () => {
+  const ta = document.getElementById("ipText");
+  const picked = pfS("infuse").pick;
+  if (((ta && ta.value) || picked) &&
+      !confirm(PF_KINDS.infuse.clearConfirm)) return;
+  pfClearDefault("infuse", "ip");
+};
 
 /* 重算"要送多少张"。 */
 async function infLoadPreview() {
@@ -5873,12 +6104,26 @@ function infNoteHtml() {
     lines.push("这次用 <b>" + esc(sel.options[sel.selectedIndex].text) + "</b>。");
   }
 
-  const up = document.getElementById("ifPrompt").value || "";
-  if (up.trim()) {
-    lines.push("会带上你写的补充提示词（" + fmtNum(up.length) + " 字），每一批都捎上它。");
+  // 提示词这一栏也要说清：她写的时候是在另一个位置，
+  // 站在这儿才想起来"对了，会带上那几句吗"。
+  // 挑的要是别人的条目，这里不能说"你写的" —— 她确实没写过它，
+  // 说错了她会以为自己写的内容丢了。
+  const pick = pfPick("infuse");
+  if (pick) {
+    lines.push(pick.mine
+      ? ("会带上你挑的<b>「" + esc(pick.name) + "」</b>这条提示词，每一批都捎上它。")
+      : ("会带上别人公开的<b>「" + esc(pick.name) + "」</b>"
+         + "（内容不公开，服务端直接拿去用），每一批都捎上它。"));
   } else {
-    lines.push("没写补充提示词。想让它按你的习惯提炼（比如"
-      + "「重点提炼拉扯和冲突升级」），就在上面的框里写几句。");
+    const up = pfValue("infuse", "ifP");
+    const n = (up === null ? "" : up).trim().length;
+    if (n) {
+      lines.push("会带上你写的补充提示词（" + fmtNum(n) + " 字），每一批都捎上它。");
+    } else {
+      lines.push("没写补充提示词。想让它按你的习惯提炼（比如"
+        + "「重点提炼拉扯和冲突升级」），就在上面的框里写几句，"
+        + "或者从「快捷选项」里挑一条存好的。");
+    }
   }
   lines.push("提出的零件一律标<b>「待确认」</b>、来源标「AI」，"
     + "不会被当成你认过的；每条都能点开看它来自哪几张卡。");
@@ -5897,15 +6142,31 @@ async function infRun() {
   const old = go.textContent;
   go.disabled = true;
   go.textContent = "正在提交…";
+  const body = {
+    model_key: sel.value,
+    skip_infused: document.getElementById("ifSkip").checked,
+    limit: Math.max(0, parseInt(document.getElementById("ifLimit").value, 10) || 0),
+  };
+  // 提示词两种来源二选一：
+  //   · 在"快捷选项"里挑了一条 → 只发 prompt_id，内容由服务端自己取
+  //     （挑的要是别人公开的，前端根本没有原文可发 —— 这是有意的）
+  //   · 否则 → 发"自定义"框里的文字：框里是什么就发什么，
+  //     她刚改了没点保存，这一次也该按新的要求跑。
+  //     （"保存"管的是"以后默认用这句"，两件事分开。）
+  const pl = pfPayload("infuse", "ifP");
+  if (pl.prompt_id) {
+    body.prompt_id = pl.prompt_id;
+  } else {
+    if ((pl.user_prompt || "").length > pfS("infuse").max) {
+      toast("补充提示词超长了，把它删短一些再跑", true);
+      go.disabled = false;
+      go.textContent = old;
+      return;
+    }
+    body.user_prompt = pl.user_prompt || "";
+  }
   try {
-    const r = await post("/api/materials/" + st.mid + "/infuse", {
-      model_key: sel.value,
-      // 框里是什么就发什么：她刚改了没点保存，这一次也该按新的要求跑。
-      // （"保存"管的是"以后默认用这句"，两件事分开。）
-      user_prompt: document.getElementById("ifPrompt").value || "",
-      skip_infused: document.getElementById("ifSkip").checked,
-      limit: Math.max(0, parseInt(document.getElementById("ifLimit").value, 10) || 0),
-    });
+    const r = await post("/api/materials/" + st.mid + "/infuse", body);
     const mid = st.mid;
     hide("mkInfuse");
     toast(r.message || "已开始，后台按批跑 —— 进度看文件下面那行");
@@ -5916,6 +6177,77 @@ async function infRun() {
     go.textContent = old;
   }
 }
+
+/* ---------------- 【剧情内化】页那个「AI 批量内化」入口 ----------------
+   为什么要单开一个：内化这件事的入口原来只在【总素材库】每份素材的按钮排里，
+   跟「切分 / 查看 / 删除」长得一模一样。她跑完一轮想再跑第二轮，
+   第一反应是回到【剧情内化】页找按钮 —— 而那一页没有。
+
+   所以这里给的是"先挑哪一份素材"，不是再做一个一样的弹层：
+   选完直接进内化弹层（同一套预览、同一套提示词选择器），
+   两条路走的是同一段代码，不会有一边改了一边没改的问题。 */
+async function openPickMat() {
+  const box = document.getElementById("pmList");
+  const note = document.getElementById("pmNote");
+  box.innerHTML = '<div class="blank">读取中…</div>';
+  note.innerHTML = "";
+  show("mkPickMat");
+
+  let items = {};
+  try {
+    const d = await api("/api/infuse-states");
+    items = d.items || {};
+    S.inf = items;          // 顺手 refresh 一下缓存，回列表时状态条也是新的
+  } catch (e) {
+    box.innerHTML = '<div class="blank"><b>读取失败</b>' + esc(e.message) + '</div>';
+    return;
+  }
+
+  const rows = Object.keys(items).map(k => items[k])
+    .filter(s => s.all_card_count > 0)     // 没切分的文件没法内化，先不列
+    .sort((a, b) => b.fresh_count - a.fresh_count || a.material_id - b.material_id);
+
+  if (!rows.length) {
+    box.innerHTML = '<div class="blank"><b>还没有能内化的素材</b>' +
+      'AI 内化吃的是「卡片」。先去<b>【总素材库】</b>，' +
+      '对一份文件点<b>「切分」</b>把它切成卡片，回来这里就出现了。</div>';
+    note.innerHTML = "";
+    return;
+  }
+  box.innerHTML = rows.map(pmRowHtml).join("");
+  const zero = rows.filter(s => !s.fresh_count).length;
+  note.innerHTML = zero
+    ? ('<b>' + zero + '</b> 份已经跑过了（默认跳过，不重复花钱）。'
+       + '想重跑就在下一步把「跳过已经跑过的卡」的勾去掉。')
+    : '点一份进去，先看清楚这次会送多少张再决定开跑。';
+}
+
+function pmRowHtml(s) {
+  const can = s.fresh_count > 0;
+  const bits = [fmtNum(s.all_card_count) + " 张卡"];
+  if (s.fresh_count) bits.push("<b>" + fmtNum(s.fresh_count) + "</b> 张还没跑过");
+  else bits.push("都跑过了");
+  if (s.has_plot_count) bits.push("出过 " + fmtNum(s.has_plot_count) + " 个零件");
+  if (s.state === "running") bits.push("正在跑");
+  return '<div class="pmrow' + (can ? "" : " zero") + '"' +
+         (can ? ' data-pmat="' + s.material_id + '"' : '') + '>' +
+         '<div class="grow">' +
+           '<div class="nm">' + esc(s.title || ("素材 #" + s.material_id)) + '</div>' +
+           '<div class="meta">' + bits.join(" · ") +
+             (s.source_collection ? (" · 来源 " + esc(s.source_collection)) : "") +
+           '</div>' +
+         '</div>' +
+         '<div class="go">' + (can ? "选它 →" : "已跑完") + '</div>' +
+         '</div>';
+}
+
+// 清单是每次重画的，用事件委托 —— 逐个绑 onclick 会在重画之后全部失效。
+document.getElementById("pmList").onclick = e => {
+  const el = e.target.closest("[data-pmat]");
+  if (!el) return;
+  hide("mkPickMat");
+  openInfuse(Number(el.dataset.pmat));
+};
 
 /* ==================================================================
    剧情内化（剧情零件）
@@ -6064,8 +6396,9 @@ function renderPlList() {
   if (!box) return;
   if (!PL.plots.length) {
     box.innerHTML = '<div class="blank"><b>这里还没有剧情零件</b>' +
-      '要机器提：回<b>【总素材库】</b>，点某份文件上的<b>「AI 内化」</b>——' +
+      '要机器提：点右上角<b>「AI 批量内化」</b>——挑一份素材，' +
       '它会先告诉你这份素材要送出去多少张、大概几次调用，你确认了才开跑。' +
+      '（同样的入口也在<b>【总素材库】</b>每份文件的<b>「AI 内化」</b>按钮上。）' +
       '跑完的零件会出现在这里，标着<b>「AI 提的」</b>和它的把握程度，' +
       '状态是「待确认」，等你逐条看过。<br>' +
       '要自己写：点右上角<b>「＋ 新建剧情零件」</b>；' +
@@ -6562,9 +6895,11 @@ async function openCardPlots(cid) {
    把绑定集中成一块，将来加功能时一眼能看出哪个按钮归哪个函数。 */
 
 document.getElementById("plNewBtn").onclick = () => openPlot();
-// 「补充提示词」：这是"我一直以来的要求"那个入口。
-// 想对某一份素材立刻跑一次内化，入口在【总素材库】那份文件的
-// 「AI 内化」按钮上 —— 那边能看到这次会送多少张、大概几次调用。
+// 「AI 批量内化」：这一页的启动入口。
+// 之前要跑内化得先跳回【总素材库】、在每份素材的按钮排里找那个灰色小按钮，
+// 太难找 —— 现在在这一页就能挑素材、开跑。
+document.getElementById("plInfuseBtn").onclick = () => openPickMat();
+// 「补充提示词」：这是"我一直以来的要求"那个入口（存多条、可挑一条用）。
 document.getElementById("plPromptBtn").onclick = () => openInfPrompt();
 document.getElementById("plReload").onclick = async () => {
   await loadPlots(true);

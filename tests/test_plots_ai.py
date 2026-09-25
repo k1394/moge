@@ -306,6 +306,133 @@ def http_tests():
               "%d 条" % cands["count"])
         code, _ = A.call("GET", "/api/infuse-runs/999999/candidates")
         check("不存在的任务给 404", code == 404, "HTTP %s" % code)
+
+        # ---- 提示词库：按用途分档 -----------------------------------------
+        # 这一块守的是"做内化时不该挑到一条讲怎么判主类的话"。
+        # kind 写错不会报错、只会安静返回空列表 —— 界面上就表现为
+        # "我存的提示词全没了"，而数据其实好端端躺在另一档里。
+        print("\n【11】提示词库按用途分档（分类 / 内化互不串味）")
+        A.ok("POST", "/api/materials",
+             {"title": "样本乙", "content": sample_text(2)})
+        m2 = [m for m in A.ok("GET", "/api/materials")["items"]
+              if m["title"] == "样本乙"][0]["id"]
+        A.ok("POST", "/api/material-classification/materials/%d/segment-runs" % m2,
+             {"rule": "line"})
+
+        code, err = A.call("GET", "/api/prompt-library?kind=outline")
+        check("★ 不认识的用途要 400（不能安静返回空列表）",
+              code == 400, "HTTP %s %s" % (code, json.dumps(err, ensure_ascii=False)[:60]))
+
+        pi = A.ok("POST", "/api/prompt-library",
+                  {"name": "内化话术", "content": "提炼换成别人名也成立的剧情",
+                   "usage_note": "长篇专用", "kind": "infuse"})
+        pid = pi["item"]["id"]
+        check("内化档建出了一条", pid > 0, pid)
+        A.ok("POST", "/api/prompt-library",
+             {"name": "分类话术", "content": "按主类判据判", "kind": "classify"})
+
+        inf_lib = A.ok("GET", "/api/prompt-library?kind=infuse")
+        cls_lib = A.ok("GET", "/api/prompt-library?kind=classify")
+        inf_names = [p["name"] for p in inf_lib["mine"]]
+        cls_names = [p["name"] for p in cls_lib["mine"]]
+        check("★ 内化档只看得见内化那几条", inf_names == ["内化话术"], inf_names)
+        check("★ 分类档只看得见分类那几条", cls_names == ["分类话术"], cls_names)
+        check("★ 不传 kind 时默认分类那档（老前端不能坏）",
+              [p["name"] for p in A.ok("GET", "/api/prompt-library")["mine"]]
+              == ["分类话术"])
+        check("自己的条目带正文（她要能接着改）",
+              inf_lib["mine"][0].get("content") == "提炼换成别人名也成立的剧情",
+              inf_lib["mine"][0].get("content"))
+
+        # ---- 别人的公开条目：能用，但看不到内容 ---------------------------
+        print("\n【12】别人公开的提示词：能用，但内容不下发")
+        pub = B.ok("POST", "/api/prompt-library",
+                   {"name": "乙的内化话术", "content": "乙的独门要求（不该被甲看到）",
+                    "visibility": "public", "kind": "infuse"})
+        pub_id = pub["item"]["id"]
+        lib2 = A.ok("GET", "/api/prompt-library?kind=infuse")
+        pub_names = [p["name"] for p in lib2["public"]]
+        check("★ 甲能看到乙公开的那条", pub_names == ["乙的内化话术"], pub_names)
+        p0 = lib2["public"][0]
+        check("★ 但正文一个字都没下发",
+              "content" not in p0 and "content_length" in p0,
+              json.dumps(p0, ensure_ascii=False)[:110])
+        check("★ 只给了字数（够她判断长短，不够她抄走）",
+              p0["content_length"] == len("乙的独门要求（不该被甲看到）"),
+              p0["content_length"])
+
+        # ---- 用库里的提示词跑一次：记快照 ---------------------------------
+        print("\n【13】挑库里一条跑内化 → 任务上要记下用的是哪条")
+        r3 = A.ok("POST", "/api/materials/%d/infuse" % m2,
+                  {"model_key": "fake", "prompt_id": pid})
+        run3 = A.ok("GET", "/api/infuse-runs/%d" % r3["run_id"])["run"]
+        check("★ 任务上记着用的是库里哪一条",
+              run3["prompt_ref_id"] == pid, run3["prompt_ref_id"])
+        check("★ 记着那条的名字（删了也能答出用过什么）",
+              run3["prompt_name"] == "内化话术", run3["prompt_name"])
+        check("★ 存的是**那一刻的正文快照**（以后改了也不影响这次）",
+              run3["user_prompt"] == "提炼换成别人名也成立的剧情",
+              json.dumps(run3["user_prompt"], ensure_ascii=False)[:40])
+        check("★ 标记成「自己存的」",
+              run3["prompt_owner_label"] == ("甲" + suffix),
+              "owner=%s label=%s" % (run3.get("prompt_owner"),
+                                     run3.get("prompt_owner_label")))
+
+        # 改掉库里那条 → 老任务的快照**不能跟着变**
+        A.ok("PATCH", "/api/prompt-library/%d" % pid,
+             {"content": "改过之后的要求"})
+        old = A.ok("GET", "/api/infuse-runs/%d" % r3["run_id"])["run"]
+        check("★ 库里改了，老任务的快照还是原来那句（不回头篡改历史）",
+              old["user_prompt"] == "提炼换成别人名也成立的剧情",
+              json.dumps(old["user_prompt"], ensure_ascii=False)[:40])
+        check("★ 内化档改完能按自己的 kind 取回来（不是静默丢失）",
+              any(p["name"] == "内化话术"
+                  and p.get("content") == "改过之后的要求"
+                  for p in A.ok("GET", "/api/prompt-library?kind=infuse")["mine"]))
+
+        # ---- 别人的 prompt_id 不能拿来跑我的任务 ---------------------------
+        code, _ = A.call("POST", "/api/materials/%d/infuse" % m2,
+                         {"model_key": "fake", "prompt_id": 999999})
+        check("★ 用不存在的提示词 id → 400（不是静默当成没提示词）",
+              code == 400, "HTTP %s" % code)
+
+        # 乙公开的那条：甲**能用**（服务端自己取正文），界面上从没见过原文。
+        # 另起一份素材 —— 同一个文件不许并发两个任务（这是接口的规定，
+        # 也是对的：两个任务同时在改同一批卡片的状态，谁也不准）。
+        A.ok("POST", "/api/materials",
+             {"title": "样本丙", "content": sample_text(3)})
+        m3 = [m for m in A.ok("GET", "/api/materials")["items"]
+              if m["title"] == "样本丙"][0]["id"]
+        A.ok("POST", "/api/material-classification/materials/%d/segment-runs" % m3,
+             {"rule": "line"})
+        r4 = A.ok("POST", "/api/materials/%d/infuse" % m3,
+                  {"model_key": "fake", "prompt_id": pub_id})
+        run4 = A.ok("GET", "/api/infuse-runs/%d" % r4["run_id"])["run"]
+        check("★ 别人的公开条目也能用（任务建起来了）",
+              run4["prompt_ref_id"] == pub_id, run4["prompt_ref_id"])
+        check("★ 名字照给（她要知道这轮用的是哪条）",
+              run4["prompt_name"] == "乙的内化话术", run4["prompt_name"])
+        check("★ 任务上标明这是别人提的（不是我的）",
+              run4["prompt_owner_label"] == ("乙" + suffix),
+              run4["prompt_owner_label"])
+        # 【为什么正文是空的】公开的含义是"她可以拿去用"，**不是**
+        # "她能看见里面写了什么"。正文进了库（任务自己要用），
+        # 但不下发到浏览器 —— 一旦下发就等于公开了。
+        check("★ 别人的正文一个字都不下发（这是有意的，不是丢了）",
+              run4["user_prompt"] == "" and run4["user_prompt_hidden"] is True,
+              "hidden=%s" % run4.get("user_prompt_hidden"))
+        check("★ 但字数照给（她靠这个判断值不值得用）",
+              run4["user_prompt_len"] == len("乙的独门要求（不该被甲看到）"),
+              run4["user_prompt_len"])
+
+        # 别人猜我的私有条目 → 看不见也用不了
+        code, _ = B.call("PATCH", "/api/prompt-library/%d" % pid, {"name": "篡改"})
+        check("★ 别人改不了我私有的提示词", code in (400, 403, 404),
+              "HTTP %s" % code)
+        b_lib = B.ok("GET", "/api/prompt-library?kind=infuse")
+        check("★ 我的私有条目不会出现在别人的库里",
+              [p["name"] for p in b_lib["mine"]] == ["乙的内化话术"],
+              [p["name"] for p in b_lib["mine"]])
     finally:
         if proc is not None:
             H.stop_server(proc)

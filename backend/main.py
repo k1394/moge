@@ -1412,24 +1412,46 @@ class PromptLibIn(BaseModel):
     summary     介绍，≤6000 字。
     visibility  private / public。public 的含义见上面那段注释 ——
                 **不是**"内容公开"。
+    kind        这条属于哪一档：classify（素材分类）/ infuse（剧情内化）。
+                不传 = classify（老前端不传也不会坏）。
+                「改一条」时会被忽略 —— 改的时候改的是内容，不是归属。
     """
     name: Optional[str] = None
     content: Optional[str] = None
     usage_note: Optional[str] = None
     summary: Optional[str] = None
     visibility: Optional[str] = None
+    kind: Optional[str] = None
+
+
+def _norm_kind(kind):
+    """接口层的 kind 校验。非法值 400，不静默退回默认档。
+
+    静默退回是最坏的选择：她给内化存的提示词会掉进"分类"那一档，
+    界面上两边都看不到它 —— 数据没丢，但等于丢了。
+    """
+    try:
+        return auto.check_prompt_kind(kind)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/prompt-library")
-def api_prompt_library(user: dict = Depends(auth.current_user)):
+def api_prompt_library(kind: str = auto.PROMPT_KIND_CLASSIFY,
+                       user: dict = Depends(auth.current_user)):
     """我的全部 + 别人公开的那批（后者**不带内容**）。
 
     一次全给：快捷选项那个下拉要同时显示"我的"和"可以借用的"，
     分成两个请求只会让界面闪两下。
+
+    kind 决定这是"哪一档"的库 —— 分类那档和内化那档各管各的，
+    互相看不见（做分类时不该挑到一条讲剧情抽象的提示词）。
     """
-    mine = auto.list_my_library_prompts(user["owner"])
-    pub = auto.list_public_library_prompts(user["owner"])
+    k = _norm_kind(kind)
+    mine = auto.list_my_library_prompts(user["owner"], k)
+    pub = auto.list_public_library_prompts(user["owner"], k)
     return {
+        "kind": k,
         "mine": mine,
         "public": pub,
         "max": {"name": auto.PROMPT_NAME_MAX,
@@ -1445,11 +1467,12 @@ def api_prompt_library(user: dict = Depends(auth.current_user)):
 def api_create_prompt(req: PromptLibIn,
                       user: dict = Depends(auth.current_user)):
     """新建一条。同名会被拒（不覆盖）—— 覆盖会静默毁掉她之前写的那份。"""
+    k = _norm_kind(req.kind)
     try:
         item = auto.create_library_prompt(
             user["owner"], req.name, req.content,
             usage_note=req.usage_note or "", summary=req.summary or "",
-            visibility=req.visibility or auto.VIS_PRIVATE)
+            visibility=req.visibility or auto.VIS_PRIVATE, kind=k)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "item": item}
@@ -1987,12 +2010,18 @@ class InfuseIn(BaseModel):
       不传  → 用她存着的那份补充提示词
       传 ""  → 这次不要补充提示词
       传文字 → 这次就用这段
+
+    prompt_id 是**从提示词库挑了一条**的意思，跟自动分类那边同一套规矩：
+      两个都传时 prompt_id 说了算（"我刚挑了一条"比"框里还剩半句话"明确）。
+      挑中的可能是**别人公开出来的**那一条 —— 内容由服务端自己去取，
+      全程不经过浏览器。
     """
     model_key: str = ""
     user_prompt: Optional[str] = None
     skip_infused: bool = True
     # 只跑前 N 张（0 = 不限）。663 张的稿子先跑 20 张试水用得上。
     limit: int = 0
+    prompt_id: Optional[int] = None
 
 
 class InfusePromptIn(BaseModel):
@@ -2061,6 +2090,7 @@ def api_infuse_start(mid: int, req: InfuseIn,
         user_prompt=body.get("user_prompt"),
         skip_infused=bool(body.get("skip_infused", True)),
         limit=int(body.get("limit") or 0),
+        prompt_id=body.get("prompt_id") or None,
         background=True)
     if not res.get("ok"):
         raise HTTPException(status_code=400,

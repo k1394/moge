@@ -205,6 +205,13 @@ CREATE TABLE IF NOT EXISTS plot_runs (
     template_source     TEXT    NOT NULL DEFAULT '',
     user_prompt_len     INTEGER NOT NULL DEFAULT 0,
     user_prompt         TEXT    NOT NULL DEFAULT '',
+    -- 这段补充提示词是从「提示词库」的哪一条来的（自由文本时全是 0/空）。
+    -- 【为什么必须记】她跑完一轮会去改提示词再跑第二轮，回头必须答得出
+    -- "第一轮到底用的是哪条"。光存正文只能看出"写了什么"，
+    -- 看不出"它是哪条、是不是别人公开出来的那条"。
+    prompt_ref_id       INTEGER NOT NULL DEFAULT 0,
+    prompt_name         TEXT    NOT NULL DEFAULT '',
+    prompt_owner        TEXT    NOT NULL DEFAULT '',
     category_set_version TEXT   NOT NULL DEFAULT '',
     status              TEXT    NOT NULL DEFAULT '排队中',
     total_batches       INTEGER NOT NULL DEFAULT 0,
@@ -328,6 +335,17 @@ def migrate(verbose=False):
                          "ADD COLUMN user_prompt TEXT NOT NULL DEFAULT ''")
             if verbose:
                 print("  plot_runs.user_prompt  已补上")
+        # ---- 补列：提示词库引用（哪一条 / 叫什么 / 谁的）----
+        # 老库上这三列都没有。少了它们，跑完之后只看得见正文，
+        # 看不见"这条是从库里哪条来的"，而正文是会被改的、名字不会。
+        for col, ddl in (
+                ("prompt_ref_id", "prompt_ref_id INTEGER NOT NULL DEFAULT 0"),
+                ("prompt_name", "prompt_name TEXT NOT NULL DEFAULT ''"),
+                ("prompt_owner", "prompt_owner TEXT NOT NULL DEFAULT ''")):
+            if cols and col not in cols:
+                conn.execute("ALTER TABLE plot_runs ADD COLUMN " + ddl)
+                if verbose:
+                    print("  plot_runs.%s  已补上" % col)
 
     if verbose:
         with db.connect() as conn:
@@ -998,7 +1016,7 @@ _create_lock = threading.Lock()
 
 def create_run(owner, material_id, model_key=None, user_prompt=None,
                skip_infused=True, limit=0, background=True,
-               retry_of_run_id=None, card_ids=None):
+               retry_of_run_id=None, card_ids=None, prompt_id=None):
     """建一个内化任务。返回 (结果字典, run_id)。
 
     model_key     用哪个模型；不传就用清单里第一个填了 Key 的
@@ -1008,6 +1026,19 @@ def create_run(owner, material_id, model_key=None, user_prompt=None,
     background    True 起后台线程立刻返回（接口用）；
                   False 当场跑完再返回（测试和命令行用）
     card_ids      只跑这几张（重试时用）
+    prompt_id     从「提示词库」里挑的那条（可以是我自己的，也可以是
+                  别人公开出来的那些）。见下。
+
+    【prompt_id 和 user_prompt 的关系】
+      两个都传时 **prompt_id 说了算**，user_prompt 被忽略。
+      理由是"她刚从快捷选项里挑了一条"是个明确得多的意图，
+      而输入框里可能还留着上一次敲的半句话。
+
+    【prompt_id 最要紧的一条：别人的内容不许外泄】
+      这条提示词可能是**别人公开出来的**。公开的含义是"她可以拿去用"，
+      **不是**"她能看见里面写了什么"。所以这里解析出来的 content
+      只落在 user_prompt 这个字段里直接进库（任务自己要用），
+      返回值里只带名字、不带内容。
 
     【为什么默认后台】任务书第十五节明确禁止"把任务执行放在 HTTP 请求里
     长时间阻塞页面"。663 张卡按 12 张一批是 56 批，每批等模型回话
@@ -1021,9 +1052,25 @@ def create_run(owner, material_id, model_key=None, user_prompt=None,
     model_key = cfg.get("key") or ""
     model_name = cfg.get("label") or cfg.get("model") or model_key
 
+    # ---- 提示词：库里的某一条优先于自由文本 ----
+    # 引用信息（哪条 / 叫什么 / 谁的）单独记一份，用来回答
+    # "第一轮到底用的哪条" —— 正文会被她改，名字不会。
+    ref_id, ref_name, ref_owner = 0, "", ""
+    if prompt_id:
+        try:
+            ref_id, ref_name, lib_content, ref_owner, _mine = \
+                cls.resolve_prompt_for_use(owner, prompt_id,
+                                           kind=USER_PROMPT_KIND_INFUSE)
+        except ValueError as e:
+            return {"ok": False, "reason": "bad_prompt",
+                    "message": str(e)}, None
+        user_prompt = lib_content
+
     # ---- 补充提示词：**存快照**，不存"她当前写着什么" ----
     # 她跑完一轮会去改这句再跑第二轮，回头必须还能答出"第一轮到底怎么问的"。
-    if user_prompt is None:
+    if prompt_id:
+        pass          # 上面已经从库里取了内容，别再被 get_user_prompt 覆盖
+    elif user_prompt is None:
         user_prompt = get_user_prompt(owner)
     user_prompt = (user_prompt or "").strip()
     if len(user_prompt) > USER_PROMPT_MAX:
@@ -1077,13 +1124,15 @@ def create_run(owner, material_id, model_key=None, user_prompt=None,
                 "INSERT INTO plot_runs (owner_id, material_id, material_title,"
                 " source_collection, run_type, input_card_count, skip_infused,"
                 " limit_count, model_key, model_name, prompt_version,"
-                " template_source, user_prompt_len, user_prompt, status,"
+                " template_source, user_prompt_len, user_prompt,"
+                " prompt_ref_id, prompt_name, prompt_owner, status,"
                 " total_items, retry_of_run_id, error, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (owner, material_id, m["title"] or "", m["source_collection"] or "",
                  "batch", len(todo), 1 if skip_infused else 0, int(limit or 0),
                  model_key, model_name, prompt_version(), src, len(user_prompt),
-                 user_prompt, RUN_QUEUED, len(todo),
+                 user_prompt, int(ref_id or 0), ref_name or "", ref_owner or "",
+                 RUN_QUEUED, len(todo),
                  retry_of_run_id, warn, ts))
             run_id = cur.lastrowid
 
@@ -1590,10 +1639,26 @@ def _parse_ts(s):
 
 def _run_dict(row):
     d = dict(row)
-    # user_prompt 原样下发（她自己的字，只在本人的任务里查得到）。
-    # 分类那边把它抹成空、只留长度，是因为那边能用"别人共享到库里的提示词"，
-    # 抹掉是为了不泄露原作者的内容；内化暂时没有共享提示词这回事，
-    # 留着更有用 —— 她可以拿历史任务对照"上一轮我到底怎么要求的"。
+
+    # ---- 补充提示词的正文要不要下发 ----
+    #
+    # 【这条规矩是跟分类那边学的，别改回去】
+    #   内化现在也能从「提示词库」挑一条来跑，而库里可能有**别人公开出来的**条目。
+    #   公开的含义是"她可以拿去用"，**不是**"她能看见里面写了什么"。
+    #   正文一旦下发到浏览器，就等于公开了 —— 所以引用别人的条目跑出来的任务，
+    #   正文一律抹成空、只留字数；界面上显示"用了《XXX》那条（别人的，内容不公开）"。
+    #
+    #   不是别人的（自己写的 / 自由文本敲的）原样留着 ——
+    #   那是她自己的字，留着有用：可以拿历史任务对照"上一轮我到底怎么要求的"。
+    ref = d.get("prompt_ref_id") or 0
+    ref_owner = d.get("prompt_owner") or ""
+    mine = (not ref_owner) or (ref_owner == (d.get("owner_id") or ""))
+    if ref and not mine:
+        d["user_prompt"] = ""
+    d["user_prompt_hidden"] = bool(ref and not mine)
+    # 归属标记（__u<数字>）→ 给人看的名字。查不到就原样返回，绝不编。
+    d["prompt_owner_label"] = cls._owner_label(ref_owner) if ref_owner else ""
+
     d["status_label"] = d.get("status") or ""
     d["active"] = d.get("status") in RUN_ACTIVE
 
@@ -1801,10 +1866,25 @@ def retry_run(run_id, owner, background=True):
     # 理由跟"沿用同一个模型"一样：中途换掉的话，同一份素材里一半是按
     # 上次的要求判的、一半按新的判的，她看不出这个区别。
     # 她真想换要求，那是新的一轮 —— 重新点【AI 内化】，不是点重试。
-    return create_run(owner, material_id, model_key=model_key,
-                      user_prompt=r["user_prompt"] or "",
-                      skip_infused=False, limit=0, background=background,
-                      retry_of_run_id=run_id, card_ids=todo)
+    #
+    # 【为什么引用信息要另外拷，而不是把 prompt_id 再传一遍】
+    #   传 prompt_id 会让服务端**重新去库里取一次内容** ——
+    #   那条提示词要是被她改过、或者已经删了，重试就变成了"用新要求跑旧任务"，
+    #   甚至直接报错跑不起来。这里要的是"重演原任务"，所以正文用快照，
+    #   引用信息也只是**照抄一份标签**，不产生任何新的取数行为。
+    res, new_id = create_run(owner, material_id, model_key=model_key,
+                             user_prompt=r["user_prompt"] or "",
+                             skip_infused=False, limit=0,
+                             background=background,
+                             retry_of_run_id=run_id, card_ids=todo)
+    if new_id and r["prompt_ref_id"]:
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE plot_runs SET prompt_ref_id=?, prompt_name=?,"
+                " prompt_owner=? WHERE id=?",
+                (r["prompt_ref_id"], r["prompt_name"] or "",
+                 r["prompt_owner"] or "", new_id))
+    return res, new_id
 
 
 # ----------------------------------------------------------------------
@@ -2009,6 +2089,87 @@ def _self_check():
         check("跨模块引用的属性全存在", not bad, True)
         check("★ 挖注释这一步真的在起作用（不然上面那条是假绿）",
               "cls" not in _code_only("x = 1  # cls.foo 在注释里\n"))
+
+        # ---- [9] 提示词按用途分档 + 别人的正文不下发 ----------------------
+        # 这两件事隔着一个功能犯过错，放在一起挡：
+        #   ① 内化要用自己的提示词库（kind='infuse'），跟分类那档互不串门。
+        #      串了不报错 —— 只会让她在做内化时挑到一条讲"怎么判主类"的话，
+        #      白跑一轮钱才发现模型答非所问。
+        #   ② 挑"别人公开出来的"那条来跑时，正文**只能进任务、不能进浏览器**。
+        #      "公开"= 她能拿去用，≠ 她能看到里面写了什么。
+        print("\n[9] 提示词分档 + 别人的正文不下发")
+        cls.create_library_prompt("__u1", "分类话术", "按外貌气质判",
+                                  kind=cls.PROMPT_KIND_CLASSIFY)
+        cls.create_library_prompt("__u1", "内化话术", "只提炼拉扯",
+                                  kind=cls.PROMPT_KIND_INFUSE)
+        names = lambda k: [x["name"] for x in
+                           cls.list_my_library_prompts("__u1", k)]
+        check("★ 分类那档只看得到分类的",
+              names(cls.PROMPT_KIND_CLASSIFY), ["分类话术"])
+        check("★ 内化那档只看得到内化的",
+              names(cls.PROMPT_KIND_INFUSE), ["内化话术"])
+        # 默认值必须还是 classify —— 老前端不传 kind，不能因为这次改动就换档
+        check("不传 kind 时默认还是分类那档（老前端不能坏）",
+              [x["name"] for x in cls.list_my_library_prompts("__u1")],
+              ["分类话术"])
+        # 显式传 None 也要兜成默认档。空列表长得像"我存的东西丢了"，
+        # 其实一条没少 —— 这种静默失败最难查，所以专门钉一条。
+        check("★ 显式传 None 兜成默认档，不许静默返回空列表",
+              names(None), ["分类话术"])
+        try:
+            cls.check_prompt_kind("outline")
+            check("不认识的用途要报错（不许静默退默认档）", False)
+        except ValueError:
+            check("不认识的用途要报错（不许静默退默认档）", True)
+
+        # 改一条：不能因为"取的时候用了默认 kind"而取不到。
+        # 这个坑是真踩过的 —— update_library_prompt 里写
+        # get_library_prompt(owner, pid)（默认 kind='classify'），
+        # 于是内化那条永远返回 None，表现是"点了保存没反应"。
+        pid_inf = cls.list_my_library_prompts(
+            "__u1", cls.PROMPT_KIND_INFUSE)[0]["id"]
+        upd = cls.update_library_prompt("__u1", pid_inf, {"name": "内化话术v2"})
+        check("★ 改内化那条能改到（按默认 kind 取会返回 None）", bool(upd))
+        check("改完名字生效", (upd or {}).get("name"), "内化话术v2")
+        check("★ 改完还在内化那档，没串到分类档去",
+              names(cls.PROMPT_KIND_INFUSE), ["内化话术v2"])
+
+        # 别人的公开条目：能用，但内容不给前端
+        cls.create_library_prompt("__u2", "别人的内化话术", "别人的私房话",
+                                  visibility=cls.VIS_PUBLIC,
+                                  kind=cls.PROMPT_KIND_INFUSE)
+        pub = cls.list_public_library_prompts("__u1", cls.PROMPT_KIND_INFUSE)
+        check("别人的公开条目在内化档看得到", len(pub), 1)
+        check("★ 公开条目只给名字、不给正文", "content" in pub[0], False)
+        check("但给了字数（她要靠这个判断值不值得用）",
+              pub[0]["content_length"] > 0, True)
+
+        _pid, _nm, body, _ow, _mine = cls.resolve_prompt_for_use(
+            "__u1", pub[0]["id"], kind=cls.PROMPT_KIND_INFUSE)
+        check("服务端取得到别人的正文（任务要用）", body, "别人的私房话")
+        # 把"服务端取到的那份正文"塞进一条任务行，看下发给前端时会不会漏
+        row = {"owner_id": "__u1", "prompt_ref_id": pub[0]["id"],
+               "prompt_owner": "__u2", "prompt_name": _nm,
+               "user_prompt": body, "status": RUN_QUEUED,
+               "total_items": 0, "total_batches": 0,
+               "heartbeat_at": "", "finished_at": ""}
+        d = _run_dict(row)
+        check("★ 发给前端的任务里，别人的正文被抹成空", d["user_prompt"], "")
+        check("★ 但要标出来「这是别人的条目」", d["user_prompt_hidden"], True)
+        check("名字照给（好让她知道这轮用的是哪条）",
+              d["prompt_name"], "别人的内化话术")
+        check("归属照给（好让她知道是谁写的）",
+              d["prompt_owner_label"], "__u2")
+        # 自己写的那条 → 正文照留
+        row2 = dict(row, prompt_owner="__u1")
+        check("自己的条目正文照留", _run_dict(row2)["user_prompt"], body)
+        check("自己的条目不标「内容不公开」",
+              _run_dict(row2)["user_prompt_hidden"], False)
+        # 根本没引用库里任何一条（自由文本敲的）→ 正文照留
+        row3 = dict(row, prompt_ref_id=0, prompt_owner="")
+        check("自由文本敲的正文照留", _run_dict(row3)["user_prompt"], body)
+        check("自由文本不标「内容不公开」",
+              _run_dict(row3)["user_prompt_hidden"], False)
     finally:
         if old is None:
             os.environ.pop("MOGE_DATA_DIR", None)

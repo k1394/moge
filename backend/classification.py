@@ -745,6 +745,7 @@ USER_PROMPT_KIND_CLASSIFY = "classify"
 
 def get_user_prompt(owner, kind=USER_PROMPT_KIND_CLASSIFY):
     """读她写的补充提示词。没写过就是空串。"""
+    kind = _kind_of(kind)
     with db.connect() as conn:
         r = conn.execute("SELECT content FROM user_prompts"
                          " WHERE owner_id=? AND kind=?", (owner, kind)).fetchone()
@@ -761,6 +762,7 @@ def set_user_prompt(owner, content, kind=USER_PROMPT_KIND_CLASSIFY):
     content = content or ""
     if not isinstance(content, str):
         raise ValueError("提示词得是文字")
+    kind = _kind_of(kind)
     content = content.strip()
     if len(content) > USER_PROMPT_MAX:
         raise ValueError(
@@ -798,6 +800,54 @@ VIS_PUBLIC = "public"
 VISIBILITIES = (VIS_PRIVATE, VIS_PUBLIC)
 
 PROMPT_KIND_CLASSIFY = USER_PROMPT_KIND_CLASSIFY
+# 剧情内化自己的那一档。
+#
+# 【为什么不是新开一张表】
+#   user_prompts / prompt_library 建表时就都带了 kind 列，注释里写得很清楚：
+#   「以后内化、大纲生成也会有自己的提示词库，加新用途就是加一个 kind」。
+#   内化要的「存多条 + 列表里挑一条用」跟分类是同一件事，
+#   差别只在"发给哪个模型、喂什么料"。分开建表 = 两套增删改查要各修一遍，
+#   改一边忘一边就是静默故障。
+#
+# 【两档之间必须互不串门】
+#   分类的提示词讲的是"怎么判主类"，内化的讲的是"怎么抽象剧情"。
+#   串了不会报错，只会让她挑到一条完全不对的话去跑，白花钱。
+#   所以凡是按 kind 取的地方**一律显式传 kind**，不靠默认值。
+PROMPT_KIND_INFUSE = "infuse"
+
+PROMPT_KINDS = (PROMPT_KIND_CLASSIFY, PROMPT_KIND_INFUSE)
+
+
+def check_prompt_kind(kind):
+    """把接口传进来的 kind 收进白名单。
+
+    为什么不让它自由取值：kind 是查询条件，写错一个字不会报错，
+    只会**安静地返回空列表** —— 她看到"我存的提示词都没了"，
+    而数据其实好端端躺在另一档里。这类 bug 最难查，所以在入口就拦掉。
+    """
+    k = (kind or PROMPT_KIND_CLASSIFY).strip()
+    if k not in PROMPT_KINDS:
+        raise ValueError("不认识的提示词用途：%s（只能是 %s）"
+                         % (kind, " 或 ".join(PROMPT_KINDS)))
+    return k
+
+
+def _kind_of(kind):
+    """函数层的 kind 收口：None / 空串 → 默认档（分类）。
+
+    【为什么要收这一道，而接口层已经收过了】
+      这两个函数也会被**库里的值**喂进来（update 时用的就是取出来的
+      cur["kind"]），所以这里不能像接口那样"不认识就报错" ——
+      将来库里有个历史值不在白名单里，"改个名字"这种小事会变成 500。
+      真正该拦"她手输的 kind"的地方是接口，那里用 check_prompt_kind 拦。
+
+    【但也不能不管】`kind=None` 直接进 SQL 会变成 `kind IS NULL`，
+    一条都匹配不上 —— 不报错、只返回空列表。调用方看到的是
+    "我存的提示词怎么全没了"，而数据一条没少。这种静默失败最费时间，
+    所以在这里兜成默认档：宁可让她看到分类那档的内容（一眼能看出不对），
+    也不要让她看到一个空列表还以为东西丢了。
+    """
+    return (kind or "").strip() or PROMPT_KIND_CLASSIFY
 
 
 def _owner_label(owner):
@@ -879,6 +929,7 @@ def _check_prompt_fields(name, content, usage_note, summary, visibility):
 
 def list_my_library_prompts(owner, kind=PROMPT_KIND_CLASSIFY):
     """我自己攒的提示词，**带内容**。只有本人调得到这个函数。"""
+    kind = _kind_of(kind)
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT * FROM prompt_library"
@@ -893,6 +944,7 @@ def list_public_library_prompts(viewer, kind=PROMPT_KIND_CLASSIFY):
     自己的那批故意排除（它在"我的"那一栏里，带内容）——
     同一个东西同时出现在两个列表、一个看得见内容一个看不见，只会让人困惑。
     """
+    kind = _kind_of(kind)
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT * FROM prompt_library"
@@ -908,6 +960,7 @@ def get_library_prompt(owner, pid, kind=PROMPT_KIND_CLASSIFY):
     注意是 None 不是抛错：接口那层要能区分
     "这条不存在 / 不是你的"（404/403）和"参数写错了"（400）。
     """
+    kind = _kind_of(kind)
     with db.connect() as conn:
         row = conn.execute(
             "SELECT * FROM prompt_library"
@@ -925,6 +978,7 @@ def resolve_prompt_for_use(viewer, pid, kind=PROMPT_KIND_CLASSIFY):
     绝不回给前端。** 所以它返回的是元组而不是字典 —— 免得有人顺手
     jsonify 一下就发出去了。
     """
+    kind = _kind_of(kind)
     with db.connect() as conn:
         row = conn.execute(
             "SELECT * FROM prompt_library WHERE id=? AND kind=? AND active=1",
@@ -943,6 +997,7 @@ def resolve_prompt_for_use(viewer, pid, kind=PROMPT_KIND_CLASSIFY):
 def create_library_prompt(owner, name, content, usage_note="", summary="",
                           visibility=VIS_PRIVATE, kind=PROMPT_KIND_CLASSIFY):
     """新建一条。同名直接拒绝（不覆盖）—— 覆盖会静默毁掉她之前写的那份。"""
+    kind = _kind_of(kind)
     name, content, usage_note, summary, visibility = _check_prompt_fields(
         name, content, usage_note, summary, visibility)
     ts = now_str()
@@ -970,12 +1025,31 @@ def create_library_prompt(owner, name, content, usage_note="", summary="",
     return get_library_prompt(owner, pid, kind)
 
 
+def _get_library_prompt_anykind(owner, pid):
+    """按 id 取我的一条，**不过滤 kind**。只给"改一条 / 删一条"用。
+
+    【为什么改一条不能过滤 kind】
+      改的时候界面上只知道 id，不知道这条属于哪一档（也不该知道 ——
+      她点的是"编辑这条"，不是"编辑分类那一档里的这条"）。
+      要是这里按默认的 classify 去取，内化的条目永远取不到，
+      表现是"点保存没反应"或者更糟：报"没有这条提示词"，
+      而她明明看见它就在列表里。
+      kind 该由 **取出来的那条自己**说了算（后面 cur["kind"] 就是这么用的）。
+    """
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM prompt_library"
+            " WHERE id=? AND owner_id=? AND active=1",
+            (int(pid), owner)).fetchone()
+    return _lib_dict(row, True) if row else None
+
+
 def update_library_prompt(owner, pid, patch):
     """改一条。patch 里"字段在不在"决定改不改 —— 跟别的接口一个规矩。
 
     content 允许为空串吗？不允许（跟新建一致），否则会留下一条点不动的东西。
     """
-    cur = get_library_prompt(owner, pid)
+    cur = _get_library_prompt_anykind(owner, pid)
     if not cur:
         return None
     merged = {
@@ -1004,7 +1078,8 @@ def update_library_prompt(owner, pid, patch):
             " WHERE id=? AND owner_id=?",
             (name, content, usage_note, summary, visibility,
              now_str(), int(pid), owner))
-    return get_library_prompt(owner, pid)
+    # 按**它自己的** kind 取回来，别用默认值 —— 内化的条目用默认值取不到
+    return get_library_prompt(owner, pid, _kind_of(cur["kind"]))
 
 
 def delete_library_prompt(owner, pid):
