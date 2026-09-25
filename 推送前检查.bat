@@ -11,14 +11,20 @@ if errorlevel 1 (
     exit /b
 )
 
-echo [1/2] data safety check
+echo [1/3] data safety check
 python "G:\docker\tools\data_safety_check.py"
 
 echo.
 echo ---------------------------------------------
-echo [2/2] private words check (files going public)
+echo [2/3] private words check (files going public)
 echo ---------------------------------------------
 python "G:\docker\tools\check_private_words.py"
+
+echo.
+echo ---------------------------------------------
+echo [3/3] UI text check (no markdown stars shown to user)
+echo ---------------------------------------------
+python "G:\docker\tools\check_ui_text.py"
 
 echo.
 echo ---------------------------------------------

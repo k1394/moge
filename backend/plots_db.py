@@ -789,6 +789,48 @@ def set_plot_status(owner, plot_id, status):
                                          (pid,)).fetchone())
 
 
+def set_plots_status(owner, plot_ids, status):
+    """批量改状态。**一次事务** —— 要么全成，要么一条都不动。
+
+    【为什么必须有批量】
+    AI 批量内化一次能吐几十条零件，产出的状态一律是「待确认」
+    （AI 提的不能自己算数，得等她过目）。逐条点确认意味着
+    开几十次弹层、点几十次按钮 —— 而她真正在做的事是
+    "我扫了一遍，这批可以用"。逐条点只是把这一件事演成几十步。
+
+    【为什么不做"一键全部确认"这种无参数接口】
+    那等于一个按钮就把库里**所有**零件（包括她压根没打开过的）
+    标成已确认。确认这件事的价值就在"她看过"，接口不能替她做这个决定。
+    所以这里必须由她明确给出 id 清单 —— 被确认的是哪几条，是她选出来的。
+
+    返回：真正改到的 id 列表（不属于她的、不存在的会被静默丢掉，
+    不报错 —— 批量操作的失败不该整批回滚，她会不知道是哪条出的问题）。
+    """
+    if status not in ALL_PLOT_STATUS:
+        raise ValueError("零件状态里没有「%s」。" % status)
+    ids = []
+    for x in (plot_ids or []):
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    ids = list(dict.fromkeys(ids))          # 去重保序，重复传不报错
+    if not ids:
+        return []
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM plots WHERE owner_id=? AND id IN (%s)"
+            % ",".join("?" * len(ids)), [owner] + ids).fetchall()
+        ok = [r["id"] for r in rows]
+        if not ok:
+            return []
+        conn.execute(
+            "UPDATE plots SET status=?, updated_at=? WHERE owner_id=?"
+            " AND id IN (%s)" % ",".join("?" * len(ok)),
+            [status, now_str(), owner] + ok)
+    return ok
+
+
 def list_versions(owner, plot_id):
     """版本历史（新的在前）。不是自己的返回 None。"""
     try:

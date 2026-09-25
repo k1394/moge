@@ -105,8 +105,17 @@ CAND_FAILED = "失败"
 
 # 候选池默认多大。40 条 × 每条几百字 ≈ 一万多字，加上世界观和角色卡，
 # 一次请求大概两三万字 —— 主流模型都吃得下，也不至于贵得离谱。
+#
+# 【这两个数是"上限"，不是"目标"】
+# 库里可用零件不够时，有多少用多少（见 plan_candidate_plots 的轮转循环）。
+# 所以 21 条零件 + 默认 40，实际就是 21 条全部进池子。
+# 上限只在零件堆得比它多时才起作用。
 DEFAULT_POOL = 40
-MAX_POOL = 80
+# 上限从 80 提到 150：她的原话是"要求 AI 尽可能多地参考素材内化库"。
+# 150 条 × 每条几百字 ≈ 四五万字，加世界观角色卡约五万字，
+# DeepSeek / 硅基流动这一档的模型（128K 上下文）完全吃得下，
+# 一次生成的钱也就几毛。超过 BIG_INPUT_WARN 时预览页会主动提醒她。
+MAX_POOL = 150
 
 # 送出去的总字数超过这个数就提醒她（不拦，但要说）。
 BIG_INPUT_WARN = 60000
@@ -364,12 +373,25 @@ def set_user_prompt(owner, content):
 def plan_candidate_plots(owner, data):
     """决定这次摆给模型看的零件池。
 
-    返回 {"items": [...], "blocked": [...], "source": "auto"/"manual"}
+    返回 {"items": [...], "blocked": [...], "source": "auto"/"manual",
+          "stuck": [...], "status_counts": {...}}
 
     auto：按主类轮转 + 类内按参考次数升序（理由见文件头第二节）
     manual：她自己在界面上勾的，一个字都不筛（但仅本地的那几条仍然拦）
+
+    【stuck 是什么、为什么非要有】
+    候选池只收「已确认 / 已编辑」。别的状态（最主要就是 AI 内化产出的
+    「待确认」）在 list_candidate_plots 的 WHERE 里就被滤掉了 ——
+    不进 items、不进 blocked、不出现在任何地方。所以她 AI 内化出 21 条零件、
+    去生成大纲时看到的是"没有可用的剧情零件"，却完全不知道那 21 条
+    就躺在库里，只差一个"确认"。stuck 就是把这批看不见的零件捞出来，
+    让预览页能具体说出是哪几条、卡在哪一步。
     """
     data = data or {}
+    # 状态统计与"被状态挡住的清单"：只为让她看得见，不参与筛池逻辑。
+    # 两条分支都要带上，所以在最前面算一次。
+    status_counts = odb.plot_status_counts(owner)
+    stuck = odb.list_blocked_by_status(owner)
     manual = data.get("plot_ids")
     if isinstance(manual, list) and manual:
         ids = odb._int_list(manual, MAX_POOL, "剧情零件")
@@ -386,7 +408,7 @@ def plan_candidate_plots(owner, data):
         for p in items:
             p["ref_count"] = usable.get(p["id"], {}).get("ref_count", 0)
         return {"items": items, "blocked": blocked, "source": "manual",
-                "dropped": bad}
+                "dropped": bad, "stuck": stuck, "status_counts": status_counts}
 
     allp = odb.list_candidate_plots(owner, include_blocked=True, limit=0)
     blocked = [p for p in allp if p.get("local_only")]
@@ -423,7 +445,7 @@ def plan_candidate_plots(owner, data):
         round_no += 1
 
     return {"items": picked, "blocked": blocked, "source": "auto",
-            "dropped": []}
+            "dropped": [], "stuck": stuck, "status_counts": status_counts}
 
 
 # ----------------------------------------------------------------------
@@ -607,6 +629,11 @@ def build_ctx(owner, data):
         "blocked": plan["blocked"],
         "pool_source": plan["source"],
         "dropped": plan.get("dropped") or [],
+        # 库里哪些零件"在、但状态够不上可用"（最典型：AI 内化出来的「待确认」）。
+        # 预览页拿它报数 —— 不报的话，她只会看到"没有可用的剧情零件"，
+        # 然后以为 AI 不肯用她辛苦做出来的内化库。
+        "stuck": plan.get("stuck") or [],
+        "plot_status_counts": plan.get("status_counts") or {},
         "learning": learning,
         "user_prompt": user_prompt,
     }
@@ -637,10 +664,29 @@ def preview_input(owner, data):
                                     "确认的话可以直接开始。"
                                     % ctx["target_words"]})
     if not ctx["plots"]:
-        problems.append({"field": "plots", "level": "warn",
-                         "message": "一条可用的剧情零件都没有。"
-                                    "大纲会完全靠世界观和角色卡推 —— "
-                                    "先去【剧情内化】把零件确认几条会更好。"})
+        stuck = ctx["stuck"]
+        if stuck:
+            # 有零件、但一条都够不上可用 —— 这是最容易被误读成
+            # "AI 不肯参考我的内化库"的情形。所以报成 bad（红色）、
+            # 说清是几条、卡在哪个状态、去哪儿改。
+            by = {}
+            for x in stuck:
+                by[x.get("status") or "?"] = by.get(x.get("status") or "?", 0) + 1
+            how = "、".join("%s %d 条" % (k, v) for k, v in by.items())
+            problems.append({
+                "field": "plots",
+                "message": "你库里有 %d 条剧情零件，可这次一条都用不上 —— 他们的状态是"
+                           "：%s。候选池只收「已确认」和「已编辑」，"
+                           "因为这些零件是 AI 提的、还没经过你的眼。"
+                           "先去【剧情内化】把它们确认（弹层里或列表上都有确认按钮），"
+                           "再回来生成 —— 不然这次 AI 只拿得到世界观和角色卡，"
+                           "你内化的素材一条都参考不到。"
+                           % (len(stuck), how)})
+        else:
+            problems.append({"field": "plots", "level": "warn",
+                             "message": "一条可用的剧情零件都没有。"
+                                        "大纲会完全靠世界观和角色卡推 —— "
+                                        "先去【剧情内化】把零件确认几条会更好。"})
 
     # ---- 模型 ----
     keys = data.get("model_keys") or []
@@ -704,6 +750,17 @@ def preview_input(owner, data):
         "plot_source": ctx["pool_source"],
         "blocked_plots": [{"id": p["id"], "title": p["title"]}
                           for p in blocked],
+        # "在库里、但状态够不上可用"的那批（最典型就是 AI 内化出来的「待确认」）。
+        # 光报一个数她还不知道自己该去改哪几条，所以连名字一起给。
+        "stuck_plots": [{"id": p["id"], "title": p["title"],
+                         "status": p["status"]} for p in ctx["stuck"]],
+        "plot_status_counts": ctx["plot_status_counts"],
+        # 库里可用零件总数（各状态相加，不查库）。她要"尽可能多参考"，
+        # 就得先知道自己手上到底有多少条能用。
+        "usable_total": sum(n for s, n in ctx["plot_status_counts"].items()
+                            if s in odb.PLOT_USABLE_STATUS),
+        "pool_want": int(data.get("pool_size") or DEFAULT_POOL),
+        "pool_max": MAX_POOL,
         "learning_cases": len(ctx["learning"]),
         "models": models,
         "send_chars": chars,

@@ -276,6 +276,49 @@ def http_tests():
         check("★ 列表默认按主分类分段（未分类排最后）",
               lst["plots"][-1]["primary_category_id"] is None or True, "")
 
+        # ---- 批量确认 ------------------------------------------------------
+        # 这一段守的是一个**真实缺口**：AI 批量内化产出的零件状态一律是
+        # 「待确认」，而大纲生成的候选池只收「已确认 / 已编辑」。
+        # 界面上原本只有「排除」、没有「确认」—— 于是她花钱内化出来的零件
+        # 在生成大纲时一条都参考不到，而她只会以为"AI 不肯用我的内化库"。
+        print("\n【9b】批量确认（零件能不能进大纲候选池的那个开关）")
+        ids_c = []
+        for nm in ("批量确认-甲", "批量确认-乙", "批量确认-丙"):
+            gg = A.ok("POST", "/api/plots", {"title": nm})["plot"]
+            # 手工建出来的默认就是「已确认」，先打回「待确认」来模拟 AI 的产出
+            A.ok("PATCH", "/api/plots/%d" % gg["id"], {"status": "待确认"})
+            ids_c.append(gg["id"])
+
+        meta2 = A.ok("GET", "/api/plot-meta")
+        check("meta 下发了「哪种状态算可用」（前端确认按钮靠它亮不亮）",
+              meta2.get("usable_statuses") == ["已确认", "已编辑"],
+              meta2.get("usable_statuses"))
+
+        r = A.ok("POST", "/api/plots/confirm", {"plot_ids": ids_c})
+        check("三条一次确认完", r["count"] == 3, "得到 %s" % r["count"])
+        check("返回里带着真正改到的 id", sorted(r["ids"]) == sorted(ids_c))
+        check("确认后状态是已确认",
+              A.ok("GET", "/api/plots/%d" % ids_c[0])["status"] == "已确认")
+        check("★ 确认不产生新版本（内容一个字没动，只是状态变了）",
+              A.ok("GET", "/api/plots/%d/versions" % ids_c[0])["count"] == 1)
+
+        r2 = A.ok("POST", "/api/plots/confirm",
+                  {"plot_ids": [ids_c[0], ids_c[0], ids_c[1]]})
+        check("★ 同一个 id 传两遍只算一条", r2["count"] == 2,
+              "得到 %s" % r2["count"])
+
+        c, d = A.call("POST", "/api/plots/confirm", {"plot_ids": []})
+        check("空清单 → 404（不假装成功）", c == 404, "HTTP %s" % c)
+
+        c, d = A.call("POST", "/api/plots/confirm",
+                      {"plot_ids": [ids_c[0]], "status": "我编的状态"})
+        check("乱编状态 → 400", c == 400, "HTTP %s" % c)
+
+        c, d = B.call("POST", "/api/plots/confirm", {"plot_ids": [ids_c[0]]})
+        check("★ 乙确认不了甲的零件 → 404", c == 404, "HTTP %s" % c)
+        check("★ 乙那一下没把甲的零件状态改掉",
+              A.ok("GET", "/api/plots/%d" % ids_c[0])["status"] == "已确认")
+
         # ---- 边界与越权 ----------------------------------------------------
         print("\n【10】边界与越权")
         c, d = A.call("POST", "/api/plots", {"title": "   "})

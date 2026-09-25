@@ -1753,6 +1753,14 @@ class PlotStatusIn(BaseModel):
     change_note: str = ""
 
 
+class PlotIdsIn(BaseModel):
+    """批量改零件的状态。plot_ids 是必给的 —— 见 plots_db.set_plots_status
+    的说明：确认这件事必须由她明确点出是哪几条，接口不替她决定。"""
+    plot_ids: List[int] = []
+    status: str = "已确认"
+    change_note: str = ""
+
+
 class PlotVersionIn(BaseModel):
     """恢复历史版本。version_id 是必填的 —— 不填就没法知道要恢复哪一版。
 
@@ -1781,6 +1789,10 @@ def api_plot_meta(user: dict = Depends(auth.current_user)):
         "plot_types": list(plots.PLOT_TYPES),
         "usage_hints": list(plots.USAGE_HINTS),
         "statuses": list(plots.ALL_PLOT_STATUS),
+        # "哪种状态能被大纲生成的候选池收走" —— 唯一定义处在
+        # outline_db.PLOT_USABLE_STATUS。前端要靠它决定卡片上
+        # 那个「确认」按钮亮不亮，不能自己抄一份中文。
+        "usable_statuses": list(odb.PLOT_USABLE_STATUS),
         "sources": dict(plots.SOURCE_LABELS),
         "beats": [{"key": k, "label": plots.BEAT_LABELS[k]}
                   for k in plots.BEAT_KEYS],
@@ -1944,6 +1956,37 @@ def api_restore_plot(pid: int, req: PlotStatusIn,
     if r is None:
         raise HTTPException(status_code=404, detail="没有这条剧情零件")
     return {"ok": True, "plot": r, "message": "恢复了"}
+
+
+@app.post("/api/plots/confirm")
+def api_confirm_plots(req: PlotIdsIn,
+                      user: dict = Depends(auth.current_user)):
+    """批量确认零件（默认「已确认」）。
+
+    【为什么这个接口非有不可】
+    AI 批量内化产出的零件状态一律是「待确认」，而大纲生成的候选池
+    只收「已确认 / 已编辑」。界面上原本只有"排除"和"恢复"，
+    **没有任何地方能把零件变成已确认** —— 于是她花钱内化出来的零件，
+    在生成大纲时一条都用不上，她还会以为是 AI 没参考。
+    这条链路必须有一个出口，这里就是它。
+
+    【为什么参数里必须要 id 清单】
+    不做"一键全部确认"：那等于一个按钮把库里所有零件都标成已确认，
+    包括她没打开过的。批量只是让她少点几次，不是替她做判断。
+    """
+    given = _given(req)
+    want = (given.get("status") or "").strip() or plots.PLOT_STATUS_CONFIRMED
+    try:
+        ok = plots.set_plots_status(user["owner"], given.get("plot_ids") or [],
+                                    want)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404,
+                            detail="这几条剧情零件都不存在，或者不是你的")
+    return {"ok": True, "ids": ok, "count": len(ok), "status": want,
+            "message": "已确认 %d 条 —— 它们现在能进大纲生成的候选池了。"
+                       % len(ok)}
 
 
 @app.get("/api/plots/{pid}/sources")

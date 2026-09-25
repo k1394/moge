@@ -878,6 +878,43 @@ def _plot_local_only(owner, plot_ids):
         return {r["pid"] for r in rows}
 
 
+def plot_status_counts(owner):
+    """她库里各状态的零件有几条（含已排除）。
+
+    【为什么要有这个函数】
+    候选池只收 PLOT_USABLE_STATUS（已确认 / 已编辑）。别的状态的零件
+    在 list_candidate_plots 的 WHERE 里就被滤掉了 —— 它们既不进
+    items，也不进 blocked，**在任何地方都不出现**。
+    结果就是：她 AI 内化出 21 条零件（状态全是「待确认」），去生成大纲时
+    看到的是"没有可用的剧情零件"，却完全不知道库里有 21 条被状态挡在外面。
+    这个函数就是为了让那 21 条能被数出来、摆到她眼前。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM plots WHERE owner_id=?"
+            " GROUP BY status", (owner,)).fetchall()
+    return {r["status"]: r["n"] for r in rows}
+
+
+def list_blocked_by_status(owner, limit=500):
+    """列出来那些"在库里、没被排除、但状态够不上可用"的零件。
+
+    预览页要能具体告诉她是哪几条，而不是只报一个数 ——
+    报一个数她还得自己去翻是哪几条。
+    """
+    out = []
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, title, status FROM plots"
+            " WHERE owner_id=? AND status NOT IN (%s) AND status != ?"
+            " ORDER BY id LIMIT ?" % ",".join("?" * len(PLOT_USABLE_STATUS)),
+            [owner] + list(PLOT_USABLE_STATUS)
+            + [pdb.PLOT_STATUS_EXCLUDED, int(limit)]).fetchall()
+    for r in rows:
+        out.append({"id": r["id"], "title": r["title"], "status": r["status"]})
+    return out
+
+
 def list_candidate_plots(owner, keyword=None, include_blocked=False,
                          limit=1000):
     """能参与大纲生成的零件清单（带参考次数、新鲜度排序）。

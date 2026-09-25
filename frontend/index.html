@@ -877,16 +877,47 @@
 
   /* ==================== 剧情内化（剧情零件） ====================
      零件卡片故意做得比素材卡片"轻"：
-       素材卡是原料，一条一条长得像，需要序号、复选框、一堆按钮；
+       素材卡是原料，一条一条长得像，需要序号、一堆按钮；
        零件是成品，数量少、每条都不一样，重点是标题和它写了什么。
-     所以这里没有 idx、没有复选框，整张卡就是"点开它"。 */
+
+     【为什么后来还是加了勾选框和「确认」按钮】
+     原本的设计是"整张卡就是点开它"，不开选择是因为零件只有几十条。
+     但 AI 批量内化一次吐几十条、状态全是「待确认」——
+     而生成大纲时只有「已确认 / 已编辑」的零件能被参考。
+     少了这个动作的出口，她花钱内化出来的零件在生成大纲时一条都用不上。
+     所以卡片上必须有：一个勾选框（批量确认用）+ 一个「确认」（单条用）。
+     点卡片本身仍然 = 打开看详情，两个小控件都 stopPropagation。 */
 
   .plcard {
     background: var(--card); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px;
     cursor: pointer;
+    display: flex; align-items: flex-start; gap: 10px;
   }
   .plcard:hover { border-color: var(--accent); }
+  .plcard.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .plcard .plbody { flex: 1 1 auto; min-width: 0; }
+  .plcard .plchk { flex: 0 0 auto; padding-top: 3px; cursor: pointer; }
+  .plcard .plchk input {
+    width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent);
+  }
+  .plcard .plcbtn { flex: 0 0 auto; align-self: center; }
+
+  /* 批量确认条。只在列表里"有需要确认的零件"时才出现 ——
+     全都确认过了还挂着一条，等于天天提醒她去点一个没事可做的按钮。 */
+  .plbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; margin-bottom: 8px;
+    background: var(--line-2); border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .plbar .plall {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+  }
+  .plbar .plall input {
+    width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent);
+  }
   .plcard .pt { font-size: 14.5px; font-weight: 600; line-height: 1.6; }
   .plcard .ps {
     margin-top: 5px; font-size: 12.5px; color: var(--ink-2); line-height: 1.8;
@@ -1026,6 +1057,16 @@
   }
   .olrow .grow { flex: 1 1 auto; }
   .olrow .mdhint { flex: 0 0 auto; }
+
+  /* 「一次参考 N 条」的输入。它是个 label，display:flex ——
+     所以隐藏时必须显式写 [hidden]，不然作者样式的 flex 会盖掉浏览器
+     给 hidden 元素准备的 display:none，切到"我手动选"时它还在那儿露着。 */
+  .olpoolsize { display: flex; align-items: center; gap: 4px; }
+  .olpoolsize[hidden] { display: none; }
+  .olpoolsize input {
+    width: 62px; height: 26px; padding: 0 6px; text-align: center;
+    font-size: 12.5px;
+  }
 
   /* 世界观输入框：比别处长，因为它是这一页最重要的输入 */
   #olWorld { min-height: 132px; }
@@ -1450,6 +1491,20 @@
         <div class="clmain">
           <div class="clcatbar" id="plCatBar"></div>
           <div class="clfilters" id="plFilters"></div>
+          <!-- 批量确认条。为什么它必须存在：
+               候选池只收「已确认 / 已编辑」的零件，而 AI 批量内化产出的
+               一律是「待确认」。没有这个条，她就得开几十次弹层、点几十次
+               保存，才能让零件进得了大纲生成 —— 而她真正在做的事只是
+               "我扫了一遍，这批能用"。 -->
+          <div class="plbar" id="plBar" hidden>
+            <label class="plall" title="只勾当前列表里还没确认的那些">
+              <input type="checkbox" id="plChkAll"><span id="plChkAllTxt">全选待确认</span>
+            </label>
+            <span class="mdhint" id="plSelNote">已勾 0 条</span>
+            <span class="grow"></span>
+            <button class="mini" id="plClearSel" hidden>取消勾选</button>
+            <button class="mini primary" id="plConfirmSel" disabled>确认勾上的</button>
+          </div>
           <div id="plList"></div>
         </div>
       </div>
@@ -1549,13 +1604,23 @@
                   <button class="mini" id="olPoolAuto">自动筛</button>
                   <button class="mini" id="olPoolManual">我手动选</button>
                   <button class="mini" id="olPoolRefresh" hidden>重新拉清单</button>
+                  <!-- 参考条数：本来这个数是写死的（后端 default_pool），
+                       界面上连看都看不到。她的要求是"尽可能多地参考内化库"，
+                       却没有任何地方能调这个数 —— 现在给它一个明确的旋钮。
+                       库里可用零件不够所填的数时，有多少用多少。 -->
+                  <label class="mdhint olpoolsize" id="olPoolSizeWrap">
+                    一次参考
+                    <input type="number" id="olPoolSize" min="5" step="5">
+                    条
+                  </label>
                   <span class="grow"></span>
                   <span class="mdhint" id="olPoolNote"></span>
                 </div>
                 <div class="olpool" id="olPool"></div>
                 <div class="mdhint">
-                  只有「已确认」和「已编辑」的零件能进来。来自「仅本地」素材的
-                  已经自动排除，不会发给任何模型。
+                  只有「已确认」和「已编辑」的零件能进来 —— AI 内化出来的零件
+                  状态是「待确认」，要在【剧情内化】里确认过才算数。
+                  来自「仅本地」素材的已经自动排除，不会发给任何模型。
                 </div>
               </div>
 
@@ -2470,7 +2535,12 @@
       <button class="btn" id="pvRestore" hidden>恢复这条</button>
       <span style="flex:1"></span>
       <button class="btn" data-close="mkPlot">关掉</button>
-      <button class="btn primary" id="pvSave">保存</button>
+      <!-- 「确认这条」是和「排除这条」对应的另一个方向：
+           排除 = 这条别用；确认 = 这条可以用（大纲生成才参考得到）。
+           原本只有排除，没有确认 —— 于是 AI 内化出来的零件
+           永远卡在「待确认」，而候选池只收「已确认 / 已编辑」。 -->
+      <button class="btn primary" id="pvConfirm" hidden>确认这条</button>
+      <button class="btn" id="pvSave">保存</button>
     </footer>
   </div>
 </div>
@@ -6983,7 +7053,8 @@ const PL = {
   cardCache: [], cardLoaded: false,
   pick: {},                // 卡片选择器里勾了哪些
   usage: [],               // 表单里选中的"适合放在哪"
-  beats: {}                // 表单里的六个点位
+  beats: {},               // 表单里的六个点位
+  sel: {}                  // 列表里勾了哪些零件（批量确认用）
 };
 
 /* ---------------- 拉数据 ---------------- */
@@ -7144,19 +7215,119 @@ function renderPlList() {
       if (!edited && low) chips.push('<span class="chip warn">没把握</span>');
     }
     parts.push(
-      '<div class="plcard" data-pid="' + p.id + '">' +
-        '<div class="pt">' + esc(p.title) + '</div>' +
-        (p.summary ? '<div class="ps">' + esc(p.summary) + '</div>' : "") +
-        '<div class="pr">' + chips.join("") +
-          '<span class="when">v' + esc(String(p.current_version_no || 1)) +
-          ' · ' + esc((p.updated_at || "").slice(0, 16)) + '</span>' +
+      '<div class="plcard' + (PL.sel[p.id] ? " on" : "") + '" data-pid="' + p.id + '">' +
+        '<label class="plchk" title="勾上，可以和其他零件一起确认">' +
+          '<input type="checkbox" data-chk="' + p.id + '"' +
+          (PL.sel[p.id] ? " checked" : "") + '></label>' +
+        '<div class="plbody">' +
+          '<div class="pt">' + esc(p.title) + '</div>' +
+          (p.summary ? '<div class="ps">' + esc(p.summary) + '</div>' : "") +
+          '<div class="pr">' + chips.join("") +
+            '<span class="when">v' + esc(String(p.current_version_no || 1)) +
+            ' · ' + esc((p.updated_at || "").slice(0, 16)) + '</span>' +
+          '</div>' +
         '</div>' +
+        (plCanConfirm(p)
+          ? '<button class="mini primary plcbtn" data-confirm="' + p.id +
+            '" title="标成已确认，大纲生成才参考得到它">确认</button>'
+          : '<span class="chip ok plcbtn">已确认</span>') +
       '</div>');
   });
   box.innerHTML = parts.join("");
   box.querySelectorAll(".plcard").forEach(el => {
-    el.onclick = () => openPlot(Number(el.dataset.pid));
+    const pid = Number(el.dataset.pid);
+    el.onclick = () => openPlot(pid);
+    // 勾选框和「确认」按钮都要 stopPropagation，
+    // 否则点它们会连带触发整张卡的"打开详情"。
+    const ck = el.querySelector("input[data-chk]");
+    if (ck) ck.onclick = (e) => {
+      e.stopPropagation();
+      togglePlSel(pid, ck.checked);
+    };
+    const cb = el.querySelector("button[data-confirm]");
+    if (cb) cb.onclick = (e) => {
+      e.stopPropagation();
+      confirmPlots([pid]);
+    };
   });
+  paintPlBar();
+}
+
+/* ---------------- 批量确认 ----------------
+   为什么这套东西非有不可：AI 批量内化产出的零件状态一律是「待确认」，
+   而大纲生成的候选池只收 PLOT_USABLE_STATUS（已确认 / 已编辑）。
+   界面上原本只有「排除」，没有「确认」—— 于是她花钱内化出来的零件
+   在生成大纲时一条都参考不到，还会以为是 AI 不肯用她的库。 */
+
+function plCanConfirm(p) {
+  // 「已排除」的不给确认按钮：排除是有意为之的决定，
+  // 要让它回来应该走"恢复"，不能靠误点一个「确认」把它捞回来。
+  return p.status !== "已排除" && plUsable().indexOf(p.status) < 0;
+}
+
+function plUsable() {
+  // 哪种状态算可用，唯一定义处在后端（outline_db.PLOT_USABLE_STATUS），
+  // 从 plot-meta 下发。前端不抄一份中文，否则后端改字这里就永远对不上。
+  const m = PL.meta || {};
+  return Array.isArray(m.usable_statuses) && m.usable_statuses.length
+    ? m.usable_statuses : ["已确认", "已编辑"];
+}
+
+function plTodo() {
+  // 当前列表里"还需要她过目"的零件（够不上可用、又没被排除）。
+  // 按当前列表算而不是按库里全部 —— 这样她筛了某个主类，全选只选这个类的。
+  return PL.plots.filter(plCanConfirm);
+}
+
+function plSelIds() {
+  const here = {};
+  PL.plots.forEach(p => { here[p.id] = true; });
+  return Object.keys(PL.sel)
+    .filter(k => PL.sel[k] && here[k]).map(Number);
+}
+
+function paintPlBar() {
+  const bar = document.getElementById("plBar");
+  if (!bar) return;
+  const todo = plTodo();
+  bar.hidden = !todo.length;
+  if (!todo.length) return;
+  const ids = plSelIds();
+  document.getElementById("plSelNote").textContent =
+    "这一屏有 " + todo.length + " 条还没确认，已勾 " + ids.length + " 条";
+  document.getElementById("plChkAll").checked =
+    todo.length > 0 && ids.length >= todo.length;
+  document.getElementById("plClearSel").hidden = !ids.length;
+  const btn = document.getElementById("plConfirmSel");
+  btn.disabled = !ids.length;
+  btn.textContent = ids.length ? ("确认勾上的 " + ids.length + " 条")
+                               : "确认勾上的";
+}
+
+function togglePlSel(pid, on) {
+  if (on) PL.sel[pid] = true; else delete PL.sel[pid];
+  const card = document.querySelector('.plcard[data-pid="' + pid + '"]');
+  if (card) card.classList.toggle("on", !!on);
+  paintPlBar();
+}
+
+async function confirmPlots(ids) {
+  if (!ids || !ids.length) return false;
+  // 单条时说"勾上的 1 条"很别扭 —— 她是从卡片上的按钮点进来的，没有"勾"这个动作
+  const what = ids.length === 1 ? "这一条" : ("勾上的 " + ids.length + " 条");
+  const yes = confirm("把" + what + "标成「已确认」？\n\n"
+    + "只是改状态，内容一个字都不会动，也不产生新版本。\n"
+    + "确认之后它们才会进大纲生成的候选池 —— "
+    + "不确认的话，AI 生成大纲时看不到它们。");
+  if (!yes) return false;
+  try {
+    const r = await post("/api/plots/confirm",
+                         { plot_ids: ids, status: plUsable()[0] });
+    toast(r.message || "确认好了");
+    ids.forEach(id => { delete PL.sel[id]; });
+    await refreshPlots();
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
 }
 
 /* ---------------- 打开 / 保存 ----------------
@@ -7248,9 +7419,15 @@ function paintPlot() {
   document.getElementById("pvNoteWrap").hidden = !editing;
   document.getElementById("pvVersWrap").hidden = !editing;
   document.getElementById("pvSave").textContent = isNew ? "建好这条" : "保存为新版本";
-  const ex = document.getElementById("pvExclude"), rs = document.getElementById("pvRestore");
-  ex.hidden = !editing || (p && p.status === "已排除");
-  rs.hidden = !editing || !(p && p.status === "已排除");
+  const ex = document.getElementById("pvExclude"),
+        rs = document.getElementById("pvRestore"),
+        cf = document.getElementById("pvConfirm");
+  const excluded = !!(p && p.status === "已排除");
+  ex.hidden = !editing || excluded;
+  rs.hidden = !editing || !excluded;
+  // 「确认这条」只在"这条还够不上可用"时出现。
+  // 已经确认过的不显示 —— 一个点了没事干的按钮，她会怀疑自己是不是点错了。
+  cf.hidden = !editing || excluded || !plCanConfirm(p);
 }
 
 function currentVerNo() {
@@ -7620,6 +7797,25 @@ document.getElementById("pvAddSrc").onclick = () => openPickCard();
 document.getElementById("pvSave").onclick = savePlot;
 document.getElementById("pvExclude").onclick = excludePlot;
 document.getElementById("pvRestore").onclick = restorePlot;
+document.getElementById("pvConfirm").onclick = async () => {
+  if (!PL.cur) return;
+  // 只有真确认了（她没在二次确认里点取消）才关弹层
+  if (await confirmPlots([PL.cur.id])) hide("mkPlot");
+};
+document.getElementById("plChkAll").onclick = (e) => {
+  // 「全选」只勾当前列表里那些待确认的，不是库里所有零件 ——
+  // 一次把她没打开的零件全标成已确认，正是这个功能最容易出的事。
+  const on = e.target.checked;
+  plSelIds().forEach(id => { delete PL.sel[id]; });
+  if (on) plTodo().forEach(p => { PL.sel[p.id] = true; });
+  renderPlList();
+};
+document.getElementById("plClearSel").onclick = () => {
+  PL.sel = {};
+  renderPlList();
+};
+document.getElementById("plConfirmSel").onclick =
+  () => confirmPlots(plSelIds());
 
 /* 挑卡弹层：搜索框边打边筛。
    给个 200ms 防抖 —— 列表最多 200 行，每敲一个字就重画一遍会打字发涩。 */
@@ -7941,15 +8137,38 @@ function olPaintPoolNote() {
   olEl("olPoolAuto").className = "mini" + (OL.poolMode === "auto" ? " primary" : "");
   olEl("olPoolManual").className = "mini" + (OL.poolMode === "manual" ? " primary" : "");
   olEl("olPoolRefresh").hidden = (OL.poolMode !== "manual");
+  const sizeWrap = olEl("olPoolSizeWrap");
   if (OL.poolMode === "auto") {
+    const dflt = L.default_pool || 40, max = L.max_pool || 150;
     chip.textContent = "自动筛";
-    note.textContent = "最多 " + (L.default_pool || 40) + " 条（上限 "
-      + (L.max_pool || 80) + "）";
+    sizeWrap.hidden = false;
+    const box = olEl("olPoolSize");
+    box.max = max;
+    // 只在空着的时候填默认值 —— 她一刷新就被改回默认，等于白调。
+    if (!box.value) box.value = dflt;
+    // 「库里可用 N 条」必须要她知道：她手上到底有多少条能用，
+    // 直接决定她该不该把上面那个数字调大。
+    const usable = (OL.plots || []).length;
+    note.textContent = "库里可用 " + usable + " 条 · 一次最多能参考 " + max + " 条";
   } else {
     const n = Object.keys(OL.picked).filter(k => OL.picked[k]).length;
     chip.textContent = "手动选";
+    sizeWrap.hidden = true;
     note.textContent = n ? ("已勾 " + n + " 条") : "还没勾任何一条";
   }
+}
+
+/* 界面上那个「一次参考 N 条」的实际取值。
+   兜底顺序：输入框 → 后端默认 → 40；再夹到后端给的上限里。
+   夹在这里而不是让后端静默截断 —— 她填 999 时应该拿到 150（上限），
+   而不是发出去 999 条、账单出来才知道。 */
+function olPoolSizeValue() {
+  const L = ((OL.meta || {}).limits) || {};
+  const max = L.max_pool || 150;
+  const el = olEl("olPoolSize");
+  let n = el ? parseInt(el.value, 10) : NaN;
+  if (!n || n < 5) n = L.default_pool || 40;
+  return Math.max(5, Math.min(n, max));
 }
 
 /* ---------------- 大纲库 ---------------- */
@@ -7996,7 +8215,6 @@ function olPaintLib() {
 /* ---------------- 提交用的请求体 ---------------- */
 
 function olBody() {
-  const L = ((OL.meta || {}).limits) || {};
   const b = {
     outline_type: ((OL.meta || {}).types || [])[0] || "同人短篇",
     worldview: (olEl("olWorld").value || "").trim(),
@@ -8007,7 +8225,7 @@ function olBody() {
     plot_design: (olEl("olDesign").value || "").trim(),
     target_words: Number(olEl("olWords").value || 0),
     model_keys: Object.keys(OL.models).filter(k => OL.models[k]),
-    pool_size: L.default_pool || 40,
+    pool_size: olPoolSizeValue(),
     use_learning: !!olEl("olUseLearn").checked
   };
   if (OL.poolMode === "manual") {
@@ -8070,7 +8288,28 @@ function olPaintPreview(pv) {
     + (pv.characters || []).map(c => esc(c.name) + "（填了 " + c.filled + "/"
       + c.field_total + " 项）").join("、") + '</span></div>';
   h += '<div class="kv"><b>零件</b><span>' + (pv.plots || []).length + ' 条（'
-    + (pv.plot_source === "manual" ? "你手动挑的" : "自动筛的") + '）</span></div>';
+    + (pv.plot_source === "manual" ? "你手动挑的" : "自动筛的") + '）'
+    + (pv.usable_total ? ' · 库里可用 ' + pv.usable_total + ' 条' : '')
+    + '</span></div>';
+  // 「想多参考一些」这件事必须在花钱之前能看见：
+  // 池子有上限，可用零件又比上限多的时候，剩下的那些这次不会被参考。
+  // 不报出来她只会觉得"AI 又没好好参考我的库"。
+  if (pv.plot_source !== "manual" && pv.usable_total > (pv.plots || []).length) {
+    h += '<div class="kv"><b>没进来</b><span>库里还有 '
+      + (pv.usable_total - (pv.plots || []).length) + ' 条可用零件这次没进池子'
+      + '（一次参考上限 ' + pv.pool_max + ' 条，'
+      + '把左边的「一次参考 N 条」调大可以多带一些）</span></div>';
+  }
+  // 卡在状态上的零件要**连名字一起摊开**：只报一个数，
+  // 她还得自己回【剧情内化】翻是哪几条 —— 报名字她才认得出。
+  if ((pv.stuck_plots || []).length) {
+    const sp = pv.stuck_plots;
+    h += '<div class="kv"><b>卡在状态上</b><span>'
+      + sp.slice(0, 8).map(x => esc(x.title || "（没起名字）")
+                          + "（" + esc(x.status || "?") + "）").join("、")
+      + (sp.length > 8 ? " 等 " + sp.length + " 条" : "")
+      + '</span></div>';
+  }
   h += '<div class="kv"><b>模型</b><span>'
     + (pv.models || []).map(m => esc(m.label)
       + (m.usable ? "" : '（用不了' + (m.reason ? "：" + esc(m.reason) : "") + '）')

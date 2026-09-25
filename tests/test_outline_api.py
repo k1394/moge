@@ -126,12 +126,22 @@ def write_fake_models(data_dir, key="fake", base=DEAD_URL):
     return p
 
 
-def seed_plots(data_dir, local_only_material=False):
-    """直接往临时库里插一条素材 + 一张卡 + 三条零件。
+def seed_plots(data_dir, local_only_material=False, extra_pending=0,
+               all_pending=False):
+    """直接往临时库里插一条素材 + 一张卡 + 四条零件。
 
     【为什么直接写库，不走接口】切分和内化那两步各有自己的测试文件。
     这里要的只是"库里有几条状态不同的零件"，走两遍接口等于
     把别的功能的测试抄一遍 —— 它们哪天改了名字，这边就跟着红。
+
+    extra_pending：额外再造几条「待确认」的零件（来源标 ai，模拟
+    AI 批量内化的产出）。界面验收要测"一次确认好几条"就需要不止一条，
+    默认 0，不影响别的用例。
+
+    all_pending：把种子里那几条「已确认 / 已编辑」也一并改成「待确认」。
+    这是**她刚跑完 AI 批量内化、一条都还没确认**时的真实状态 ——
+    也是"预览页必须报出零件被状态挡住"唯一能触发的场景（可用零件为 0）。
+    默认 False，别的用例照旧。
     """
     dbp = os.path.join(data_dir, "moge.db")
     conn = sqlite3.connect(dbp)
@@ -153,12 +163,22 @@ def seed_plots(data_dir, local_only_material=False):
         (3, "她回头看了一眼", "已排除", None),
         (4, "还没定的一条", "待确认", None),
     ]
+    if all_pending:
+        rows = [(pid, t, "待确认" if st != "已排除" else st, cid)
+                for pid, t, st, cid in rows]
     for pid, title, status, cid in rows:
         conn.execute(
             "INSERT OR IGNORE INTO plots (id,owner_id,title,summary,plot_type,"
             "status,source,primary_category_id,created_at,updated_at)"
             " VALUES (?,'__u1',?,'一句话说清这条讲什么。','冲突',?,'human',?,?,?)",
             (pid, title, status, cid, now, now))
+    for i in range(int(extra_pending or 0)):
+        conn.execute(
+            "INSERT OR IGNORE INTO plots (id,owner_id,title,summary,plot_type,"
+            "status,source,primary_category_id,created_at,updated_at)"
+            " VALUES (?,'__u1',?,'AI 从素材里提出来的一条。','冲突',"
+            "'待确认','ai',NULL,?,?)",
+            (10 + i, "AI 提的第 %d 条" % (i + 1), now, now))
     conn.execute(
         "INSERT OR IGNORE INTO plot_cards (plot_id,card_id,material_id,"
         "start_offset,end_offset,source_text_hash,created_at)"
@@ -330,6 +350,58 @@ def http_tests():
                            dict(gen, model_keys=[]))
         check("没选模型 → 提示去配模型",
               any(p["field"] == "model_keys" for p in pv4["problems"]))
+
+        # ------------------------------------------------------------
+        # 这一段的由来：她的原话是「素材不发给 AI 那我做素材内化库干什么」。
+        # 事实是 —— AI 批量内化产出的零件状态一律是「待确认」，而候选池
+        # 只收「已确认 / 已编辑」。她内化完直接去生成，AI 一条零件都拿不到，
+        # 而且**完全看不出为什么**（那些零件在候选池的 SQL 里就被滤掉了，
+        # 不计数、不上报、不出现在任何地方）。
+        # 这一段把"看不见"这件事钉死：预览必须报出来、必须说清卡在哪个
+        # 状态、必须告诉她去哪儿改；确认之后必须立刻能进池子。
+        print("\n【5b】有零件、但状态够不上可用 → 预览必须报出来（不许悄悄跳过）")
+        ok_ids = [p["id"] for p in pv["plots"]]
+        for pid in ok_ids:
+            A.ok("PATCH", "/api/plots/%d" % pid, {"status": "待确认"})
+        code, pv5 = A.call("POST", "/api/outlines/preview", gen)
+        check("这次的零件池是空的", len(pv5["plots"]) == 0,
+              "%d 条" % len(pv5["plots"]))
+        check("★ 库里可用零件数报成 0（不是干脆不给这个数）",
+              pv5.get("usable_total") == 0, pv5.get("usable_total"))
+        check("★ 卡在状态上的零件被列了出来（连名字一起给）",
+              len(pv5.get("stuck_plots") or []) >= 2,
+              "%d 条" % len(pv5.get("stuck_plots") or []))
+        check("★ 每条都带 id / 标题 / 状态（她要能一眼认出是哪几条）",
+              all(s.get("id") and s.get("title") is not None and s.get("status")
+                  for s in (pv5.get("stuck_plots") or [])))
+        check("★ 已排除的不算「卡在状态上」（她自己排掉的，不该再催她）",
+              all(s["status"] != "已排除"
+                  for s in (pv5.get("stuck_plots") or [])))
+        check("★ 状态明细里有「待确认」（不是只给一个笼统的总数）",
+              (pv5.get("plot_status_counts") or {}).get("待确认", 0) >= 2,
+              pv5.get("plot_status_counts"))
+        line = [p for p in pv5["problems"] if p["field"] == "plots"]
+        check("★ 报成了 bad（红色），不是轻飘飘的 warn",
+              bool(line) and line[0].get("level") != "warn",
+              (line[0].get("level") if line else "压根没报"))
+        check("★ 说清了是几条、什么状态、去哪儿改",
+              bool(line) and "待确认" in line[0]["message"]
+              and "剧情内化" in line[0]["message"],
+              (line[0]["message"][:60] if line else ""))
+
+        # 确认之后必须立刻能用 —— 这是整条链路的闭环
+        A.ok("POST", "/api/plots/confirm", {"plot_ids": ok_ids})
+        code, pv6 = A.call("POST", "/api/outlines/preview", gen)
+        check("★ 确认之后零件立刻进池子", len(pv6["plots"]) == 2,
+              "%d 条" % len(pv6["plots"]))
+        check("★ 确认之后不再报「卡在状态上」",
+              not [p for p in pv6["problems"] if p["field"] == "plots"])
+        check("★ 确认之后整体回到 ok=True", pv6.get("ok") is True,
+              str(pv6.get("problems"))[:100])
+        check("★ 库里有可用零件时，数量一并给出来（她要「尽可能多参考」得先看得见）",
+              pv6.get("usable_total") == 2, pv6.get("usable_total"))
+        check("★ 上限也给了（她要把参考条数调大得知道天花板在哪）",
+              (pv6.get("pool_max") or 0) >= 100, pv6.get("pool_max"))
 
         # ------------------------------------------------------------
         print("\n【6】生成：失败路 / 一个账号只能一个任务 / 重试只补失败的")
