@@ -582,6 +582,13 @@
   }
   .clbatch .mini:hover { background: rgba(255,255,255,.14); color: #fff; }
   .clbatch .undo { border-color: rgba(255,255,255,.6); }
+  /* 批量栏里的「内化为剧情零件」要跳出来一点。
+     这一排十来个按钮长得一样，它是"换个库"的那种动作（原料 → 成品），
+     不是"改这一批属性"，混在里面会被当成又一个批量改状态的按钮。 */
+  .clbatch .mini.primary {
+    background: var(--accent); border-color: var(--accent); font-weight: 600;
+  }
+  .clbatch .mini.primary:hover { background: #7a4d33; color: #fff; }
 
   .clcard {
     display: flex; gap: 11px; align-items: flex-start;
@@ -825,6 +832,113 @@
     .clsec { flex-wrap: wrap; }
     .clsec .d { flex: 1 1 100%; }
   }
+
+  /* ==================== 剧情内化（剧情零件） ====================
+     零件卡片故意做得比素材卡片"轻"：
+       素材卡是原料，一条一条长得像，需要序号、复选框、一堆按钮；
+       零件是成品，数量少、每条都不一样，重点是标题和它写了什么。
+     所以这里没有 idx、没有复选框，整张卡就是"点开它"。 */
+
+  .plcard {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .plcard:hover { border-color: var(--accent); }
+  .plcard .pt { font-size: 14.5px; font-weight: 600; line-height: 1.6; }
+  .plcard .ps {
+    margin-top: 5px; font-size: 12.5px; color: var(--ink-2); line-height: 1.8;
+    word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .plcard .pr {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 9px;
+  }
+  .plcard .when { font-size: 11.5px; color: var(--ink-3); margin-left: auto; }
+
+  /* ---- 表单里的六个剧情点位 ----
+     竖排：「前提 → 触发 → 行动 → 阻碍 → 转折 → 结果」本身就是有先后的，
+     横排成网格会让人以为它们可以随便填。 */
+  .beatrow {
+    display: flex; align-items: center; gap: 9px; margin-bottom: 6px;
+  }
+  .beatrow label {
+    flex: 0 0 74px; font-size: 12.5px; color: var(--ink-2); text-align: right;
+  }
+  .beatrow input {
+    flex: 1 1 auto; min-width: 0; height: 31px;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; padding: 0 9px; font-size: 12.5px;
+  }
+  .beatrow input:focus { border-color: var(--accent); outline: none; }
+
+  /* 主分类 / 剧情类型并排。原来只有 .clcard .row2 那种横排，
+     弹层里要的是两列等宽，所以单独给 .modal .row2。 */
+  .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modal .row2 .field { margin-bottom: 13px; }
+
+  /* ---- 来源素材列表（弹层里） ---- */
+  .pvsrc { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; }
+  .pvsrcrow {
+    border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 8px 10px; background: #fcfbf9;
+  }
+  .pvsrcrow .h {
+    font-size: 12.5px; line-height: 1.75; color: var(--ink);
+    word-break: break-word;
+  }
+  .pvsrcrow .meta {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px;
+  }
+  .pvsrcrow .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .pvempty {
+    font-size: 12.5px; color: var(--ink-3); line-height: 1.8;
+    padding: 10px 11px; border: 1px dashed var(--line);
+    border-radius: 8px; background: #fcfbf9;
+  }
+
+  /* ---- 版本历史 ---- */
+  .pvsec {
+    display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+    padding: 12px 0 8px; border-top: 1px solid var(--line-2); margin-top: 6px;
+  }
+  .pvsec b { font-size: 13px; font-weight: 600; }
+  .pvsec .hint { font-size: 11.5px; color: var(--ink-3); }
+  .pvver {
+    border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 8px 10px; margin-bottom: 6px; background: #fcfbf9;
+  }
+  /* 当前那一版加重。她是靠"哪一版是现在用的"来决定要不要点恢复的，
+     不标的话几行长得一样，很容易把旧版当新版点下去。 */
+  .pvver.cur { border-color: var(--accent); background: var(--accent-2); }
+  .pvver .vh {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    font-size: 12.5px; font-weight: 600;
+  }
+  .pvver .who { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+  .pvver .vt { font-size: 12.5px; margin-top: 4px; line-height: 1.7; }
+  .pvver .vn { font-size: 12px; color: var(--ink-2); margin-top: 3px; line-height: 1.7; }
+  .pvver .va { display: flex; gap: 6px; margin-top: 6px; }
+
+  /* ---- 挑卡弹层 ---- */
+  .pklist {
+    max-height: 52vh; overflow: auto;
+    border: 1px solid var(--line-2); border-radius: 8px;
+  }
+  .pkrow {
+    display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px;
+    border-bottom: 1px solid var(--line-2); cursor: pointer;
+  }
+  .pkrow:last-child { border-bottom: none; }
+  .pkrow:hover { background: var(--line-2); }
+  .pkrow.on { background: var(--accent-2); }
+  .pkrow input { flex: 0 0 auto; margin-top: 3px; width: 15px; height: 15px; accent-color: var(--accent); }
+  .pkrow .t {
+    flex: 1 1 auto; min-width: 0; font-size: 12.5px; line-height: 1.7;
+    word-break: break-word;
+  }
+  .pkrow .c { flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3); }
 </style>
 </head>
 <body class="guest">
@@ -918,6 +1032,41 @@
           <div class="clbatch" id="clBatch" hidden></div>
           <div id="clCards"></div>
           <div id="clMore" style="margin:14px 0 40px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 剧情内化 ----------
+         内化 = 把一条条具体素材提炼成"换个角色名还成立"的通用剧情。
+         这一层是**成品库**：大纲生成将来只读这里，不读原文
+         （理由：原文里全是"这一篇的人名和情节"，拼大纲要的是能挪用的套路）。
+
+         所以零件必须自足到"光看它就能用"：
+         谁做了什么、为什么、造成什么变化 —— 三样缺一样它就只是个索引。
+
+         这一轮（第 1 步）只做人工零件：新建 / 编辑 / 版本 / 恢复 / 排除 / 来源定位。
+         一个 AI 都不调 —— AI 内化是第 2 步。 -->
+    <section class="view" id="view-infuse">
+      <header class="vhead">
+        <h1 class="vtitle">剧情内化</h1>
+        <div class="vacts">
+          <button class="btn primary" id="plNewBtn">＋ 新建剧情零件</button>
+          <button class="btn" id="plReload">刷新</button>
+        </div>
+      </header>
+
+      <div class="statsbar">
+        <div><span class="num" id="plStatAll">-</span>条零件</div>
+        <div><span class="num" id="plStatCat">-</span>个主类下有</div>
+        <div><span class="num" id="plStatSrc">-</span>条来源素材</div>
+        <div><span class="num" id="plStatNoSrc">-</span>条没挂来源</div>
+      </div>
+
+      <div class="vbody">
+        <div class="clmain">
+          <div class="clcatbar" id="plCatBar"></div>
+          <div class="clfilters" id="plFilters"></div>
+          <div id="plList"></div>
         </div>
       </div>
     </section>
@@ -1499,6 +1648,141 @@
   </div>
 </div>
 
+<!-- ============ 弹层：剧情零件（新建 / 查看 / 编辑 三合一）============
+     为什么三件事共用一个弹层：
+       查看和编辑本来就是同一件事的两个瞬间 —— 她想改的时候
+       不该先"切到编辑模式"再找一遍字段。表单直接可改，
+       点保存就存成新版本。新建时是同一套表单，只是底下没有历史。 -->
+<div class="mask" id="mkPlot">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="pvTitle">新建剧情零件</h2>
+        <p id="pvSub">把一段具体素材，写成换个角色名还成立的剧情。</p>
+      </div>
+      <button class="x" data-close="mkPlot">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>标题 <span class="req">*</span></label>
+        <div class="counter" id="pvTitleCnt">0 / 60</div>
+        <input type="text" id="pvT" maxlength="60"
+               placeholder="一句话，让你以后能在库里认出它，例如：以惩罚之名保护对方">
+      </div>
+
+      <div class="field">
+        <label>抽象剧情</label>
+        <div class="counter" id="pvSumCnt">0 / 2000</div>
+        <textarea id="pvS" rows="5" maxlength="2000"
+          placeholder="谁做了什么、为什么这么做、造成了什么变化。&#10;&#10;能不能脱开原文单独看懂，是这段好坏的标准 —— 将来拼大纲只读它，不读原文。"></textarea>
+      </div>
+
+      <div class="field">
+        <label>剧情点位 <span class="hint">想不出来的就空着，不用硬凑</span></label>
+        <div id="pvBeats"></div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>主分类</label>
+          <select id="pvCat"></select>
+        </div>
+        <div class="field">
+          <label>剧情类型</label>
+          <select id="pvType"></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>适合放在大纲的什么位置 <span class="hint">点一下选中，可多选</span></label>
+        <div class="nctags" id="pvUsage"></div>
+      </div>
+
+      <div class="field">
+        <label>角色位 <span class="hint">用顿号或逗号隔开，最多 8 个</span></label>
+        <input type="text" id="pvRoles" placeholder="例如：保护者、被保护者">
+      </div>
+
+      <div class="field">
+        <label>来源素材 <span class="hint">点零件要能沿着它们回到原文</span></label>
+        <div id="pvSrc" class="pvsrc"></div>
+        <button class="btn mini" id="pvAddSrc" type="button">＋ 关联素材卡片</button>
+      </div>
+
+      <div class="field" id="pvNoteWrap" hidden>
+        <label>这次改了什么 <span class="hint">选填。以后翻版本历史时，这句话比时间有用</span></label>
+        <input type="text" id="pvNote" maxlength="500">
+      </div>
+
+      <div id="pvVersWrap" hidden>
+        <div class="pvsec">
+          <b>版本历史</b>
+          <span class="hint">改一次存一版，旧的都留着；点某一版能恢复出来</span>
+        </div>
+        <div id="pvVers"></div>
+      </div>
+
+      <div class="authmsg" id="pvMsg"></div>
+    </div>
+    <footer>
+      <button class="btn danger" id="pvExclude" hidden>排除这条</button>
+      <button class="btn" id="pvRestore" hidden>恢复这条</button>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkPlot">关掉</button>
+      <button class="btn primary" id="pvSave">保存</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 弹层：挑素材卡片 ============ -->
+<div class="mask" id="mkPickCard">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>挑来源素材</h2>
+        <p>勾上的卡片会成为这条剧情零件的来源 —— 以后点零件就能顺着回到它们的原文。</p>
+      </div>
+      <button class="x" data-close="mkPickCard">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <input type="text" id="pkQ" placeholder="搜正文或标题…">
+      </div>
+      <div id="pkList" class="pklist"></div>
+    </div>
+    <footer>
+      <span class="cnt" id="pkCnt">已选 0 张</span>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkPickCard">取消</button>
+      <button class="btn primary" id="pkOk">就这几张</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 弹层：这张卡片内化成了哪些零件 ============
+     方向跟 mkPlot 里的「来源素材」正好相反：
+       那边是「一条零件 → 它的几张来源卡」；
+       这里是「一张卡 → 它被哪几条零件用到」。
+     两个方向都得有 —— 只有一边的话，她从素材那头就永远回不到零件。 -->
+<div class="mask" id="mkCardPlots">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>这张卡片内化成了哪些剧情零件</h2>
+        <p id="cpSub"></p>
+      </div>
+      <button class="x" data-close="mkCardPlots">&times;</button>
+    </header>
+    <div class="content">
+      <div id="cpList"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn" data-close="mkCardPlots">关掉</button>
+    </footer>
+  </div>
+</div>
+
 <script>
 /* ==================================================================
    前端逻辑
@@ -1524,7 +1808,7 @@ const VIEWS = [
     desc: "按关键词从素材库里捞出最相关的片段，为写稿做准备" },
   { id: "classify", name: "素材分类", icon: "tag",     ready: true,
     desc: "把一份文件切成一条一条的素材，逐条看、逐条改、能勾选，每条都能定位回原文" },
-  { id: "infuse",   name: "剧情内化", icon: "wand",    ready: false,
+  { id: "infuse",   name: "剧情内化", icon: "wand",    ready: true,
     desc: "把原始素材提炼成可复用的剧情零件（谁做了什么、动机是什么）" },
   { id: "outline",  name: "大纲生成", icon: "list",    ready: false,
     desc: "从剧情库里挑零件，拼出一篇能直接动笔的细纲" },
@@ -1696,6 +1980,7 @@ function goView(id) {
 
   // 素材分类要在第一次进来时才拉数据（省得每次登录都白拉一遍）
   if (id === "classify") loadClassify(false);
+  if (id === "infuse") loadPlots(false);
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -3301,10 +3586,31 @@ async function loadCards(append) {
     fill("clCount", "共 " + C.total + " 张");
     const ub = document.getElementById("clUndo");
     if (ub) ub.hidden = !C.lastChange;
+    // 卡片上那句「已内化 · 看零件」要用的标记。放在 renderClCards 之前取，
+    // 这样只画一次；取不到也照常出卡片（那只是句提示，不该拦住主流程）。
+    await loadInfuseStates(r.items.map(x => x.id));
     renderClCards();
     renderClBatch();
     renderClMore();
   } catch (e) { toast(e.message, true); }
+}
+
+/* 卡片的内化标记（批量取一次，不逐张问）。
+   状态是后端"从关联表算出来"的，cards 表里没有这一列 ——
+   所以卡片列表里不能指望它跟着 /api/cards 一起回来，得单问一趟。
+   失败就静默跳过：这只是句提示，不该因为它弹错、更不该拦着卡片不出来。 */
+async function loadInfuseStates(ids) {
+  if (!ids || !ids.length) return;
+  C.infuse = C.infuse || {};
+  try {
+    const d = await api("/api/plot-card-states?card_ids=" + ids.join(","));
+    const st = d.states || {};
+    ids.forEach(i => {
+      const v = st[String(i)];
+      if (v && v !== "not_processed") C.infuse[i] = v;
+      else delete C.infuse[i];
+    });
+  } catch (e) { /* 取不到就当"还没内化"，不打断她 */ }
 }
 
 /* 分段标题：外貌 / 神态 / 动作 …
@@ -3389,6 +3695,26 @@ function renderClCards() {
     }
 
     const long = (card.text || "").length > 110;
+
+    /* 内化标记：这条素材有没有被提炼成剧情零件。
+       为什么非要标出来：不标的话，"已经用过的素材"和"白放着的素材"
+       在界面上长得一模一样，她没法知道哪些还没处理。
+       has_plot 给一个能点的按钮（点进去看是哪几条零件）；
+       其余几种（排队中 / 不适合 / 待复核）第 2 步才可能有值，
+       这里先把显示位置留好，值是空的自然什么都不出。 */
+    let infChip = "";
+    const inf = (C.infuse || {})[card.id];
+    if (inf === "has_plot") {
+      infChip = '<button class="mini" data-act="plots" data-id="' + card.id +
+                '">已内化 · 看零件</button>';
+    } else if (inf === "queued") {
+      infChip = '<span class="chip gray">内化排队中</span>';
+    } else if (inf === "needs_review") {
+      infChip = '<span class="chip warn">内化待复核</span>';
+    } else if (inf === "not_suitable") {
+      infChip = '<span class="chip gray">不适合内化</span>';
+    }
+
     parts.push('<div class="clcard' + (on ? " sel" : "") +
         (card.status === "已排除" ? " off" : "") + '" data-id="' + card.id + '">' +
       '<input type="checkbox" data-act="sel" data-id="' + card.id + '"' +
@@ -3409,6 +3735,7 @@ function renderClCards() {
           '<button class="mini" data-act="cls" data-id="' + card.id + '">归类</button>' +
           '<button class="mini" data-act="tags" data-id="' + card.id + '">标签</button>' +
           '<button class="mini" data-act="ctx" data-id="' + card.id + '">对照原文</button>' +
+          infChip +
           '<button class="mini" data-act="split" data-id="' + card.id + '">拆分</button>' +
           (card.status === "已排除"
             ? '<button class="mini" data-act="restore" data-id="' + card.id + '">恢复</button>'
@@ -3577,6 +3904,9 @@ function renderClBatch() {
       C.statuses.map(s => '<option>' + esc(s) + '</option>').join("") + '</select>' +
     '<button class="mini" id="bAddTag">加副标签</button>' +
     '<button class="mini" id="bDelTag">去副标签</button>' +
+    // 「内化为剧情零件」放这一排里：勾几张卡 → 直接把它们的原文带进零件表单，
+    // 不用再跑到【剧情内化】页手动挂来源（那边也能挂，只是更绕）。
+    '<button class="mini primary" id="bInfuse">内化为剧情零件</button>' +
     '<button class="mini" id="bMerge">合并相邻</button>' +
     '<button class="mini" id="bExcl">批量排除</button>' +
     '<button class="mini" id="bRestore">批量恢复</button>' +
@@ -3616,6 +3946,7 @@ function renderClBatch() {
     title: "从选中的 " + ids.length + " 张里去掉副标签", pre: [],
     onOk: names => batchTags("del", names)
   });
+  g("bInfuse").onclick = () => infuseSelected();
   g("bMerge").onclick = doMerge;
   g("bExcl").onclick = () => batchUpdate({ status: "已排除" });
   g("bRestore").onclick = () => batchUpdate({ status: "待确认" });
@@ -3650,6 +3981,7 @@ async function cardAct(act, id) {
     return;
   }
   if (act === "ctx") return openCtx(id);
+  if (act === "plots") return openCardPlots(id);
   if (act === "split") return openCardSplit(id);
   if (act === "excl") return setCardStatus(id, "已排除");
   if (act === "restore") return setCardStatus(id, "待确认");
@@ -4858,6 +5190,619 @@ document.getElementById("clTagsOk").onclick = async () => {
   C.picker = null;
   if (cb) await cb(names);
 };
+
+
+/* ==================================================================
+   剧情内化（剧情零件）
+   ----------------------------------------------------------------
+   零件 = 把一条条具体素材提炼成"换个角色名还成立"的通用剧情。
+   它是**成品库**：大纲生成将来只读这里，不读原文。
+
+   【为什么这一版一个 AI 都不调】
+     先把"手写的零件能存、能改、能追版本、能定位回来源"这条路走通。
+     AI 内化的产出总得有个地方放 —— 先有地方，再加机器。
+     顺序反过来的话，AI 一提不出来，整套东西连验都没法验。
+
+   【两处跟"素材分类"页共用的东西，别重复实现】
+     · openCtx(cardId)：原文上下文弹层（前文 / 本条 / 后文），直接调
+     · show() / hide()：弹层叠开时的层级处理，已经在那边修好了
+   ================================================================== */
+
+const PL = {
+  ready: false,
+  meta: null,              // /api/plot-meta 的返回（所有"选项菜单"）
+  plots: [], counts: {},
+  f: { cat: "", status: "", type: "", kw: "", order: "category" },
+  cur: null,               // 当前打开的零件；null = 正在新建
+  vers: [],                // 当前零件的版本历史
+  srcs: [],                // 当前零件的来源（新建时是待挂的）
+  // 卡片缓存：挑来源和显示"来源是哪一段"都要用，拉一次就够
+  cardCache: [], cardLoaded: false,
+  pick: {},                // 卡片选择器里勾了哪些
+  usage: [],               // 表单里选中的"适合放在哪"
+  beats: {}                // 表单里的六个点位
+};
+
+/* ---------------- 拉数据 ---------------- */
+
+async function loadPlots(force) {
+  try {
+    if (!PL.ready || force) {
+      PL.meta = await api("/api/plot-meta");
+      PL.ready = true;
+    }
+    await refreshPlots();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function refreshPlots() {
+  const q = new URLSearchParams();
+  if (PL.f.cat) q.set("category_id", PL.f.cat);
+  if (PL.f.status) q.set("status", PL.f.status);
+  if (PL.f.type) q.set("plot_type", PL.f.type);
+  if (PL.f.kw) q.set("keyword", PL.f.kw);
+  q.set("order", PL.f.order);
+  const d = await api("/api/plots?" + q.toString());
+  PL.plots = d.plots || [];
+  PL.counts = d.counts || {};
+  renderPlotStats();
+  renderPlCatBar();
+  renderPlFilters();
+  renderPlList();
+}
+
+function renderPlotStats() {
+  const m = PL.meta || {};
+  fill("plStatAll", PL.plots.length);
+  fill("plStatCat", Object.keys(PL.counts).filter(k => k !== "0").length);
+  const srcN = PL.plots.reduce((s, p) => s + (p.source_count || 0), 0);
+  fill("plStatSrc", srcN);
+  fill("plStatNoSrc", PL.plots.filter(p => !p.source_count).length);
+  // 「＋ 新建剧情零件」这个名字带上当前筛选的主类，她一眼知道新零件会落到哪
+  const nb = document.getElementById("plNewBtn");
+  if (nb) nb.textContent = "＋ 新建剧情零件";
+}
+
+/* 主类分段条：跟素材分类页同一个排法（走 categories.sort，未分类最后） */
+function renderPlCatBar() {
+  const bar = document.getElementById("plCatBar");
+  if (!bar) return;
+  const cats = (PL.meta && PL.meta.categories) || [];
+  const all = PL.plots.length;
+  let html = '<button data-pcat=""' + (PL.f.cat === "" ? ' class="on"' : "") +
+             '>全部 <span class="n">' + all + '</span></button>';
+  cats.forEach(c => {
+    const n = PL.counts[String(c.id)] || 0;
+    html += '<button data-pcat="' + c.id + '"' +
+            (String(PL.f.cat) === String(c.id) ? ' class="on"' : "") +
+            '>' + esc(c.name) + (n ? ' <span class="n">' + n + '</span>' : "") +
+            '</button>';
+  });
+  const nNo = PL.counts["0"] || 0;
+  if (nNo) {
+    html += '<button data-pcat="0"' + (PL.f.cat === "0" ? ' class="on"' : "") +
+            '>未分类 <span class="n">' + nNo + '</span></button>';
+  }
+  bar.innerHTML = html;
+  bar.querySelectorAll("button[data-pcat]").forEach(b => {
+    b.onclick = () => { PL.f.cat = b.dataset.pcat; refreshPlots(); };
+  });
+}
+
+function renderPlFilters() {
+  const box = document.getElementById("plFilters");
+  if (!box) return;
+  const m = PL.meta || {};
+  box.innerHTML =
+    '<input type="text" id="plKw" placeholder="搜标题或摘要…" value="' +
+      esc(PL.f.kw) + '">' +
+    '<select id="plFStatus"><option value="">全部状态</option>' +
+      (m.statuses || []).map(s => '<option' + (PL.f.status === s ? " selected" : "") +
+        '>' + esc(s) + '</option>').join("") + '</select>' +
+    '<select id="plFType"><option value="">全部剧情类型</option>' +
+      (m.plot_types || []).map(s => '<option' + (PL.f.type === s ? " selected" : "") +
+        '>' + esc(s) + '</option>').join("") + '</select>' +
+    '<select id="plFOrder">' +
+      [["category", "按主分类分段"], ["recent", "最近改过"],
+       ["created", "最近建的"], ["title", "按标题"]]
+        .map(o => '<option value="' + o[0] + '"' +
+             (PL.f.order === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") +
+    '</select>';
+
+  const g = id => document.getElementById(id);
+  let timer = null;
+  g("plKw").oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { PL.f.kw = g("plKw").value.trim(); refreshPlots(); }, 320);
+  };
+  g("plFStatus").onchange = () => { PL.f.status = g("plFStatus").value; refreshPlots(); };
+  g("plFType").onchange = () => { PL.f.type = g("plFType").value; refreshPlots(); };
+  g("plFOrder").onchange = () => { PL.f.order = g("plFOrder").value; refreshPlots(); };
+}
+
+/* 段标题。跟素材分类页的 clSectionHtml 长得一样，但写在这里 ——
+   两边的段含义不同（那边是"这一类有多少张卡"，这边是"这一类有多少条零件"），
+   合并成一个函数会变成到处传开关。 */
+function plSectionHtml(p) {
+  const nm = p.category_name || "未分类";
+  const n = PL.counts[String(p.primary_category_id || "0")] || 0;
+  const cat = ((PL.meta && PL.meta.categories) || [])
+    .find(c => c.id === p.primary_category_id);
+  const desc = cat && cat.description ? cat.description : "";
+  return '<div class="clsec"><b>' + esc(nm) + '</b>' +
+         '<span class="n">' + n + ' 条</span>' +
+         (desc ? '<span class="d">' + esc(desc) + '</span>' : "") + '</div>';
+}
+
+function renderPlList() {
+  const box = document.getElementById("plList");
+  if (!box) return;
+  if (!PL.plots.length) {
+    box.innerHTML = '<div class="blank"><b>这里还没有剧情零件</b>' +
+      '点右上角<b>「＋ 新建剧情零件」</b>手写一条；' +
+      '或者在<b>「素材分类」</b>里勾几张卡片，点<b>「内化为剧情零件」</b>，' +
+      '来源就一起带过来了。<br>' +
+      '（AI 自动内化是下一步的事，这一版先把零件本身和版本管好。）</div>';
+    return;
+  }
+  const parts = [];
+  let last = null;
+  PL.plots.forEach(p => {
+    if (PL.f.order === "category") {
+      const key = String(p.primary_category_id || "");
+      if (key !== last) { parts.push(plSectionHtml(p)); last = key; }
+    }
+    const sc = p.source_count || 0;
+    const chips = [];
+    if (p.plot_type) chips.push('<span class="chip">' + esc(p.plot_type) + '</span>');
+    (p.usage_hints || []).forEach(u =>
+      chips.push('<span class="chip gray">' + esc(u) + '</span>'));
+    chips.push('<span class="chip ' + (sc ? "ok" : "gray") + '">' +
+               (sc ? sc + " 条来源素材" : "还没挂来源") + '</span>');
+    if (p.status && p.status !== "已确认") {
+      chips.push('<span class="chip warn">' + esc(p.status) + '</span>');
+    }
+    if (p.source === "ai") {
+      chips.push('<span class="chip warn">AI 提的</span>');
+    } else if (p.source === "ai_edited") {
+      chips.push('<span class="chip">AI 提的，你改过</span>');
+    }
+    parts.push(
+      '<div class="plcard" data-pid="' + p.id + '">' +
+        '<div class="pt">' + esc(p.title) + '</div>' +
+        (p.summary ? '<div class="ps">' + esc(p.summary) + '</div>' : "") +
+        '<div class="pr">' + chips.join("") +
+          '<span class="when">v' + esc(String(p.current_version_no || 1)) +
+          ' · ' + esc((p.updated_at || "").slice(0, 16)) + '</span>' +
+        '</div>' +
+      '</div>');
+  });
+  box.innerHTML = parts.join("");
+  box.querySelectorAll(".plcard").forEach(el => {
+    el.onclick = () => openPlot(Number(el.dataset.pid));
+  });
+}
+
+/* ---------------- 打开 / 保存 ----------------
+   openPlot() 三种用法：
+     openPlot()            新建，不挂来源
+     openPlot(null, [1,2]) 新建，预挂这两张卡（从素材分类页勾着过来的）
+     openPlot(12)          打开第 12 条零件
+   -------------------------------------------- */
+
+async function openPlot(pid, preCardIds) {
+  try {
+    if (!PL.ready) await loadPlots(true);
+    PL.vers = [];
+    PL.pick = {};
+    fill("pvMsg", "");
+    document.getElementById("pvMsg").classList.remove("on");
+
+    if (pid) {
+      const p = await api("/api/plots/" + pid);
+      PL.cur = p;
+      PL.srcs = p.sources || [];
+      PL.usage = (p.usage_hints || []).slice();
+      PL.beats = Object.assign({}, p.beats || {});
+      const d = await api("/api/plots/" + pid + "/versions");
+      PL.vers = d.versions || [];
+    } else {
+      PL.cur = null;
+      PL.srcs = [];
+      PL.usage = [];
+      PL.beats = {};
+      if (preCardIds && preCardIds.length) {
+        await ensureCards();
+        PL.srcs = preCardIds.map(cid => {
+          const c = PL.cardCache.find(x => x.id === Number(cid));
+          return c ? { card_id: c.id, material_id: c.material_id,
+                       head: (c.text || "").slice(0, 48), locate: "ok",
+                       card_status: c.status, primary_category_id:
+                       c.primary_category_id, preview: true }
+                   : { card_id: Number(cid), locate: "missing", head: "" };
+        });
+      }
+    }
+    paintPlot();
+    show("mkPlot");
+    // 每次打开都回到表单顶部。不归零的话，上一次翻到底（看版本历史）之后
+    // 这次一打开就停在半中间 —— 标题那几栏看不见，她会以为没填。
+    // 必须在 show() **之后**设：display:none 的元素没有布局，那时写 scrollTop 不生效。
+    const mk = document.querySelector("#mkPlot .content");
+    if (mk) mk.scrollTop = 0;
+  } catch (e) { toast(e.message, true); }
+}
+
+function paintPlot() {
+  const p = PL.cur, m = PL.meta || {}, lim = m.limits || {};
+  const isNew = !p;
+  fill("pvTitle", isNew ? "新建剧情零件" : "剧情零件");
+  fill("pvSub", isNew
+    ? "把一段具体素材，写成换个角色名还成立的剧情。"
+    : ("第 " + (p.current_version_id ? currentVerNo() : 1) + " 版 · 建 " +
+       String(p.created_at || "").slice(0, 16)));
+
+  const T = document.getElementById("pvT");
+  T.value = p ? (p.title || "") : "";
+  document.getElementById("pvS").value = p ? (p.summary || "") : "";
+  document.getElementById("pvRoles").value =
+    p ? (p.role_slots || []).join("、") : "";
+  document.getElementById("pvNote").value = "";
+
+  // 主分类
+  const cat = document.getElementById("pvCat");
+  cat.innerHTML = '<option value="">（未分类）</option>' +
+    (m.categories || []).map(c => '<option value="' + c.id + '"' +
+      (p && p.primary_category_id === c.id ? " selected" : "") + '>' +
+      esc(c.name) + '</option>').join("");
+  // 剧情类型
+  const ty = document.getElementById("pvType");
+  ty.innerHTML = '<option value="">（没定）</option>' +
+    (m.plot_types || []).map(t => '<option' + (p && p.plot_type === t ? " selected" : "") +
+      '>' + esc(t) + '</option>').join("");
+
+  paintPvBeats();
+  paintPvUsage();
+  paintPvSrc();
+  paintPvVers();
+  paintPvCounters();
+
+  const editing = !!p;
+  document.getElementById("pvNoteWrap").hidden = !editing;
+  document.getElementById("pvVersWrap").hidden = !editing;
+  document.getElementById("pvSave").textContent = isNew ? "建好这条" : "保存为新版本";
+  const ex = document.getElementById("pvExclude"), rs = document.getElementById("pvRestore");
+  ex.hidden = !editing || (p && p.status === "已排除");
+  rs.hidden = !editing || !(p && p.status === "已排除");
+}
+
+function currentVerNo() {
+  const v = PL.vers.find(x => x.id === PL.cur.current_version_id);
+  return v ? v.version_no : 1;
+}
+
+function paintPvCounters() {
+  const m = PL.meta || {}, lim = m.limits || {};
+  const T = document.getElementById("pvT"), S = document.getElementById("pvS");
+  const tMax = lim.title_max || 60, sMax = lim.summary_max || 2000;
+  const tc = document.getElementById("pvTitleCnt"), sc = document.getElementById("pvSumCnt");
+  tc.textContent = T.value.length + " / " + tMax;
+  sc.textContent = S.value.length + " / " + sMax;
+  // 超了就变红。maxlength 通常拦得住，但粘贴长文本时拦不住，
+  // 后端会直接报错 —— 与其让她保存时才看到，不如打字时就红给她看。
+  tc.classList.toggle("warn", T.value.length > tMax);
+  sc.classList.toggle("warn", S.value.length > sMax);
+}
+
+function paintPvBeats() {
+  const box = document.getElementById("pvBeats");
+  box.innerHTML = (PL.meta && PL.meta.beats || []).map(b =>
+    '<div class="beatrow"><label>' + esc(b.label) + '</label>' +
+    '<input type="text" data-beat="' + b.key + '" value="' +
+    esc(PL.beats[b.key] || "") + '"></div>').join("");
+  box.querySelectorAll("input[data-beat]").forEach(inp => {
+    inp.oninput = () => {
+      const v = inp.value.trim();
+      if (v) PL.beats[inp.dataset.beat] = v;
+      else delete PL.beats[inp.dataset.beat];
+    };
+  });
+}
+
+function paintPvUsage() {
+  const box = document.getElementById("pvUsage");
+  box.innerHTML = (PL.meta && PL.meta.usage_hints || []).map(u =>
+    '<button type="button" data-use="' + esc(u) + '"' +
+    (PL.usage.indexOf(u) >= 0 ? ' class="on"' : "") + '>' + esc(u) + '</button>'
+  ).join("");
+  box.querySelectorAll("button[data-use]").forEach(b => {
+    b.onclick = () => {
+      const u = b.dataset.use;
+      const i = PL.usage.indexOf(u);
+      if (i >= 0) PL.usage.splice(i, 1); else PL.usage.push(u);
+      paintPvUsage();
+    };
+  });
+}
+
+function paintPvSrc() {
+  const box = document.getElementById("pvSrc");
+  if (!PL.srcs.length) {
+    box.innerHTML = '<div class="pvempty">还没挂来源。' +
+      '一条零件可以完全不挂（先记个想法），也可以挂好几张卡。' +
+      '不挂来源的零件，以后就没法回到原文，所以能补就补上。</div>';
+    return;
+  }
+  box.innerHTML = PL.srcs.map((s, i) =>
+    '<div class="pvsrcrow">' +
+      '<div class="h">' + esc((s.head || "").slice(0, 40) || "（原文取不到）") + '</div>' +
+      '<div class="meta"><span class="chip gray">#' + s.card_id + '</span>' +
+        (s.locate && s.locate !== "ok"
+          ? '<span class="chip bad">' + esc(s.locate_note || "定位可能不准") + '</span>'
+          : "") +
+      '</div>' +
+      '<div class="acts">' +
+        (s.locate === "missing" ? "" :
+          '<button type="button" class="mini" data-look="' + s.card_id + '">看原文</button>') +
+        (s.preview ? '<button type="button" class="mini" data-unpick="' + i +
+                     '">拿掉</button>' : "") +
+      '</div>' +
+    '</div>').join("");
+  box.querySelectorAll("button[data-look]").forEach(b => {
+    b.onclick = () => openCtx(Number(b.dataset.look));
+  });
+  box.querySelectorAll("button[data-unpick]").forEach(b => {
+    b.onclick = () => { PL.srcs.splice(Number(b.dataset.unpick), 1); paintPvSrc(); };
+  });
+}
+
+function paintPvVers() {
+  const box = document.getElementById("pvVers");
+  if (!PL.vers.length) { box.innerHTML = '<div class="pvempty">还没有版本。</div>'; return; }
+  box.innerHTML = PL.vers.map(v =>
+    '<div class="pvver' + (PL.cur && v.id === PL.cur.current_version_id ? " cur" : "") + '">' +
+      '<div class="vh">v' + v.version_no +
+        (PL.cur && v.id === PL.cur.current_version_id
+          ? '<span class="chip ok">当前</span>' : "") +
+        '<span class="who">' + (v.editor_type === "ai" ? "AI 写的" : "你写的") +
+        ' · ' + esc(String(v.created_at || "").slice(0, 16)) + '</span></div>' +
+      '<div class="vt">' + esc(v.title || "") + '</div>' +
+      (v.change_note ? '<div class="vn">' + esc(v.change_note) + '</div>' : "") +
+      '<div class="va">' +
+        (PL.cur && v.id === PL.cur.current_version_id ? "" :
+          '<button type="button" class="mini" data-ver="' + v.id + '">恢复这一版</button>') +
+      '</div>' +
+    '</div>').join("");
+  box.querySelectorAll("button[data-ver]").forEach(b => {
+    b.onclick = () => restorePlotVersion(Number(b.dataset.ver));
+  });
+}
+
+async function savePlot() {
+  const msg = document.getElementById("pvMsg");
+  msg.classList.remove("on");
+  const body = {
+    title: document.getElementById("pvT").value.trim(),
+    summary: document.getElementById("pvS").value.trim(),
+    plot_type: document.getElementById("pvType").value,
+    category_id: document.getElementById("pvCat").value
+      ? Number(document.getElementById("pvCat").value) : null,
+    usage_hints: PL.usage.slice(),
+    role_slots: document.getElementById("pvRoles").value
+      .split(/[、,，;；\s]+/).map(x => x.trim()).filter(Boolean),
+    beats: Object.assign({}, PL.beats)
+  };
+  try {
+    if (PL.cur) {
+      body.change_note = document.getElementById("pvNote").value.trim();
+      const r = await patch("/api/plots/" + PL.cur.id, body);
+      toast(r.message || "存好了");
+    } else {
+      body.card_ids = PL.srcs.filter(s => s.preview).map(s => s.card_id);
+      const r = await post("/api/plots", body);
+      toast(r.message || "建好了");
+    }
+    hide("mkPlot");
+    await refreshPlots();
+  } catch (e) {
+    // 错误留在弹层里，不用 toast —— toast 一闪而过，她会不知道哪里填错了
+    msg.textContent = e.message;
+    msg.classList.add("on");
+  }
+}
+
+async function excludePlot() {
+  if (!PL.cur) return;
+  if (!confirm("把这条零件排除掉？\n\n排除不是删除：它还在库里，随时能恢复。")) return;
+  try {
+    const r = await post("/api/plots/" + PL.cur.id + "/exclude", {});
+    toast(r.message || "排除了");
+    hide("mkPlot");
+    await refreshPlots();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function restorePlot() {
+  if (!PL.cur) return;
+  try {
+    const r = await post("/api/plots/" + PL.cur.id + "/restore", {});
+    toast(r.message || "恢复了");
+    hide("mkPlot");
+    await refreshPlots();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function restorePlotVersion(vid) {
+  if (!PL.cur) return;
+  try {
+    const r = await post("/api/plots/" + PL.cur.id + "/restore-version",
+                         { version_id: vid });
+    toast(r.message || "恢复好了");
+    const p = await api("/api/plots/" + PL.cur.id);
+    PL.cur = p;
+    PL.srcs = p.sources || [];
+    PL.usage = (p.usage_hints || []).slice();
+    PL.beats = Object.assign({}, p.beats || {});
+    PL.vers = (await api("/api/plots/" + PL.cur.id + "/versions")).versions || [];
+    paintPlot();
+    await refreshPlots();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 挑来源卡片 ---------------- */
+
+async function ensureCards(force) {
+  if (PL.cardLoaded && !force) return;
+  const d = await api("/api/cards?limit=500&include_excluded=true&order=category");
+  PL.cardCache = d.items || [];
+  PL.cardLoaded = true;
+}
+
+async function openPickCard() {
+  try {
+    await ensureCards();
+    // 已经挂上的默认勾着，加/减都在这个弹层里完成
+    PL.pick = {};
+    PL.srcs.forEach(s => { if (s.preview) PL.pick[s.card_id] = true; });
+    document.getElementById("pkQ").value = "";
+    renderPickList();
+    show("mkPickCard");
+    // 同上：要在显示之后设，隐藏时元素没有布局。
+    const mk = document.querySelector("#mkPickCard .content");
+    if (mk) mk.scrollTop = 0;
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderPickList() {
+  const box = document.getElementById("pkList");
+  const kw = document.getElementById("pkQ").value.trim();
+  let list = PL.cardCache;
+  if (kw) {
+    list = list.filter(c =>
+      (c.text || "").indexOf(kw) >= 0 || (c.title || "").indexOf(kw) >= 0);
+  }
+  const m = PL.meta || {};
+  const catName = id => {
+    const c = (m.categories || []).find(x => x.id === id);
+    return c ? c.name : "未分类";
+  };
+  if (!list.length) {
+    box.innerHTML = '<div class="blank">没找到卡。换个词试试，或者先去「素材分类」切一份文稿。</div>';
+  } else {
+    box.innerHTML = list.slice(0, 200).map(c =>
+      '<label class="pkrow' + (PL.pick[c.id] ? " on" : "") + '">' +
+        '<input type="checkbox" data-pk="' + c.id + '"' +
+          (PL.pick[c.id] ? " checked" : "") + '>' +
+        '<span class="t">' + esc((c.text || "").slice(0, 60)) + '</span>' +
+        '<span class="c">' + esc(catName(c.primary_category_id)) + '</span>' +
+      '</label>').join("");
+    box.querySelectorAll("input[data-pk]").forEach(inp => {
+      inp.onchange = () => {
+        const id = Number(inp.dataset.pk);
+        if (inp.checked) PL.pick[id] = true; else delete PL.pick[id];
+        inp.closest(".pkrow").classList.toggle("on", inp.checked);
+        paintPickCnt();
+      };
+    });
+  }
+  paintPickCnt();
+}
+
+function paintPickCnt() {
+  const n = Object.keys(PL.pick).filter(k => PL.pick[k]).length;
+  fill("pkCnt", "已选 " + n + " 张");
+}
+
+async function applyPick() {
+  const ids = Object.keys(PL.pick).filter(k => PL.pick[k]).map(Number);
+  // 保住已有的（已保存零件上的来源是只读的，不能在这儿被拿掉）
+  const keep = PL.srcs.filter(s => !s.preview);
+  const added = ids.map(cid => {
+    const c = PL.cardCache.find(x => x.id === cid);
+    return { card_id: cid, material_id: c ? c.material_id : 0,
+             head: c ? (c.text || "").slice(0, 48) : "",
+             locate: "ok", card_status: c ? c.status : "",
+             preview: true };
+  });
+  PL.srcs = keep.concat(added);
+  hide("mkPickCard");
+  paintPvSrc();
+}
+
+/* ---------------- 从素材分类页带卡片过来 ---------------- */
+
+async function infuseSelected() {
+  const ids = selIds();
+  if (!ids.length) { toast("先勾几张卡片", true); return; }
+  await openPlot(null, ids);
+  toast("已带上 " + ids.length + " 张来源卡，写点什么再保存");
+}
+
+/* ---------------- 反方向：一张卡片 → 它被哪几条零件用到 ----------------
+   跟 openPlot 里的「来源素材」是一对。点一行能跳到那条零件上，
+   所以这条链是通的：素材 → 零件 → 回到素材原文。
+   -------------------------------------------- */
+
+async function openCardPlots(cid) {
+  try {
+    const d = await api("/api/cards/" + cid + "/plots");
+    const rows = d.plots || [];
+    fill("cpSub", "卡片 #" + cid + " · 共 " + rows.length + " 条零件" +
+                  "（点一条能打开它，里面能再回到原文）");
+    const box = document.getElementById("cpList");
+    if (!rows.length) {
+      box.innerHTML = '<div class="blank">这张卡片还没内化成剧情零件。</div>';
+    } else {
+      box.innerHTML = rows.map(p =>
+        '<div class="plcard" data-pid="' + p.id + '">' +
+          '<div class="pt">' + esc(p.title || "（没起名字）") + '</div>' +
+          '<div class="pr">' +
+            (p.plot_type ? '<span class="chip">' + esc(p.plot_type) + '</span>' : "") +
+            '<span class="chip gray">' + esc(p.status || "") + '</span>' +
+            '<span class="when">打开 →</span>' +
+          '</div>' +
+        '</div>').join("");
+      box.querySelectorAll(".plcard").forEach(el => {
+        el.onclick = async () => {
+          hide("mkCardPlots");
+          goView("infuse");
+          await openPlot(Number(el.dataset.pid));
+        };
+      });
+    }
+    show("mkCardPlots");
+  } catch (e) { toast(e.message, true); }
+}
+
+
+/* ---------------- 剧情内化：一次性绑定 ----------------
+   为什么都写在这儿、而不是散在 HTML 的 on* 属性上：
+   这个文件里函数重名会"后定义的静默盖掉前一个"，
+   把绑定集中成一块，将来加功能时一眼能看出哪个按钮归哪个函数。 */
+
+document.getElementById("plNewBtn").onclick = () => openPlot();
+document.getElementById("plReload").onclick = async () => {
+  await loadPlots(true);
+  toast("已刷新");
+};
+
+// 表单里的两个字数计数：改一个字就重画一次，别等保存才告诉她超了
+document.getElementById("pvT").oninput = paintPvCounters;
+document.getElementById("pvS").oninput = paintPvCounters;
+
+document.getElementById("pvAddSrc").onclick = () => openPickCard();
+document.getElementById("pvSave").onclick = savePlot;
+document.getElementById("pvExclude").onclick = excludePlot;
+document.getElementById("pvRestore").onclick = restorePlot;
+
+/* 挑卡弹层：搜索框边打边筛。
+   给个 200ms 防抖 —— 列表最多 200 行，每敲一个字就重画一遍会打字发涩。 */
+let pkTimer = null;
+document.getElementById("pkQ").oninput = () => {
+  clearTimeout(pkTimer);
+  pkTimer = setTimeout(renderPickList, 200);
+};
+document.getElementById("pkOk").onclick = applyPick;
 
 
 /* ---------------- 启动 ---------------- */

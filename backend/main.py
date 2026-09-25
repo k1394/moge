@@ -36,7 +36,7 @@ FastAPI 里三个最基本的概念
 import os
 import secrets
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import (Depends, FastAPI, File, HTTPException, Query, Request,
                      UploadFile)
@@ -48,6 +48,7 @@ try:
     from backend import auth, db, importer, parsers
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import plots_db as plots
     from backend import segmentation as sg
     from backend import llm
 except ImportError:                                   # pragma: no cover
@@ -56,6 +57,7 @@ except ImportError:                                   # pragma: no cover
     from backend import auth, db, importer, parsers
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import plots_db as plots
     from backend import segmentation as sg
     from backend import llm
 
@@ -75,6 +77,9 @@ async def lifespan(app: FastAPI):
     # 自动分类任务的建表。必须在 cls.migrate() 之后 ——
     # 它要给 cls 建的 ai_judgements 补两列，那张表得先存在。
     auto.migrate()
+    # 剧情内化库的建表（plots / plot_cards / plot_versions）。
+    # 纯新增三张空表，没有迁移、不碰任何已有表，所以随时跑都安全。
+    plots.migrate()
     # 把上次运行留下的"还在跑"的任务收尾。
     # 必须放在启动时做：后台任务跑在进程内的线程里，进程一没线程就没了，
     # 但任务表里还写着 running —— 界面上会永远显示"分类中"而进度不动。
@@ -1633,3 +1638,315 @@ def api_delete_model(req: ModelIn, user: dict = Depends(auth.current_user)):
     items = [m for m in llm.load_models() if m["key"] != key]
     llm.save_models(items)
     return {"ok": True, "items": llm.public_models()}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 剧情内化库：剧情零件
+#
+# 【它和上面那一大段的区别】
+#   上面全是"素材"——原文、切片、卡片、分类。原文一个字不许动。
+#   这一段是"成品"——把素材抽象成"换个角色名还成立"的通用剧情。
+#   零件将来要直接喂给大纲生成，所以它必须自足到"光看它就能用"。
+#
+# 【这一轮（第 1 步）只做人工零件】
+#   新建 / 编辑 / 版本 / 恢复 / 排除 / 来源定位。
+#   一个 AI 都不调 —— AI 内化、多模型候选、延迟反馈学习是第 2~5 步的事。
+#   先把"她自己手写的零件能存能改能追版本"这条路走通，
+#   再加 AI 才有地方放它的产出。
+#
+# 【两条不许破的规矩】
+#   一、改内容一定产生新版本（见 plots_db._write_version 的说明）。
+#      她改零件不是审一遍就完，是用很久以后还会回来改。
+#   二、来源关系只存在 plot_cards 里。零件和卡片都不存正文副本，
+#      正文永远现算 materials.content[start:end]。
+# ══════════════════════════════════════════════════════════════════════
+
+def _given(req):
+    """只取"前端这次真的传了"的字段 —— PATCH 语义靠它。
+
+    【为什么必须这样】「字段在不在这次传来的东西里」决定改不改，
+    「值是不是空」决定改成什么。不区分的话，
+    她只想改个标题，回传的 JSON 里没带 summary，
+    就会被当成"把摘要清空"。这种 bug 不报错，只是内容悄悄没了。
+    （和模型配置那套 PATCH 语义是同一条规矩，见 llm.upsert_model）
+    """
+    if hasattr(req, "model_dump"):
+        return req.model_dump(exclude_unset=True)
+    return req.dict(exclude_unset=True)
+
+
+class PlotIn(BaseModel):
+    """手工新建一条剧情零件。"""
+    title: str
+    summary: str = ""
+    plot_type: str = ""
+    usage_hints: List[str] = []
+    beats: Dict[str, str] = {}
+    role_slots: List[str] = []
+    category_id: Optional[int] = None
+    # 手工建的默认 human；第 2 步"采用 AI 候选"时会传 ai
+    source: str = "human"
+    status: Optional[str] = None
+    card_ids: List[int] = []
+    change_note: str = ""
+
+
+class PlotPatch(BaseModel):
+    """改一条零件。字段全是可选的 —— 传哪个改哪个。"""
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    plot_type: Optional[str] = None
+    usage_hints: Optional[List[str]] = None
+    beats: Optional[Dict[str, str]] = None
+    role_slots: Optional[List[str]] = None
+    # 想清空分类就显式传 null（不是不传）
+    category_id: Optional[int] = None
+    status: Optional[str] = None
+    change_note: str = ""
+
+
+class PlotStatusIn(BaseModel):
+    status: str = ""
+    change_note: str = ""
+
+
+class PlotVersionIn(BaseModel):
+    """恢复历史版本。version_id 是必填的 —— 不填就没法知道要恢复哪一版。
+
+    【为什么单独一个模型，不塞进 PlotStatusIn】
+    恢复版本和"改状态"是两件事。混在一个模型里，
+    前端传 {"status": "已排除"} 去恢复版本时，version_id 会静默是 0，
+    接口只能报"没说是要恢复哪一版" —— 报得对，但错在入口就该拦住。
+    """
+    version_id: int = 0
+    change_note: str = ""
+
+
+@app.get("/api/plot-meta")
+def api_plot_meta(user: dict = Depends(auth.current_user)):
+    """剧情内化页初始化要用的所有"选项菜单"，一次全给。
+
+    【为什么把中文标签也从后端发下去】
+    剧情类型、使用场景、零件状态、beats 的六个点位、来源标记 ——
+    这些值的**唯一定义处**都在 backend/plots_db.py 里。
+    前端要是自己抄一份中文标签，我这边改一个字（比如"前提"→"起手"），
+    前端就永远显示老的了，而且不会有任何报错。
+    这和"状态轴只在 segmentation.py 定义一处、前端从接口拿"是同一个规矩。
+    """
+    cats = cls.list_categories(user["owner"])
+    return {
+        "plot_types": list(plots.PLOT_TYPES),
+        "usage_hints": list(plots.USAGE_HINTS),
+        "statuses": list(plots.ALL_PLOT_STATUS),
+        "sources": dict(plots.SOURCE_LABELS),
+        "beats": [{"key": k, "label": plots.BEAT_LABELS[k]}
+                  for k in plots.BEAT_KEYS],
+        "card_states": dict(plots.CARD_INFUSE_LABELS),
+        "limits": {
+            "title_max": plots.TITLE_MAX,
+            "summary_max": plots.SUMMARY_MAX,
+            "note_max": plots.NOTE_MAX,
+            "role_slots_max": plots.ROLE_SLOTS_MAX,
+            "usage_hints_max": plots.USAGE_HINTS_MAX,
+        },
+        "categories": cats,
+    }
+
+
+@app.get("/api/plots")
+def api_plots(user: dict = Depends(auth.current_user),
+              category_id: Optional[str] = Query(None),
+              status: Optional[str] = Query(None),
+              plot_type: Optional[str] = Query(None),
+              keyword: Optional[str] = Query(None),
+              order: str = Query("category"),
+              limit: int = Query(300, ge=1, le=1000),
+              offset: int = Query(0, ge=0)):
+    """零件列表。默认按主分类分段（跟素材分类库一个排法，未分类排最后）。"""
+    return plots.list_plots(user["owner"], category_id=category_id, status=status,
+                            plot_type=plot_type, keyword=keyword, order=order,
+                            limit=limit, offset=offset)
+
+
+@app.post("/api/plots")
+def api_create_plot(req: PlotIn, user: dict = Depends(auth.current_user)):
+    """手工新建一条剧情零件。
+
+    可以一张来源卡都不挂（先记个想法，以后再补来源）——
+    所以 card_ids 不是必填。
+    """
+    try:
+        p = plots.create_plot(
+            user["owner"], req.title, summary=req.summary,
+            plot_type=req.plot_type, usage_hints=req.usage_hints,
+            beats=req.beats, role_slots=req.role_slots,
+            category_id=req.category_id, source=req.source, status=req.status,
+            card_ids=req.card_ids, change_note=req.change_note,
+            created_by=user.get("name") or user.get("owner") or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "plot": p, "message": "零件建好了"}
+
+
+@app.get("/api/plots/{pid}")
+def api_get_plot(pid: int, user: dict = Depends(auth.current_user)):
+    """一条零件的详情（带来源清单和版本数）。不是自己的，一律说"没有这个"。"""
+    p = plots.get_plot(user["owner"], pid)
+    if not p:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件")
+    return p
+
+
+@app.patch("/api/plots/{pid}")
+def api_patch_plot(pid: int, req: PlotPatch,
+                   user: dict = Depends(auth.current_user)):
+    """改一条零件。
+
+    【两类改动走两条路，别混】
+      · 传了内容字段（标题/摘要/beats/…）→ 产生一个新版本
+      · 只传 status → 只改状态，**不产生版本**
+    任务书第 168 行：「用户确认不产生新内容版本，只改变零件状态。」
+    内容一个字没动却建个版本，版本历史里会堆满一模一样的东西，
+    以后翻起来更累。
+    """
+    given = _given(req)
+    body = {k: v for k, v in given.items()
+            if k not in ("status", "change_note")}
+    out = None
+    ver = None
+
+    if body:
+        try:
+            out, ver = plots.update_plot(
+                user["owner"], pid, body,
+                change_note=given.get("change_note", ""),
+                created_by=user.get("name") or user.get("owner") or "")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if out is None:
+            raise HTTPException(status_code=404, detail="没有这条剧情零件")
+
+    if "status" in given:
+        try:
+            r = plots.set_plot_status(user["owner"], pid, given["status"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if r is None:
+            raise HTTPException(status_code=404, detail="没有这条剧情零件")
+        out = r
+
+    if out is None:
+        # 只传了 change_note 之类，什么都没改 —— 别假装改了
+        out = plots.get_plot(user["owner"], pid)
+        if not out:
+            raise HTTPException(status_code=404, detail="没有这条剧情零件")
+        return {"ok": True, "plot": out, "version_no": None,
+                "message": "这次没有要改的东西"}
+
+    return {"ok": True, "plot": out, "version_no": ver,
+            "message": ("已存成 v%d" % ver) if ver else "改好了"}
+
+
+@app.get("/api/plots/{pid}/versions")
+def api_plot_versions(pid: int, user: dict = Depends(auth.current_user)):
+    """版本历史（新的在前）。"""
+    v = plots.list_versions(user["owner"], pid)
+    if v is None:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件")
+    return {"versions": v, "count": len(v)}
+
+
+@app.post("/api/plots/{pid}/restore-version")
+def api_restore_version(pid: int, req: PlotVersionIn,
+                        user: dict = Depends(auth.current_user)):
+    """把一个历史版本的内容恢复出来。
+
+    恢复成功**会产生一个新版本**（内容跟那个老版本一样），
+    老版本一条都不删 —— 这样"我什么时候恢复过什么"也留了痕。
+    """
+    if not req.version_id:
+        raise HTTPException(status_code=400, detail="没说是要恢复哪一版")
+    out, ver = plots.restore_version(
+        user["owner"], pid, req.version_id, change_note=req.change_note,
+        created_by=user.get("name") or user.get("owner") or "")
+    if out is None:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件，或者没有这个版本")
+    return {"ok": True, "plot": out, "version_no": ver,
+            "message": "恢复好了，存成 v%d（老版本都还在）" % ver}
+
+
+@app.post("/api/plots/{pid}/exclude")
+def api_exclude_plot(pid: int, req: PlotStatusIn,
+                     user: dict = Depends(auth.current_user)):
+    """排除一条零件。
+
+    【为什么不物理删除】引用过它的大纲（将来的功能）还得认得它，
+    而且她可能是手滑点错了。排除是状态，随时能恢复。
+    """
+    given = _given(req)
+    r = plots.set_plot_status(user["owner"], pid, plots.PLOT_STATUS_EXCLUDED)
+    if r is None:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件")
+    return {"ok": True, "plot": r,
+            "message": (given.get("change_note") or "").strip() or "排除了，随时能恢复"}
+
+
+@app.post("/api/plots/{pid}/restore")
+def api_restore_plot(pid: int, req: PlotStatusIn,
+                     user: dict = Depends(auth.current_user)):
+    """把排除掉的零件恢复回来。"""
+    given = _given(req)
+    want = given.get("status") or plots.PLOT_STATUS_CONFIRMED
+    r = plots.set_plot_status(user["owner"], pid, want)
+    if r is None:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件")
+    return {"ok": True, "plot": r, "message": "恢复了"}
+
+
+@app.get("/api/plots/{pid}/sources")
+def api_plot_sources(pid: int, user: dict = Depends(auth.current_user)):
+    """这条零件的来源素材清单。
+
+    每条都带一个 locate 字段：
+        ok       原文还在原地，点开就能看
+        moved    卡片被拆分/合并过，或者这段原文后来被改过
+        missing  卡片没了
+    界面拿它决定是"点开看原文"还是"提醒她已经变了"——
+    总比悄悄给她看一段错的内容强。
+    """
+    s = plots.list_sources(user["owner"], pid)
+    if s is None:
+        raise HTTPException(status_code=404, detail="没有这条剧情零件")
+    return {"sources": s, "count": len(s)}
+
+
+@app.get("/api/cards/{cid}/plots")
+def api_card_plots(cid: int, user: dict = Depends(auth.current_user)):
+    """反向链接：这张素材卡片被哪些剧情零件用到了。
+
+    素材分类库的卡片上那句「已内化 · 看零件 →」就靠它。
+    没有这个的话，她分不清哪些卡白放过了、哪些还没处理。
+    """
+    rows = plots.plots_of_card(user["owner"], cid)
+    return {"plots": rows, "count": len(rows)}
+
+
+@app.get("/api/plot-card-states")
+def api_plot_card_states(card_ids: str = "",
+                         user: dict = Depends(auth.current_user)):
+    """批量取卡片的内化状态，给「素材分类」页每张卡上那个标记用。
+
+    【为什么不一张卡发一次】
+    素材分类页一屏 30 张、她自己拉到几百张，
+    逐张问就是几百个请求；而且这只是一句"这张内化过没有"的提示，
+    不值得为它把页面拖慢。
+
+    参数 card_ids 用逗号分隔（不传 = 全部）。状态值全部由关联表算出来，
+    cards 表里没有、也不该有这一列，理由见 plots_db.card_infuse_states()。
+    """
+    ids = [x.strip() for x in card_ids.split(",") if x.strip()]
+    states = plots.card_infuse_states(user["owner"], ids or None)
+    return {
+        "states": {str(k): v for k, v in states.items()},
+        "labels": plots.CARD_INFUSE_LABELS,
+    }
