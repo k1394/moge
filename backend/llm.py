@@ -428,12 +428,62 @@ def add_model(item):
 # 调用
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# 这次生成是怎么结束的（finish_reason）
+#
+# 【为什么必须留它】OpenAI 兼容接口会在 choices[0].finish_reason 里回一个词，
+# 说清这次是"说完了"还是"被掐断的"：
+#     stop            正常说完了，可以当完整结果用
+#     length          撞到 max_tokens 上限被硬掐断，**内容只有一半**
+#     content_filter  被内容策略拦下
+#     tool_calls      模型要调工具（我们不接工具，出现就是异常）
+#
+# 不留它的后果是**静默的**：被掐断的大纲看起来和完整的一模一样 ——
+# 模型照旧填着"预计 3000 字"（那是它计划要写的），只有正文末尾缺了半句，
+# 而界面上正好看不到末尾。她 2026-09-26 截图那次"看着正常、其实没写完"
+# 就踩在这里。所以这个字段一路要留到界面上，不能在中途解包时丢掉。
+# ----------------------------------------------------------------------
+
+FINISH_STOP = "stop"
+FINISH_LENGTH = "length"
+FINISH_FILTER = "content_filter"
+
+# 我们自己的哨兵值：确实没拿到结束原因（补列之前的老数据、或上游没回这个字段）。
+# 【为什么用一个真实的值、而不是留空】"空"没法跟"这一列还没补过"区分开 ——
+# 老库补列后每一行都是空，回填逻辑就会把它们一遍遍重算，永远补不完。
+# 写成一个明确的值，回填才有个"补过了"的凭据。
+FINISH_UNKNOWN = "unknown"
+
+FINISH_LABELS = {
+    FINISH_STOP: "正常写完",
+    FINISH_LENGTH: "被字数上限掐断",
+    FINISH_FILTER: "被内容策略拦下",
+    FINISH_UNKNOWN: "当时没记结束原因",
+}
+
+
+def finish_label(reason):
+    """把 finish_reason 翻成一句人能看懂的话。
+
+    【为什么空值要单独说】2026-09-26 之前的任务没记这个字段，
+    空字符串必须说成"当时没记"，绝不能含混成"正常写完"——
+    那等于把"不知道"当成"没问题"，正好是这次要修的病。
+    """
+    r = (reason or "").strip()
+    if not r:
+        return "当时没记结束原因"
+    return FINISH_LABELS.get(r, "结束了（%s）" % r)
+
+
 def _pick_content(raw, key):
-    """从返回的 JSON 里挑出模型说的话。
+    """从返回的 JSON 里挑出模型说的话，**连同这次是怎么结束的**。
 
     为什么单独写：不同家的返回结构大同小异但细节有差
     （有的 content 是 None + reasoning_content，有的 choices 可能为空），
     挑不出来的时候要给一句人能看懂的话，而不是 KeyError。
+
+    返回 (正文, 用量, finish_reason)。第三个值见上面常量区的说明 ——
+    它决定"这篇是不是写完了"，不能丢。
     """
     try:
         d = json.loads(raw)
@@ -452,14 +502,18 @@ def _pick_content(raw, key):
         text = msg.get("reasoning_content") or ""
     if not isinstance(text, str) or not text.strip():
         raise LlmError("模型返回了空内容")
-    return text, d.get("usage") or {}
+    return text, d.get("usage") or {}, (choices[0].get("finish_reason") or "").strip()
 
 
 def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
          max_retry=None):
     """发一次对话请求。
 
-    返回 {"content": 模型说的话, "usage": 用量, "model": 实际用的模型名}
+    返回 {"content": 模型说的话, "usage": 用量, "model": 实际用的模型名,
+          "finish_reason": 这次是怎么结束的}。
+    finish_reason 的取值与含义见上面常量区 —— 短任务（分类、内化一次几百字）
+    用不上它；生成大纲这种一次要吐几千字的长任务，必须靠它分辨
+    "正常写完"和"撞到字数上限被掐断"。
 
     cfg 就是清单里的一条（含明文 api_key）。
 
@@ -518,8 +572,9 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
         try:
             with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as resp:
                 raw = resp.read().decode("utf-8", "replace")
-            text, usage = _pick_content(raw, key)
-            return {"content": text, "usage": usage, "model": model}
+            text, usage, finish = _pick_content(raw, key)
+            return {"content": text, "usage": usage, "model": model,
+                    "finish_reason": finish}
 
         except urllib.error.HTTPError as e:
             detail = ""

@@ -59,6 +59,7 @@ import re
 from datetime import datetime
 
 from backend import db
+from backend import llm
 from backend import plots_db as pdb
 
 
@@ -340,6 +341,17 @@ CREATE TABLE IF NOT EXISTS outline_candidates (
     input_tokens        INTEGER NOT NULL DEFAULT 0,
     output_tokens       INTEGER NOT NULL DEFAULT 0,
     elapsed_ms          INTEGER NOT NULL DEFAULT 0,
+    -- 这次生成是怎么结束的（stop / length / content_filter…），
+    -- 由 llm.finish_label() 翻成中文给界面。取值含义见 llm.py 常量区。
+    -- 【为什么要单独存一列】它是判断"这篇写完了没有"的**唯一硬证据**：
+    -- 被 max_tokens 掐断时，返回体本身是合法的、只有正文是半截，
+    -- 而模型自己填的"预计 3000 字"照旧 —— 光看内容分辨不出来。
+    finish_reason       TEXT    NOT NULL DEFAULT '',
+    -- 结构上缺什么（[] / ["结局"] / ["高潮", "故事核心"]…），
+    -- 由 outline_db.structure_gaps() 在写候选那一刻算好。
+    -- 【为什么不读取时现算】列表接口 /api/outline-runs 不带 content_json
+    -- （太长），现算就没有原料 —— 那一行"体检结论"会时有时无。
+    gaps_json           TEXT    NOT NULL DEFAULT '[]',
     error               TEXT    NOT NULL DEFAULT '',
     adopted             INTEGER NOT NULL DEFAULT 0,
     outline_id          INTEGER DEFAULT NULL,
@@ -426,17 +438,121 @@ CREATE INDEX IF NOT EXISTS idx_worlds_own
 
 
 def migrate(verbose=False):
-    """建这七张表。反复跑是安全的（全是 IF NOT EXISTS）。
+    """建这七张表，再给老库补上后加的列。反复跑是安全的。
 
-    【这一轮为什么不需要整库备份】
-    七张全是新增的空表，一个 ALTER 都没有、一行已有数据都不碰。
-    所以幂等执行即可 —— 热重载触发多少次都一样。
+    【2026-09-26 起这里多了一步 ALTER】
+    这几张表当初是全新空表建的，但 finish_reason / gaps_json 是后来才加的 ——
+    已经建过表的库（包括她的真实库）**不会**因为
+    CREATE TABLE IF NOT EXISTS 就多出列，必须显式 ALTER。
+    补列只加不改、老数据落到默认值，所以不需要整库备份。
     """
     with db.connect() as conn:
         conn.executescript(SCHEMA)
+        _add_missing_columns(conn)
+    backfill_candidate_meta(verbose)
     if verbose:
         print("大纲生成：七张表就位 →", db.DB_PATH)
     return db.DB_PATH
+
+
+# 后加的列：(表名, 列名, 列定义)。以后加列就往这里添一行。
+#
+# 【为什么用表驱动】补列这件事一写成 if 判断就会长成一片：每加一列塞一个
+# if，还得靠注释记"这列是哪次加的"。列在这里是**声明**，用 PRAGMA 对个差集
+# 就补上，加多少列都是同一段代码、同一个测试。
+_ADDED_COLUMNS = (
+    ("outline_candidates", "finish_reason", "TEXT NOT NULL DEFAULT ''"),
+    ("outline_candidates", "gaps_json", "TEXT NOT NULL DEFAULT '[]'"),
+)
+
+
+def _add_missing_columns(conn):
+    """把 _ADDED_COLUMNS 里声明、但库里还没有的列补上。"""
+    for table, col, decl in _ADDED_COLUMNS:
+        if not _has_table(conn, table):
+            continue
+        have = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(%s)" % table).fetchall()}
+        if col in have:
+            continue
+        conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
+
+
+def guess_finish_reason(raw):
+    """从原始返回里抠出 finish_reason。抠不出来就返回空串。
+
+    【为什么解析失败不硬猜】正常被掐断的返回体仍是合法 JSON
+    （finish_reason 在 choices 里，只有正文是半截），所以一般解得出来。
+    真解不出来时宁可返回空 —— 调用方会把它记成 FINISH_UNKNOWN
+    （"当时没记"），而不是硬安一个"正常写完"上去。
+    """
+    try:
+        d = json.loads(raw or "")
+    except Exception:
+        return ""
+    ch = d.get("choices") or []
+    if not ch:
+        return ""
+    return (ch[0].get("finish_reason") or "").strip()
+
+
+def structure_gaps(obj):
+    """这份大纲在**结构上**缺了什么，返回几个短词。
+
+    【为什么跟 validate_outline 分开写】那个是"提醒清单"，把字数偏离、
+    空泛说法、缺结局混在一起，一条条读下来看不出重点在哪。
+    这一个只回答"结构完整不完整"，只回几个短词，
+    好让界面上压成一行、扫一眼就分得开（她要的正是这个）。
+    """
+    o = obj or {}
+    if not isinstance(o, dict):
+        return []
+    gaps = []
+    if not (o.get("story_core") or "").strip():
+        gaps.append("故事核心")
+    if not (o.get("climax") or "").strip():
+        gaps.append("高潮")
+    if not (o.get("ending") or "").strip():
+        gaps.append("结局")
+    nodes = [n for n in (o.get("nodes") or []) if isinstance(n, dict)]
+    if not nodes:
+        gaps.append("所有段落")
+        return gaps
+    # 「哪一段没写完」要能指名道姓 —— 只说"结构不完整"等于没说。
+    empty = [n.get("node_title") or ("第 %d 段" % (i + 1))
+             for i, n in enumerate(nodes)
+             if not (n.get("event") or "").strip()]
+    if empty:
+        gaps.append("段落内容（%s）" % "、".join(empty[:3]))
+    return gaps
+
+
+def backfill_candidate_meta(verbose=False):
+    """给"补列那一刻之前生成的"老候选补上结束原因与结构缺口。
+
+    【为什么补得出来】raw_response 和 content_json 当时就存下来了，
+    只是没算成字段 —— 没算不等于没有，所以**不用重新花钱跑一遍**。
+
+    【幂等靠什么】判据是 finish_reason=''，而只有老行会是空
+    （新行写入时必填，连抠不出来也记成 FINISH_UNKNOWN）。
+    所以补完再跑，挑出来的就是 0 行，热重载天天触发也没关系。
+    """
+    n = 0
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, raw_response, content_json FROM outline_candidates"
+            " WHERE finish_reason=''").fetchall()
+        for r in rows:
+            fr = guess_finish_reason(r["raw_response"]) or llm.FINISH_UNKNOWN
+            conn.execute(
+                "UPDATE outline_candidates SET finish_reason=?, gaps_json=?"
+                " WHERE id=?",
+                (fr, _dumps(structure_gaps(_loads(r["content_json"], {}))),
+                 r["id"]))
+            n += 1
+    if verbose and n:
+        print("补了 %d 条历史候选的结束原因 / 结构缺口" % n)
+    return n
 
 
 # ----------------------------------------------------------------------

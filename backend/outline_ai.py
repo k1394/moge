@@ -1164,6 +1164,25 @@ def _run_one_model(run_id, owner, model_key, ctx):
         return
 
     warns = list(warns) + odb.validate_outline(obj, ctx["target_words"], known)
+
+    # ---- 结束原因 ----
+    # 「结构体检」只能看出"缺结局、缺高潮"这类**内容形态**问题；
+    # 它看不出"这篇是被硬掐断的" —— 而后者才是最会骗人的一种：
+    # 正文半截，可每个字段单独看都合法、模型自填的预计字数也照旧。
+    # 所以撞到字数上限时，把这条提醒插到**最前面**，让她扫一眼就知道
+    # 这版不能直接拿去写。
+    finish = (out.get("finish_reason") or "").strip() or cls.llm.FINISH_UNKNOWN
+    if finish == cls.llm.FINISH_LENGTH:
+        warns.insert(0, "这一版被字数上限掐断了，模型没写完 —— "
+                        "最后一段是断的。要么少参考几条重跑，"
+                        "要么把它当草稿接着往下补。")
+    elif finish == cls.llm.FINISH_FILTER:
+        warns.insert(0, "这一版被内容策略拦下了，内容不完整。")
+
+    # 结构缺口单独算一份存下来：列表接口 /api/outline-runs 不带 content_json，
+    # 而候选卡上那行"体检结论"要在列表里就显示得出来。
+    gaps = odb.structure_gaps(obj)
+
     text = odb.render_outline_text(obj)
     usage = out.get("usage") or {}
     names = {p["id"]: (p.get("title") or "") for p in ctx["plots"]}
@@ -1173,14 +1192,15 @@ def _run_one_model(run_id, owner, model_key, ctx):
             """UPDATE outline_candidates SET status=?, content_json=?,
                content_text=?, used_plot_ids_json=?, used_plot_names_json=?,
                warnings_json=?, raw_response=?, input_chars=?, output_chars=?,
-               input_tokens=?, output_tokens=?, elapsed_ms=?, model_name=?,
-               prompt_version=? WHERE run_id=? AND model_key=?""",
+               input_tokens=?, output_tokens=?, finish_reason=?, gaps_json=?,
+               elapsed_ms=?, model_name=?, prompt_version=?
+               WHERE run_id=? AND model_key=?""",
             (CAND_DONE, odb._dumps(obj), text,
              odb._dumps(obj.get("used_plot_ids") or []),
              odb._dumps([names.get(i, "") for i in (obj.get("used_plot_ids") or [])]),
              odb._dumps(warns), raw[:200000], input_chars, len(raw),
              int(usage.get("prompt_tokens") or 0),
-             int(usage.get("completion_tokens") or 0),
+             int(usage.get("completion_tokens") or 0), finish, odb._dumps(gaps),
              int((time.time() - t0) * 1000), label,
              ctx.get("prompt_version") or "", run_id, model_key))
         _set_run(conn, run_id, heartbeat_at=now_str())
@@ -1305,8 +1325,8 @@ def get_run(run_id, owner):
         cands = conn.execute(
             "SELECT id, model_key, model_name, status, error, used_plot_ids_json,"
             " used_plot_names_json, warnings_json, output_chars, elapsed_ms,"
-            " adopted, outline_id FROM outline_candidates WHERE run_id=?"
-            " ORDER BY id", (rid,)).fetchall()
+            " finish_reason, gaps_json, adopted, outline_id FROM outline_candidates"
+            " WHERE run_id=? ORDER BY id", (rid,)).fetchall()
     d["candidates"] = []
     for c in cands:
         d["candidates"].append({
@@ -1318,6 +1338,11 @@ def get_run(run_id, owner):
             "warnings": odb._loads(c["warnings_json"], []),
             "output_chars": c["output_chars"],
             "elapsed_ms": c["elapsed_ms"],
+            # 候选卡上那条"体检结论"靠这两个 —— 结束原因翻成中文，
+            # 结构缺口直接给一串短词。都不让她自己拼英文单词。
+            "finish_reason": c["finish_reason"] or "",
+            "finish_label": cls.llm.finish_label(c["finish_reason"]),
+            "gaps": odb._loads(c["gaps_json"], []),
             "adopted": bool(c["adopted"]),
             "outline_id": c["outline_id"],
         })
@@ -1350,6 +1375,8 @@ def get_candidate(candidate_id, owner):
         d["used_plot_ids"] = odb._loads(row["used_plot_ids_json"], [])
         d["used_plot_names"] = odb._loads(row["used_plot_names_json"], [])
         d["warnings"] = odb._loads(row["warnings_json"], [])
+        d["gaps"] = odb._loads(row["gaps_json"], [])
+        d["finish_label"] = cls.llm.finish_label(row["finish_reason"])
         return d
 
 

@@ -1297,6 +1297,26 @@
   }
   .olcand .cf .grow { flex: 1 1 auto; }
 
+  /* 候选卡顶部那条「体检结论」——
+     为什么非要单独占一行、还要按严重程度换色：被字数上限掐断的稿子，
+     在内容上跟完整稿长得一模一样（模型自填的"预计字数"照旧写着 3000），
+     扫一眼分不出来，她就会挑它去做大纲，写到一半才发现后面没了。
+     所以这条结论放在**正文之前**，先回答"这版能不能用"。 */
+  .olvrd {
+    display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+    padding: 7px 10px; font-size: 12px; line-height: 1.7;
+    border-bottom: 1px solid var(--line-2); color: var(--ink-3);
+  }
+  .olvrd .vt {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .olvrd.cut { color: var(--danger); background: #fbeceb; }
+  .olvrd.cut .vt { background: var(--danger); color: #fff; }
+  .olvrd.warn { color: #8a4a2c; background: #fbeade; }
+  .olvrd.warn .vt { background: #8a4a2c; color: #fff; }
+  .olvrd.ok .vt { background: var(--line-2); color: var(--ink-2); }
+
   /* ---- 大纲库列表 ---- */
   .ollib { display: flex; flex-direction: column; gap: 8px; }
   .ollibi {
@@ -8636,7 +8656,23 @@ async function olLoadRuns() {
   OL.runs = d.runs || [];
   olPaintRuns();
   const running = OL.runs.find(r => olIsActive(r.status));
-  if (running && !OL.poll) olPoll(running.id);
+  if (running) {
+    if (!OL.poll) olPoll(running.id);
+    return;
+  }
+
+  /* 没有在跑的任务时，补一次单查。
+     为什么非补不可：列表接口 /api/outline-runs **不带候选**（太占地方），
+     而候选卡是照着"单查回来的那份 run"画的 —— 不补这一步，她隔几天
+     进来看自己跑过的任务，只会看到一张空任务卡，候选一张都没有，
+     更别提候选卡顶上那条"被字数上限掐断"。
+     （刚跑完的场景看不出来，因为轮询自己会单查；问题只在"回头再看"时冒出来。）
+     单查会把候选带回来，并顺手把候选正文也拉下来。 */
+  const done = OL.runs.find(r => !olIsActive(r.status) && r.done_models > 0);
+  if (done) {
+    OL.pollRun = done.id;
+    await olPollTick();
+  }
 }
 
 /* 候选正文按需拉。为什么不跟着任务一起下来：
@@ -8711,6 +8747,35 @@ function olPaintRuns() {
   box.innerHTML = h;
 }
 
+/* 候选卡顶上那条「体检结论」。
+   为什么要有它：被掐断的稿子在内容上跟完整稿一模一样，扫一眼分不出来，
+   就会被挑去做大纲，写到一半才发现后面没了。
+   判据全在服务端（finish_reason / gaps），这里只负责显示 ——
+   前端不自己认英文单词、也不自己数"缺了什么"，那种事两边各写一份必分叉。 */
+function olVerdictHtml(c, j) {
+  const cut = (c.finish_reason === "length"
+               || c.finish_reason === "content_filter");
+  const gaps = c.gaps || [];
+  const cls = cut ? "cut" : (gaps.length ? "warn" : "ok");
+
+  let t = '<span class="vt">' + esc(c.finish_label || "结束原因未知")
+    + '</span>';
+
+  if (cut && j) {
+    // 「断在哪一段」要指名道姓 —— 只说"内容不完整"，她还得自己去找断口
+    const ns = j.nodes || [];
+    const last = ns.length ? ns[ns.length - 1] : null;
+    t += "<span>写到第 " + ns.length + " 段"
+      + (last && last.node_title ? "「" + esc(last.node_title) + "」" : "")
+      + "就断了，后面没有了</span>";
+  } else {
+    t += "<span>" + (gaps.length
+      ? "结构缺：" + esc(gaps.join("、"))
+      : "结构完整") + "</span>";
+  }
+  return '<div class="olvrd ' + cls + '">' + t + '</div>';
+}
+
 function olCandCard(c) {
   const full = OL.candData[c.id];
   const j = (full && full.content_json) || null;
@@ -8747,6 +8812,8 @@ function olCandCard(c) {
     + (c.elapsed_ms ? (Math.round(c.elapsed_ms / 100) / 10) + " 秒" : "")
     + (c.output_chars ? " · " + fmtNum(c.output_chars) + " 字" : "")
     + '</span></div>';
+  // 体检结论放在正文之前 —— 她得先知道"这版能不能用"，再决定要不要读内容
+  if (c.status === "已完成") ch += olVerdictHtml(c, j);
   if ((c.warnings || []).length) {
     ch += '<div style="padding:6px 10px 0"><span class="chip warn">'
       + c.warnings.length + ' 条提醒</span></div>';
