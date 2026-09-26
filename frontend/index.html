@@ -4638,8 +4638,12 @@ function pfTextChanged(kind, selfId) {
 
 function pfS(kind) {
   if (!S.pf[kind]) {
+    // tab 也记着：她上次开的是「自定义」，刷新回来不该自己跳回「快速选项」——
+    // 不然她自己写的东西明明还在，却被收进另一个 tab 里，看着像丢了。
+    const tab = draftText("c:pf.tab." + kind);
     S.pf[kind] = { content: pfDraftText(kind), max: 5000,
-                   tab: "pick", pick: null };
+                   tab: (tab === "edit" || tab === "pick") ? tab : "pick",
+                   pick: null };
   }
   return S.pf[kind];
 }
@@ -4648,6 +4652,11 @@ function pfS(kind) {
    上一轮跑完到现在，她可能在别的地方改过。 */
 async function pfLoad(kind) {
   const keep = S.pf[kind] || {};
+  // tab 跟内容一个待遇：她上次停在哪个 tab，回来还是哪个。
+  // 优先取内存里已有的（本次会话她刚点过），没有再取草稿（上次会话的）。
+  const tabSaved = draftText("c:pf.tab." + kind);
+  const tab0 = (keep.tab === "edit" || keep.tab === "pick") ? keep.tab
+    : ((tabSaved === "edit" || tabSaved === "pick") ? tabSaved : "pick");
   /* 她自己敲的草稿优先于服务端那份 —— 这是「不要自动清空」的关键一处。
      服务端那份是"上次保存的"，草稿是"她刚写完还没保存的"，后者显然更该赢。
      不这么写的话，每次重新进页面、每次 pfLoad，都会拿服务端那份把
@@ -4656,11 +4665,11 @@ async function pfLoad(kind) {
   try {
     const r = await api(PF_KINDS[kind].defaultUrl);
     S.pf[kind] = { content: draft || r.content || "", max: r.max || 5000,
-                   tab: keep.tab || "pick", pick: keep.pick || null };
+                   tab: tab0, pick: keep.pick || null };
   } catch (e) {
     // 读不到就当空的，绝不因为这一条让整个弹层打不开
     S.pf[kind] = { content: draft || "", max: 5000,
-                   tab: "pick", pick: null };
+                   tab: tab0, pick: null };
   }
   await pfLoadLib(kind);
   return S.pf[kind];
@@ -4835,6 +4844,7 @@ function pfValue(kind, prefix) {
 function pfSetTab(kind, prefix, tab, opts) {
   const st = pfS(kind);
   st.tab = tab;
+  draftPut("c:pf.tab." + kind, tab);   // 下次进来还停在她上次的那个 tab
   pfPaint(kind, prefix, opts);
 }
 
