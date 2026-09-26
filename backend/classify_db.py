@@ -68,6 +68,33 @@ def new_group_id():
 
 
 # ----------------------------------------------------------------------
+# 逻辑素材组：动作与状态
+#
+# 【动作只有两个，keep 不落库】
+# 任务书里写了 merge / keep / review 三种。这里没有 keep，
+# 因为 keep = 「这段自己独立成立」，它不产生任何记录 ——
+# 存一堆"什么都没干"的建议，只会让她的列表变脏、还要她一条条划掉。
+#   merge   判得准，可以直接合
+#   review  边界拿不准，必须她过一眼才动
+# ----------------------------------------------------------------------
+
+GROUP_ACTION_MERGE = "merge"
+GROUP_ACTION_REVIEW = "review"
+ALL_GROUP_ACTION = (GROUP_ACTION_MERGE, GROUP_ACTION_REVIEW)
+
+# 组的三态。注意**「已合并」和「已忽略」都不会被删** ——
+# 留着才回答得了"这条素材当初为什么在这儿"，
+# 也才让"我驳回过的组合"下次不会再冒出来烦她。
+GROUP_PENDING = "待确认"
+GROUP_MERGED = "已合并"
+GROUP_IGNORED = "已忽略"
+ALL_GROUP_STATUS = (GROUP_PENDING, GROUP_MERGED, GROUP_IGNORED)
+
+# 合并出来的新卡初始状态。跟人工合并保持一致（都要她看一眼再确认主类）。
+GROUP_MERGED_CARD_STATUS = sg.STATUS_PENDING
+
+
+# ----------------------------------------------------------------------
 # 十一个正式主类（v2）
 #
 # 【为什么有 v1 / v2 两版】
@@ -407,6 +434,48 @@ CREATE TABLE IF NOT EXISTS ai_judgements (
     created_at           TEXT NOT NULL
 );
 
+-- ----------------------------------------------------------------------
+-- 逻辑素材组（2026-09-26 加）
+--
+-- 一条 = AI 认出「这几段必须合看才算一条完整素材」。
+-- 她的原话是「相邻多段可能共同组成一条完整素材，例如对白与回应、
+-- 动作与结果、心理变化与后果、笑点铺垫与落点」。
+--
+-- 【为什么单开一张表，不直接改 cards】
+--   「要不要合」和「合完了长什么样」是两件事。
+--   AI 给的是一份**提议**（拿得准的 / 拿不准要她过目的），
+--   提议得先有个地方躺着 —— 她可能过几天才看，也可能一直不看。
+--   提议本身绝不能影响卡片表，否则"没处理"就等于"库被改了"。
+--
+-- 【跟人工合并 merge_cards 的关系】
+--   两者产出的结果完全一样（一条新卡 + 原子卡标「已排除」），
+--   而且走同一个内部函数，不允许出现两套合并逻辑（那种一定会分叉）。
+--   区别只在入口：人工那个她选完就合，AI 这个先落成提议。
+--
+-- 【card_ids 是 JSON 数组，按原文顺序】
+--   为什么不建一张"组成员"关联表：组的成员永远是**一小撮**（2-6 张），
+--   而且只会整组一起读、一起处理，从来不需要"反查某张卡属于哪些组"
+--  （那张卡最多只属于一个组）。为这个建表，只会多一处要维护的一致性。
+CREATE TABLE IF NOT EXISTS card_groups (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id            TEXT    NOT NULL,
+    material_id         INTEGER NOT NULL,
+    run_id              INTEGER DEFAULT NULL,
+    card_ids            TEXT    NOT NULL DEFAULT '[]',
+    start_offset        INTEGER NOT NULL,
+    end_offset          INTEGER NOT NULL,
+    action              TEXT    NOT NULL DEFAULT 'review',
+    primary_category_id INTEGER DEFAULT NULL,
+    tags                TEXT    NOT NULL DEFAULT '[]',
+    reason              TEXT    NOT NULL DEFAULT '',
+    confidence          REAL    DEFAULT NULL,
+    status              TEXT    NOT NULL DEFAULT '待确认',
+    merged_card_id      INTEGER DEFAULT NULL,
+    merged_change_id    INTEGER DEFAULT NULL,
+    created_at          TEXT    NOT NULL,
+    updated_at          TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_segrun_mat   ON segment_runs(material_id, is_current);
 CREATE INDEX IF NOT EXISTS idx_seg_run      ON segments(run_id);
 CREATE INDEX IF NOT EXISTS idx_seg_mat      ON segments(material_id);
@@ -416,6 +485,7 @@ CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
 CREATE INDEX IF NOT EXISTS idx_cardtags_tag ON card_tags(sub_tag_id);
 CREATE INDEX IF NOT EXISTS idx_subtags_own  ON sub_tags(owner_id);
 CREATE INDEX IF NOT EXISTS idx_changes_own  ON card_changes(owner_id, id);
+CREATE INDEX IF NOT EXISTS idx_groups_mat   ON card_groups(owner_id, material_id, status);
 """
 
 
@@ -1272,6 +1342,14 @@ def _decorate(conn, row, content, cat_names):
                   d["source_text_hash"])
     d["verify_ok"] = v["ok"]
     d["verify_reason"] = v["reason"]
+    # 这张卡是"被合并掉的那张"吗？
+    #
+    # 「已排除」有两种来源：她自己排除的、和合并掉的。界面上两者该分开显示：
+    # 她自己排除的就是不要了，合并掉的那张要说清"它并进了 #N，还能撤销"。
+    # 判据是「已排除 + 还指着一条卡」——
+    # 拆分退场的那张原卡不会指人（它是新卡来指它），所以不会误判。
+    d["merged_into"] = (d["status"] == sg.STATUS_EXCLUDED
+                        and d["parent_card_id"] is not None)
     return d
 
 
@@ -1709,6 +1787,20 @@ def undo_change(owner, change_id):
                     sets.append("%s = ?" % f)
                     params.append(b[f])
 
+            # ---- 合并写下的父子关系，跟着一起退 ----
+            #
+            # 这一列不在 CARD_FIELDS 里（它不归"改卡片"那个动作管），
+            # 但合并确实会写它。不退回去的话，撤销完原子卡还挂着
+            # "我属于某条已经作废的卡"，界面上会显示一条指向空处的关系。
+            # 判据跟上面每个字段一样：现在的值仍等于本次写入的值，才恢复 ——
+            # 她后来又手工动过的，不许被这一下冲掉。
+            if ("parent_card_id" in a and "parent_card_id" in b
+                    and r["parent_card_id"] == a["parent_card_id"]
+                    and b["parent_card_id"] != a["parent_card_id"]):
+                rolled.append("parent_card_id")
+                sets.append("parent_card_id = ?")
+                params.append(b["parent_card_id"])
+
             # ---- 来源标记：跟着主类一起退 ----
             #
             # 只有在"主类真的被退回去了"、并且当前来源仍是本次写进去的那个值、
@@ -1847,73 +1939,467 @@ def merge_cards(card_ids, owner, operator_id=None):
         return {"ok": False, "message": "至少要选两张卡才能合并"}
 
     with db.connect() as conn:
-        rows = _load_cards(conn, owner, ids)
-        if len(rows) < 2:
-            return {"ok": False, "message": "选中的卡片里有不存在或不属于你的"}
-        mids = {r["material_id"] for r in rows}
-        if len(mids) != 1:
-            return {"ok": False, "message": "不同文件的卡片不能合并"}
-        material_id = mids.pop()
+        return _merge_cards_in_tx(conn, owner, ids, operator_id=operator_id)
 
-        rows = sorted(rows, key=lambda r: r["start_offset"])
-        start = rows[0]["start_offset"]
-        end = max(r["end_offset"] for r in rows)
 
-        inner = conn.execute(
-            """SELECT COUNT(*) FROM cards WHERE owner_id=? AND material_id=?
-               AND id NOT IN (%s)
-               AND start_offset < ? AND end_offset > ?
-               AND status <> ?"""
-            % ",".join("?" * len(ids)),
-            [owner, material_id] + ids + [end, start,
-                                          sg.STATUS_EXCLUDED]).fetchone()[0]
-        if inner:
-            return {"ok": False,
-                    "message": "这几张卡中间还夹着 %d 张别的卡片，不能合并"
-                               "（会把它们一起吞掉）。请先只选相邻的。" % inner}
+def _merge_cards_in_tx(conn, owner, ids, operator_id=None, action_type="merge",
+                       summary="", new_card_note="", category_id=None,
+                       tag_names=None, source=None):
+    """在**当前这个事务里**把几张相邻的卡合成一张。成败都返回 dict。
 
-        content = _content(conn, material_id)
-        ts = now_str()
-        gid = new_group_id()
-        before, after = {}, {}
+    【为什么把这段从 merge_cards 里抽出来单独放】
+    人工合并（她手选几张）和 AI 组合并（模型认出这几段该合看）产出完全一样，
+    只是入口不同。不抽出来的话两处各写一遍 —— 以后规则一变
+    （比如新卡状态、或者要不要写 parent_card_id）必然只改一处，
+    然后两条路开始产出不一样的结果，而且**谁都不会发现**。
+    凡是"两次实现必须永远一致"的地方，就只准有一份实现。
 
-        main = rows[0]
-        for r in rows:
-            before[str(r["id"])] = {"status": r["status"],
-                                    "primary_category_id": r["primary_category_id"],
-                                    "sub_tags": _card_tags(conn, r["id"])}
-            conn.execute("UPDATE cards SET status=?, updated_at=? WHERE id=?",
-                         (sg.STATUS_EXCLUDED, ts, r["id"]))
-            after[str(r["id"])] = {"status": sg.STATUS_EXCLUDED,
-                                   "primary_category_id": r["primary_category_id"],
-                                   "sub_tags": _card_tags(conn, r["id"])}
+    【为什么参数都往后传，而不是在这里判断谁调的】
+    这个函数只负责"合"，不负责"该不该合"。
+    该不该合是调用方的事：人工那条路是她按的按钮，AI 那条路是模型判的。
+    混进来的话，以后加第三种来源就得改这个函数的内部逻辑。
 
-        piece = content[start:end]
-        cur = conn.execute(
-            """INSERT INTO cards
-               (owner_id, material_id, start_offset, end_offset, source_text_hash,
-                segment_id, primary_category_id, source, status, note,
-                parent_card_id, operation_group_id, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (owner, material_id, start, end, sg.text_hash(piece),
-             main["segment_id"], main["primary_category_id"], sg.SOURCE_HUMAN,
-             sg.STATUS_PENDING, "", main["id"], gid, ts, ts))
-        new_id = cur.lastrowid
+    参数（都有默认，默认就是人工合并的语义）：
+        category_id  新卡的主类。None = 跟第一张卡走
+        tag_names    新卡的副标签。None = 取所有参与卡的并集
+        source       新卡的来源。None = human（因为是她确认的）
+        new_card_note 新卡的备注，用来留"这条是哪个组合出来的"的痕迹
+    """
+    rows = _load_cards(conn, owner, ids)
+    if len(rows) < 2:
+        return {"ok": False, "message": "选中的卡片里有不存在或不属于你的"}
+    mids = {r["material_id"] for r in rows}
+    if len(mids) != 1:
+        return {"ok": False, "message": "不同文件的卡片不能合并"}
+    material_id = mids.pop()
+
+    rows = sorted(rows, key=lambda r: r["start_offset"])
+    start = rows[0]["start_offset"]
+    end = max(r["end_offset"] for r in rows)
+
+    # 中间夹着别的卡 → 不许合。
+    # 因为合并后的正文是 content[start:end] 这一整段，夹在中间的卡会被一起吞掉，
+    # 而它在库里还活着 —— 于是同一段原文有两个来源，偏移锚点这套设计就废了。
+    inner = conn.execute(
+        """SELECT COUNT(*) FROM cards WHERE owner_id=? AND material_id=?
+           AND id NOT IN (%s)
+           AND start_offset < ? AND end_offset > ?
+           AND status <> ?"""
+        % ",".join("?" * len(ids)),
+        [owner, material_id] + ids + [end, start,
+                                      sg.STATUS_EXCLUDED]).fetchone()[0]
+    if inner:
+        return {"ok": False,
+                "message": "这几张卡中间还夹着 %d 张别的卡片，不能合并"
+                           "（会把它们一起吞掉）。请先只选相邻的。" % inner}
+
+    content = _content(conn, material_id)
+    ts = now_str()
+    gid = new_group_id()
+    before, after = {}, {}
+
+    main = rows[0]
+    piece = content[start:end]
+
+    # ---- 先建新卡 ----
+    # 顺序不能反：原卡上要写 parent_card_id = 新卡号，得先知道它才是多少。
+    cur = conn.execute(
+        """INSERT INTO cards
+           (owner_id, material_id, start_offset, end_offset, source_text_hash,
+            segment_id, primary_category_id, source, status, note,
+            parent_card_id, operation_group_id, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (owner, material_id, start, end, sg.text_hash(piece),
+         main["segment_id"],
+         category_id if category_id is not None else main["primary_category_id"],
+         source or sg.SOURCE_HUMAN,
+         GROUP_MERGED_CARD_STATUS, new_card_note,
+         main["id"], gid, ts, ts))
+    new_id = cur.lastrowid
+
+    # ---- 再把参与的卡标成「已排除」，并指回新卡 ----
+    #
+    # 【为什么是「已排除」而不是新加一个「已合并」状态】
+    #   状态轴回答的是"这张卡还要不要人管"。合并之后它确实不用再管了 ——
+    #   内化、大纲检索、分类统计本来就该把它跳过，用现成的「已排除」
+    #   正好拿到这一串行为，一个字都不用改。
+    #   新加一个状态则要动内化候选池、分类筛选、界面统计好几处，
+    #   每处都是一个可能漏掉的地方。
+    #   「它是被合并掉的、不是被我排除的」这件事由 parent_card_id 回答，
+    #   界面上也据此分开显示，两件事本来就不该挤在同一个字段里。
+    #
+    # 【parent_card_id 要进快照】
+    #   撤销时得把它清回去。不进快照的话，撤销完原子卡还挂着
+    #   "我属于某条已经作废的卡"，界面上会显示一条指向空处的关系。
+    for r in rows:
+        before[str(r["id"])] = {"status": r["status"],
+                                "primary_category_id": r["primary_category_id"],
+                                "sub_tags": _card_tags(conn, r["id"]),
+                                "parent_card_id": r["parent_card_id"]}
+        conn.execute(
+            "UPDATE cards SET status=?, parent_card_id=?, updated_at=?"
+            " WHERE id=? AND owner_id=?",
+            (sg.STATUS_EXCLUDED, new_id, ts, r["id"], owner))
+        after[str(r["id"])] = {"status": sg.STATUS_EXCLUDED,
+                               "primary_category_id": r["primary_category_id"],
+                               "sub_tags": _card_tags(conn, r["id"]),
+                               "parent_card_id": new_id}
+
+    # 新卡只在 after 里、不在 before 里 ——
+    # 撤销时看到"有 after 没 before"就知道这是本次新建的，
+    # 会把它标为排除（撤销合并唯一的正确做法：原来几张回来、合并出来那张退场）。
+    after[str(new_id)] = {}
+
+    if tag_names is None:
         # 副标签取所有参与卡的并集
-        union = sorted({t for r in rows for t in _card_tags(conn, r["id"])})
-        _set_card_tags(conn, owner, new_id, union)
-        # 同上：新卡只在 after 里
-        after[str(new_id)] = {}
+        tag_names = sorted({t for r in rows for t in _card_tags(conn, r["id"])})
+    _set_card_tags(conn, owner, new_id, tag_names)
 
-        change_id = _write_change(
-            conn, owner, "merge", operator_id, material_id,
-            len(rows) + 1, [r["id"] for r in rows] + [new_id], before, after,
-            summary="合并 %d 张卡片 → #%d（原卡已排除，可恢复）"
-                    % (len(rows), new_id))
-        return {"ok": True, "change_id": change_id, "group_id": gid,
-                "card_id": new_id,
-                "message": "已合并成 1 张（#%d），原 %d 张已排除（可恢复）"
-                           % (new_id, len(rows))}
+    change_id = _write_change(
+        conn, owner, action_type, operator_id, material_id,
+        len(rows) + 1, [r["id"] for r in rows] + [new_id], before, after,
+        summary=summary or ("合并 %d 张卡片 → #%d（原卡已排除，可恢复）"
+                            % (len(rows), new_id)))
+    return {"ok": True, "change_id": change_id, "group_id": gid,
+            "card_id": new_id,
+            "message": "已合并成 1 张（#%d），原 %d 张已排除（可恢复）"
+                       % (new_id, len(rows))}
+
+
+# ----------------------------------------------------------------------
+# 逻辑素材组：AI 提议 → 她确认 → 合并
+#
+# 【整条路的形状】
+#   AI 在分类那一趟里顺手认出"这几段必须合看"
+#     → 落成一条提议（card_groups，状态「待确认」）
+#     → 她在界面上看见，点「合并」
+#     → 走 _merge_cards_in_tx（跟人工合并同一份实现，绝不另写一套）
+#     → 组变「已合并」，记下合并出的卡号和变更号，随时能撤销
+#
+# 【为什么第一版一律先提议、不自动合】
+#   这个库是她全部素材的家，卡片结构是内化和大纲的地基。
+#   AI 认错一次（把两段不相干的东西合了），后果不是"多了一条建议"，
+#   而是她库里凭空少了两张卡、多了一张不该有的 —— 而且她根本不会发现，
+#   因为生成出来的大纲看起来还是正常的（只是细节换了来源）。
+#   所以宁可让她多点一下（一条一秒），也不让 AI 直接改她的库。
+# ----------------------------------------------------------------------
+
+def create_group_proposals(owner, material_id, run_id, groups,
+                           cat_id_by_name=None, tag_id_by_name=None):
+    """把校验过的组提议写进 card_groups。返回写入与跳过的统计。
+
+    groups 每一条的格式（已由 classification._validate_groups 校验过）：
+        {"card_ids": [11,12,13], "action": "merge" / "review",
+         "primary_category": "神态与动作" 或 None,
+         "tags": ["心动"], "reason": "...", "confidence": 0.9}
+
+    【跳过规则：一张卡同时只属于一个组】
+    模型常常对同一段给出两条重叠的组（[11,12] 和 [12,13]）。
+    两条都收下，就等于告诉她"12 号卡同时在两个组里" ——
+    她合并第一条之后，第二条就成了一个残组，点下去会合出一张错的卡。
+    所以先到先得：卡已经被未忽略的组占了的，后面的整条丢掉。
+    （「已忽略」的组不算占用 —— 她明确驳回了那个组合，卡该放出来。）
+    """
+    groups = groups or []
+    if not groups:
+        return {"created": 0, "skipped": 0, "group_ids": []}
+
+    cat_id_by_name = cat_id_by_name or {}
+    tag_id_by_name = tag_id_by_name or {}
+    ts = now_str()
+
+    with db.connect() as conn:
+        used = set()
+        for r in conn.execute(
+                "SELECT card_ids FROM card_groups WHERE owner_id=?"
+                " AND material_id=? AND status<>?",
+                (owner, material_id, GROUP_IGNORED)).fetchall():
+            used |= {int(x) for x in (json.loads(r["card_ids"] or "[]") or [])}
+
+        created, skipped, gids = 0, 0, []
+        for g in groups:
+            try:
+                # 去重但保留顺序 —— 模型偶尔会把同一张卡写两遍，
+                # 不去重的话 len(ids) 比实际卡数多，后面"存不存在"就判不准了。
+                ids = list(dict.fromkeys(
+                    int(i) for i in (g.get("card_ids") or [])))
+            except (TypeError, ValueError):
+                skipped += 1
+                continue
+            if len(ids) < 2 or any(i in used for i in ids):
+                skipped += 1
+                continue
+
+            rows = _load_cards(conn, owner, ids)
+            if len(rows) != len(ids):
+                skipped += 1                      # 有不存在的、或者不是她的
+                continue
+            if {r["material_id"] for r in rows} != {material_id}:
+                skipped += 1                      # 跨文件：区间不连续，合出来是乱码
+                continue
+            if any(r["status"] == sg.STATUS_EXCLUDED for r in rows):
+                skipped += 1                      # 已经被排除/合掉的卡不再参与
+                continue
+
+            rows = sorted(rows, key=lambda r: r["start_offset"])
+            ordered = [r["id"] for r in rows]
+            start = rows[0]["start_offset"]
+            end = max(r["end_offset"] for r in rows)
+
+            # ---- 中间不许夹着别的卡 ----
+            #
+            # 任务书第 3 条：每组只能由原文中连续、相邻的卡组成。
+            # 校验层（classification._validate_groups）已经拦过一遍，
+            # 这里是**最后一道闸** —— 因为合出来的正文是 content[start:end]
+            # 这一整段，夹在中间的那张卡会被一起吞掉、而它在库里还活着：
+            # 同一段原文就有了两个来源，偏移锚点这套设计当场作废。
+            # 这种事一旦写进库就查不出来（大纲看起来还是正常的），
+            # 所以宁可多查一次库，也不放任何一条带缝的组进去。
+            inner = conn.execute(
+                """SELECT COUNT(*) FROM cards WHERE owner_id=?
+                   AND material_id=? AND id NOT IN (%s)
+                   AND start_offset < ? AND end_offset > ?
+                   AND status <> ?"""
+                % ",".join("?" * len(ordered)),
+                [owner, material_id] + ordered + [end, start,
+                                                  sg.STATUS_EXCLUDED]
+            ).fetchone()[0]
+            if inner:
+                skipped += 1
+                continue
+
+            cat_id = cat_id_by_name.get(g.get("primary_category") or "")
+            tags = [str(t).strip() for t in (g.get("tags") or [])
+                    if str(t).strip()]
+
+            conf = g.get("confidence")
+            cur = conn.execute(
+                """INSERT INTO card_groups
+                   (owner_id, material_id, run_id, card_ids, start_offset,
+                    end_offset, action, primary_category_id, tags, reason,
+                    confidence, status, merged_card_id, merged_change_id,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)""",
+                (owner, material_id, run_id,
+                 json.dumps(ordered, ensure_ascii=False), start, end,
+                 g.get("action") or GROUP_ACTION_REVIEW,
+                 cat_id, json.dumps(tags, ensure_ascii=False),
+                 (g.get("reason") or "")[:1000], conf, GROUP_PENDING, ts, ts))
+            gids.append(cur.lastrowid)
+            used |= set(ordered)
+            created += 1
+
+        return {"created": created, "skipped": skipped, "group_ids": gids}
+
+
+def _group_dict(row, members=None, cat_names=None):
+    """一行 card_groups 补成前端要的形状。"""
+    cat_names = cat_names or {}
+    return {
+        "id": row["id"],
+        "material_id": row["material_id"],
+        "run_id": row["run_id"],
+        "card_ids": [int(x) for x in (json.loads(row["card_ids"] or "[]") or [])],
+        "start_offset": row["start_offset"],
+        "end_offset": row["end_offset"],
+        "action": row["action"],
+        "primary_category_id": row["primary_category_id"],
+        "category_name": cat_names.get(row["primary_category_id"], ""),
+        "tags": json.loads(row["tags"] or "[]") or [],
+        "reason": row["reason"],
+        "confidence": row["confidence"],
+        "status": row["status"],
+        "merged_card_id": row["merged_card_id"],
+        "merged_change_id": row["merged_change_id"],
+        "chars": max(0, int(row["end_offset"]) - int(row["start_offset"])),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "members": members or [],
+    }
+
+
+def list_groups(owner, material_id=None, status=None, limit=200):
+    """列出逻辑素材组，连成员卡的正文一起给。
+
+    【为什么成员正文在这里一次查完，不让前端逐条拉】
+    一个组最多几段，一次查完最省事。前端逐条拉的话，列表一滚就是
+    几十个请求；而且中间任何一条失败，那个组的成员就会缺一块，
+    界面上看着像"这个组只有两段"，实际是三段 —— 这种半截数据最难查。
+    """
+    where = ["g.owner_id = ?"]
+    params = [owner]
+    if material_id:
+        where.append("g.material_id = ?")
+        params.append(int(material_id))
+    if status:
+        where.append("g.status = ?")
+        params.append(status)
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT g.* FROM card_groups g WHERE " + " AND ".join(where) +
+            " ORDER BY g.material_id, g.start_offset, g.id LIMIT ?",
+            params + [int(limit)]).fetchall()
+        if not rows:
+            return []
+
+        cat_names = {c["id"]: c["name"] for c in list_categories(owner)}
+
+        all_ids = []
+        for r in rows:
+            all_ids += [int(x) for x in (json.loads(r["card_ids"] or "[]") or [])]
+        cards = {c["id"]: c for c in _load_cards(conn, owner, all_ids)}
+        contents = {mid: (_content(conn, mid) or "")
+                    for mid in {r["material_id"] for r in rows}}
+
+        out = []
+        for r in rows:
+            content = contents.get(r["material_id"]) or ""
+            mem = []
+            for cid in (json.loads(r["card_ids"] or "[]") or []):
+                c = cards.get(int(cid))
+                if c:
+                    mem.append(_decorate(conn, c, content, cat_names))
+            out.append(_group_dict(r, mem, cat_names))
+        return out
+
+
+def count_groups(owner, material_id=None):
+    """各状态的组数，界面上那几个数字用它。"""
+    where = ["owner_id = ?"]
+    params = [owner]
+    if material_id:
+        where.append("material_id = ?")
+        params.append(int(material_id))
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM card_groups WHERE " +
+            " AND ".join(where) + " GROUP BY status", params).fetchall()
+    by = {r["status"]: r["n"] for r in rows}
+    for s in ALL_GROUP_STATUS:
+        by.setdefault(s, 0)
+    by["total"] = sum(by[s] for s in ALL_GROUP_STATUS)
+    return by
+
+
+def confirm_group(group_id, owner, operator_id=None):
+    """把一组合起来。这是「她点了确认」那个动作。
+
+    合并本身走 _merge_cards_in_tx —— 跟人工手选几张合并完全同一条路。
+    这里只多两件事：把组的状态改成「已合并」、记下合并出的卡和变更号。
+    """
+    with db.connect() as conn:
+        g = conn.execute("SELECT * FROM card_groups WHERE id=? AND owner_id=?",
+                         (group_id, owner)).fetchone()
+        if not g:
+            return {"ok": False, "message": "没有这个逻辑素材组"}
+        if g["status"] == GROUP_MERGED:
+            return {"ok": False, "message": "这一组已经合并过了"}
+        if g["status"] == GROUP_IGNORED:
+            return {"ok": False,
+                    "message": "这一组你已经忽略了。想合的话先点「恢复待确认」。"}
+
+        ids = [int(x) for x in (json.loads(g["card_ids"] or "[]") or [])]
+        if len(ids) < 2:
+            return {"ok": False, "message": "这一组不足两段，没法合并"}
+
+        res = _merge_cards_in_tx(
+            conn, owner, ids, operator_id=operator_id,
+            action_type="merge_group",
+            new_card_note="由逻辑素材组 #%d 合并（共 %d 段）"
+                          % (group_id, len(ids)),
+            category_id=g["primary_category_id"],
+            tag_names=json.loads(g["tags"] or "[]") or None)
+        if not res.get("ok"):
+            return res
+
+        conn.execute(
+            "UPDATE card_groups SET status=?, merged_card_id=?,"
+            " merged_change_id=?, updated_at=? WHERE id=? AND owner_id=?",
+            (GROUP_MERGED, res["card_id"], res["change_id"], now_str(),
+             group_id, owner))
+
+        res["card_group_id"] = group_id
+        res["message"] = ("已把 %d 段合成 1 张（#%d），原 %d 段已收起、"
+                          "随时能撤销" % (len(ids), res["card_id"], len(ids)))
+        return res
+
+
+def ignore_group(group_id, owner, operator_id=None):
+    """驳回一组。**只动组的状态，一张卡片都不碰。**
+
+    为什么不干脆把这条记录删掉：删了之后她再问"这组为什么没合"
+    就永远查不到了；而且下次再分类同一份素材，模型很可能又提一遍同样的组，
+    她得再驳回一次。留着 + 标「已忽略」，这张卡的占用也就释放了。
+    """
+    with db.connect() as conn:
+        g = conn.execute("SELECT * FROM card_groups WHERE id=? AND owner_id=?",
+                         (group_id, owner)).fetchone()
+        if not g:
+            return {"ok": False, "message": "没有这个逻辑素材组"}
+        if g["status"] == GROUP_MERGED:
+            return {"ok": False,
+                    "message": "这一组已经合并了。要拆开请点「撤销合并」。"}
+        conn.execute("UPDATE card_groups SET status=?, updated_at=?"
+                     " WHERE id=? AND owner_id=?",
+                     (GROUP_IGNORED, now_str(), group_id, owner))
+        return {"ok": True, "message": "已忽略这一组，卡片保持原样没动"}
+
+
+def restore_group(group_id, owner):
+    """把忽略掉的组放回「待确认」。
+
+    【为什么需要它】
+    「忽略」是个判断，而判断会变：她当时觉得这两段不该合，
+    跑完新的素材之后再回头看，可能又觉得该合了。
+    没有回头路的话，那个组就永久消失了，她只能等下次分类再被提一遍
+    （而下次多半还会被她忽略，因为它看起来一模一样）。
+    """
+    with db.connect() as conn:
+        g = conn.execute("SELECT * FROM card_groups WHERE id=? AND owner_id=?",
+                         (group_id, owner)).fetchone()
+        if not g:
+            return {"ok": False, "message": "没有这个逻辑素材组"}
+        if g["status"] == GROUP_MERGED:
+            return {"ok": False,
+                    "message": "这一组已经合并了。要拆开请点「撤销合并」。"}
+        conn.execute("UPDATE card_groups SET status=?, updated_at=?"
+                     " WHERE id=? AND owner_id=?",
+                     (GROUP_PENDING, now_str(), group_id, owner))
+        return {"ok": True, "message": "已放回「待确认」"}
+
+
+def undo_group_merge(group_id, owner):
+    """撤销一次组合并。
+
+    **不另写一套撤销逻辑**，直接走通用的 undo_change ——
+    它已经处理了最难的那部分（只恢复"这次改过、之后没人再动过"的字段，
+    并把本次新建的那张卡标为排除，让她原来的几张回来）。
+    这里只需要把组的状态摆回「待确认」。
+    """
+    with db.connect() as conn:
+        g = conn.execute("SELECT * FROM card_groups WHERE id=? AND owner_id=?",
+                         (group_id, owner)).fetchone()
+        if not g:
+            return {"ok": False, "message": "没有这个逻辑素材组"}
+        if g["status"] != GROUP_MERGED:
+            return {"ok": False, "message": "这一组现在不是已合并状态"}
+        change_id = g["merged_change_id"]
+        if not change_id:
+            return {"ok": False, "message": "这一组没有可撤销的变更记录"}
+
+    res = undo_change(owner, change_id)
+    if not res.get("ok"):
+        return res
+
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE card_groups SET status=?, merged_card_id=NULL,"
+            " merged_change_id=NULL, updated_at=? WHERE id=? AND owner_id=?",
+            (GROUP_PENDING, now_str(), group_id, owner))
+    res["card_group_id"] = group_id
+    res["message"] = res.get("message", "已撤销") + "；这一组回到「待确认」"
+    return res
 
 
 def restore_segments_as_cards(run_id, owner, segment_ids=None, operator_id=None):

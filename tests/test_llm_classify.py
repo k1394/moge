@@ -131,7 +131,8 @@ def main():
           "神态看得见" in sysmsg, True)
     check("建议副标签发过去了", "直接描写" in sysmsg, True)
     check("副标签清单发过去了", "好磕" in sysmsg, True)
-    check("明确要求只输出 JSON 数组", "只输出一个 JSON 数组" in sysmsg, True)
+    check("明确要求只输出 JSON 对象", "只输出一个 JSON 对象" in sysmsg, True)
+    check("同时要它给出该合看的组（逻辑素材组）", "groups" in sysmsg, True)
     check("明确说了判不出填 null", "null" in sysmsg, True)
     check("明确说了编号要原样照抄", "原样照抄" in sysmsg, True)
     check("要求理由具体（不许写空话）", "空话" in sysmsg, True)
@@ -526,7 +527,7 @@ def main():
 
         check("请求确实发出去了（发了 1 批）", len(calls), 1)
         check("请求里带的是「原样照抄编号」的那套提示词",
-              "只输出一个 JSON 数组" in calls[0]["messages"][0]["content"], True)
+              "只输出一个 JSON 对象" in calls[0]["messages"][0]["content"], True)
         check("默认开着 json_mode", calls[0]["json_mode"], True)
 
         # ------------------------------------------------------------------

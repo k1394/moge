@@ -632,6 +632,36 @@
   }
   .clbatch .mini.primary:hover { background: #7a4d33; color: #fff; }
 
+  /* ---- 逻辑素材组 ----
+     AI 认出「这几段合起来才算一条完整素材」，摆在这儿等她点头。
+     刻意做得比卡片显眼一点（这是一件"要她做的事"），但不用告警色 ——
+     它不是错，只是一条待她过目的建议。左边那根竖线是唯一的强调。 */
+  .clgroups { margin-bottom: 12px; }
+  .clgroups .ghead {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    font-size: 13px; color: var(--ink-2); margin: 2px 0 8px;
+  }
+  .clgroups .ghead b { font-size: 14.5px; color: var(--ink); }
+  .grp {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius); padding: 11px 14px; margin-bottom: 8px;
+  }
+  .grp.done { border-left-color: var(--ink-3); opacity: .74; }
+  .grp.off { border-left-color: var(--line); opacity: .58; }
+  .grp .gwhy {
+    font-size: 12.5px; line-height: 1.7; color: var(--ink-2); margin-bottom: 8px;
+  }
+  .grp .gmem { display: flex; flex-direction: column; gap: 5px; margin-bottom: 9px; }
+  .grp .gm {
+    font-size: 12.5px; line-height: 1.75; color: var(--ink-2);
+    padding-left: 10px; border-left: 2px solid var(--line);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .grp .gm b { color: var(--ink-3); font-weight: 500; margin-right: 6px; }
+  .grp .gacts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grp .gacts .sp { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+
   .clcard {
     display: flex; gap: 11px; align-items: flex-start;
     background: var(--card); border: 1px solid var(--line);
@@ -1448,6 +1478,7 @@
         <div><span class="num" id="clStatNo">-</span>未分类</div>
         <div><span class="num" id="clStatEx">-</span>已排除</div>
         <div><span class="num" id="clStatNoise">-</span>条噪音</div>
+        <div><span class="num" id="clStatGroups">-</span>组待确认</div>
       </div>
 
       <div class="vbody">
@@ -1455,6 +1486,10 @@
           <div class="clcatbar" id="clCatBar"></div>
           <div class="clfilters" id="clFilters"></div>
           <div class="clbatch" id="clBatch" hidden></div>
+          <!-- 逻辑素材组：AI 认出「这几段合起来才算一条完整素材」，等她点头。
+               放在卡片流**上面**是因为它是一件"要她做的事" ——
+               混在几百张卡片里就等于没提。处理完自然消失（全合并/忽略后隐藏）。 -->
+          <div class="clgroups" id="clGroups" hidden></div>
           <div id="clCards"></div>
           <div id="clMore" style="margin:14px 0 40px"></div>
         </div>
@@ -4023,6 +4058,14 @@ const C = {
   sel: {}, cats: [], statuses: [], tags: [], tagsAll: [], rules: [],
   cMap: {}, lastChange: null, catCounts: {}, pvOpen: false,
   sample: null, picker: null, maps: [], changes: [],
+  /* 逻辑素材组。
+     状态和动作的中文定义都在后端（跟着 /api/categories 一起下发），
+     这里只存"按键名查出来的值" —— 前端一个中文字面量都不抄。
+     抄了的话后端改一个字，前端就静默对不上：不报错、测试也不失败，
+     只有盯着界面才看得见。 */
+  groups: [], gCounts: {},
+  gs: { pending: "", merged: "", ignored: "" },
+  ga: { merge: "", review: "" },
   f: { cat: "", tag: "", status: "", exclude: false, bad: false, dup: false, order: "category" }
 };
 
@@ -4070,12 +4113,15 @@ async function loadClassify(force) {
       C.tags = opt.sub_tags || [];
       C.tagsAll = opt.sub_tags_all || C.tags;
       C.rules = opt.rules || [];
+      if (opt.group_status_keys) C.gs = opt.group_status_keys;
+      if (opt.group_action_keys) C.ga = opt.group_action_keys;
       C.ready = true;
       renderClFilters();
       renderClCatBar();
     }
     // 这里不再"读文件清单"了：卡片是全部素材汇总的，没有"当前这份文件"。
     // 文件那一层（含切分）在「总素材库」，见 openSplit()。
+    await loadGroups();
     await loadCards();
   } catch (e) {
     toast(e.message, true);
@@ -4639,6 +4685,7 @@ async function loadClSources() {
    现在没有选文件这一步了，就显式串在一起 —— 免得哪个调用点只刷了一半。 */
 async function refreshClView() {
   await loadClSources();
+  await loadGroups();
   await loadCards();
 }
 
@@ -4814,6 +4861,118 @@ async function restoreNoise() {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ---------------- 逻辑素材组 ----------------
+   AI 在分类那一趟里顺手认出「这几段合起来才算一条完整素材」
+   （对白与回应、动作与结果、铺垫与落点…）。
+
+   组只是一份**提议**：不点「合并这一组」，库里一个字节都不会变。
+   为什么坚持要她点一下、不自动合：合并会真的改卡片结构
+   （原来那几段标「已排除」、长出一条新卡），而 AI 认错一次她不会发现 ——
+   生成出来的大纲看着还是正常的，只是那段细节换了来源。
+   点一下只要一秒钟，认错一次的代价却是她的库里凭空少了几张卡。
+
+   合并 / 撤销走的是跟「手动选几张卡合并」同一个后端函数，
+   产出完全一样，也进同一条可撤销的记录。 */
+
+async function loadGroups() {
+  try {
+    const r = await api("/api/groups?limit=200");
+    C.groups = r.groups || [];
+    C.gCounts = r.counts || {};
+  } catch (e) {
+    // 组取不到不该拦住卡片流 —— 它只是列表上面的一条提示，
+    // 而卡片是这个页面的主体。
+    C.groups = [];
+    C.gCounts = {};
+  }
+  renderGroups();
+}
+
+function renderGroups() {
+  const box = document.getElementById("clGroups");
+  if (!box) return;
+
+  const pend = C.gCounts[C.gs.pending] || 0;
+  fill("clStatGroups", fmtNum(pend));
+
+  if (!C.groups.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+
+  // 待确认的排最前面 —— 那是"要她做的事"，已合并/已忽略只是记录。
+  const rank = [C.gs.pending, C.gs.merged, C.gs.ignored];
+  const list = C.groups.slice().sort((a, b) =>
+    rank.indexOf(a.status) - rank.indexOf(b.status) || a.id - b.id);
+
+  const head = '<div class="ghead"><b>' +
+    (pend ? "有 " + fmtNum(pend) + " 组素材等着你定" : "逻辑素材组") + "</b>" +
+    "<span>AI 觉得这几段合起来才算一条完整素材。" +
+    "点「合并这一组」才会真的合成一条，随时能撤销。</span></div>";
+
+  box.innerHTML = head + list.map(groupCardHtml).join("");
+
+  box.querySelectorAll("button[data-gact]").forEach(b => {
+    b.onclick = () => actGroup(Number(b.dataset.gid), b.dataset.gact, b);
+  });
+}
+
+function groupCardHtml(g) {
+  const ids = g.card_ids || [];
+  const cls = g.status === C.gs.merged ? " done"
+            : g.status === C.gs.ignored ? " off" : "";
+  const why = g.reason ? esc(g.reason) : "（模型没写理由）";
+  const conf = (g.confidence == null) ? ""
+    : "，把握 " + Math.round(g.confidence * 100) + "%";
+  const cat = g.category_name ? "，合起来算「" + esc(g.category_name) + "」" : "";
+
+  const mem = ids.map(id => {
+    const m = (g.members || []).find(x => x.id === id) || {};
+    return '<div class="gm"><b>#' + id + "</b>" + esc(m.text || "") + "</div>";
+  }).join("");
+
+  const tail = g.status === C.gs.merged
+    ? "已合并成 #" + g.merged_card_id
+    : "#" + g.id;
+
+  return '<div class="grp' + cls + '">' +
+    '<div class="gwhy">这 ' + ids.length + " 段合起来是一条素材" + cat +
+      "（共 " + fmtNum(g.chars) + " 字）—— 它的理由：" + why + esc(conf) +
+    "</div>" +
+    '<div class="gmem">' + mem + "</div>" +
+    '<div class="gacts">' + groupActsHtml(g) +
+      '<span class="sp">' + esc(tail) + "</span></div></div>";
+}
+
+function groupActsHtml(g) {
+  const btn = (act, label, cls) =>
+    '<button class="btn' + (cls ? " " + cls : "") +
+    '" data-gact="' + act + '" data-gid="' + g.id + '">' +
+    esc(label) + "</button>";
+  if (g.status === C.gs.merged) return btn("undo", "撤销合并");
+  if (g.status === C.gs.ignored) return btn("restore", "恢复待确认");
+  return btn("confirm", "合并这一组", "primary") + btn("ignore", "不用合并");
+}
+
+async function actGroup(gid, act, btn) {
+  if (["confirm", "ignore", "undo", "restore"].indexOf(act) < 0) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api("/api/groups/" + gid + "/" + act, { method: "POST" });
+    toast(r.message || "好了");
+    await loadGroups();
+    // 合并和撤销都会动卡片（原卡标「已排除」、长出一条新卡），
+    // 卡片流必须跟着刷 —— 不然她会对着一个跟库里不一致的列表继续改，
+    // 而且改的可能是那张已经作废的卡。
+    if (act === "confirm" || act === "undo") await loadCards();
+  } catch (e) {
+    toast(e.message, true);
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ---------------- 卡片流 ----------------
    这里是**全部素材的卡片汇总在一起**，不再带 material_id ——
    "我手上有没有关于『外貌』的好料"这个问题，不该先要求她选文件。
@@ -4935,8 +5094,17 @@ function renderClCards() {
                  esc(card.verify_reason || "") + '</span>');
     }
     if (card.parent_card_id) {
-      warns.push('<span class="chip gray">由拆分或合并产生（原卡 #' +
-                 card.parent_card_id + '）</span>');
+      if (card.merged_into) {
+        // 「已排除」有两种来源，长得一样但意思完全不同：
+        // 她自己排除的是"我不要了"，被合并掉的是"它并进了别处、还能撤回来"。
+        // 判据在后端（merged_into）—— 已排除 + 还指着一张卡就是后者，
+        // 拆分退场的那张原卡不会指人。
+        warns.push('<span class="chip gray">已并入 #' + card.parent_card_id +
+                   '（合并后收起，可撤销）</span>');
+      } else {
+        warns.push('<span class="chip gray">由拆分或合并产生（原卡 #' +
+                   card.parent_card_id + '）</span>');
+      }
     }
 
     /* AI 建议必须一眼看得出来。

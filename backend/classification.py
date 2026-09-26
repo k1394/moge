@@ -115,6 +115,20 @@ BATCH_SIZE = 25
 # 第一批只发这么多条（理由写在 _execute 里）。
 FIRST_BATCH_SIZE = 6
 
+# 每批往后、往前各多发几条"只看不判"的邻居。
+#
+# 【为什么非要这个东西】
+# 批次是硬切的。一条素材正好跨在两批中间时，前一批只看到它的上半截、
+# 后一批只看到下半截 —— 两批都会判"不用合"，于是这个组永远识别不出来，
+# 而且**不会报任何错**，只会表现为"AI 怎么老是漏掉这种"。
+# 每批带上紧挨着的几条邻居，模型就能看清"我这批的第一条前面是什么、
+# 最后一条后面是什么"，边界那一条才判得准。
+#
+# 【为什么是 3 条】
+# 一条素材一般是 2-4 段，3 条足够看清边界那边是什么。
+# 再多的收益很小，但每批要发的字数会明显涨（25 条变 30 条 = 多花一笔）。
+CONTEXT_ROWS = 3
+
 # 置信度低于它、或者分类器自己说"拿不准"，就算「需要人工处理」。
 # 注意：这个阈值不改变卡片状态（都还是「待确认」），
 #       它只是给界面提供"先看这几条"的筛选依据。
@@ -592,6 +606,12 @@ class PlaceholderClassifier(object):
     def classify_batch(self, items, ctx):
         out = []
         for it in items:
+            # 上下文卡（每批前后多带的那几条邻居）**只看不判**。
+            # 为它们出结果会被校验层判成"越界卡片"整批拒收 ——
+            # 那等于一发上下文就把整批搞挂，而且报错指向的地方
+            # 跟真正的原因（这里有个人忘了跳过）差着十万八千里。
+            if it.get("ctx"):
+                continue
             r = placeholder_rule_judge(it.get("text") or "", it.get("seq") or 0)
             r["card_id"] = it.get("card_id")
             r.setdefault("suggest_exclude", False)
@@ -642,9 +662,54 @@ PROMPT_FILE = "classify.txt"
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 模板里必须有这几个占位符，少一个就不能用。
-REQUIRED_SLOTS = ("{categories}", "{sub_tags}")
+REQUIRED_SLOTS = ("{categories}", "{sub_tags}", "{groups}")
 
 PROMPT_VERSION_GENERIC = "v1-generic"
+
+# ----------------------------------------------------------------------
+# 「逻辑素材组」这段判据
+#
+# 【为什么单独抽一个常量，而不是直接写进模板里】
+# 它跟 {categories} 是一类的：模板回答"怎么问"，这一段回答"问什么"。
+# 而且它以后还要调（最多合几条、review 这一档留不留），
+# 写死在模板里的话，改一次就得动两个人的文件。
+#
+# 【为什么判据要写成"什么不算理由"】
+# 模型（和人）最容易犯的错，就是拿"这两条很像"当"这两条该合"。
+# 按"像"去合的后果是整个库被合得面目全非：
+# 所有同一人物的片段连成一串，原来的精细切片全没了。
+# 所以这里把四条似是而非的理由逐条点掉 —— 它们在测试里也各有一条断言守着。
+# ----------------------------------------------------------------------
+GROUPS_INSTRUCTION = """\
+【第二件事：看相邻的几条是不是该合在一起看】
+
+我给你的卡片是按原文顺序排的。有些时候，连着的好几条合起来才算一条完整素材，
+而单独看每一条都只是半截意思。常见的样子：
+
+- 一问一答：一条把话说出口，下一条是对面怎么接的
+- 动作和结果：一条做动作，下一条是这个动作造成了什么
+- 铺垫和落点：一条先铺，下一条才是那个笑点或者那一下
+- 心理和后果：一条是心里怎么想，下一条是因此干了什么
+
+判据只有一条：拆开之后会不会丢掉因果关系、回应关系、笑点落点，或者含义变了。
+
+下面这些都不是该合的理由，看到就别合 ——
+- 两条写的是同一个人
+- 两条被分在同一个主类
+- 两条里出现了同样的词
+- 两条的气氛差不多
+
+（这四条只说明"像"，不说明"缺了对方就不成立"。拿它们当理由去合，
+会把整个库合得面目全非：同一个人的片段全连成一串，原来的精细切片就没了。）
+
+另外几条：
+- 一组的成员必须在原文里挨着，中间不许跳过去
+- 一组至少 2 条、最多 6 条
+- 边界拿不准的（说不清该从哪断开）：action 填 "review"，交给作者自己看
+- 确定该合的：action 填 "merge"
+- 不需要合的，一条都不用写进 groups。我只想知道哪些该合。
+
+"""
 
 # 框架级通用模板：能跑通、判得出类别，但没有针对某个人的素材口味调过。
 # 公开仓库里就是这一份。
@@ -661,25 +726,36 @@ GENERIC_CLASSIFY_PROMPT = """\
 一条可以挂好几个副标签，也可以一个都不挂。\
 副标签只是「这类常用到」，不是规定 —— 你觉得贴切就能用。
 
-【怎么判】
+【第一件事：判每条属于哪一类】
 - 把整条读完再判，不要只看开头几个字
 - 两个类拿不准的时候，重点看判据里「和 XX 的分界」那一句
 - **真的判不出来就把主类填 null，不要猜。**\
 猜错比留空更糟：它会冒充成一条「AI 的建议」混进素材库，作者不容易发现。
 - 理由要具体：说清这条里的哪些字让你这么判。\
 不要写「描写生动」「很有画面感」这种空话。
-{user_prompt}
+{groups}{user_prompt}
 【输出格式】
-只输出一个 JSON 数组，不要任何别的话，不要 markdown 代码块。
-数组里每个元素长这样：
+只输出一个 JSON 对象，不要任何别的话，不要 markdown 代码块。
+对象长这样：
+{"cards": [每条卡的结果], "groups": [每个该合看的小组]}
+
+cards 里每个元素：
 {"card_id": 12, "primary_category": "外貌", "tags": ["直接描写"], \
 "reason": "一句话理由", "confidence": 0.8}
+
+groups 里每个元素（没有该合的组就填空数组 []）：
+{"card_ids": [12, 13], "action": "merge", \
+"primary_category": "对话台词", "tags": [], \
+"reason": "为什么这几条该合看", "confidence": 0.85}
+
 字段说明：
-- card_id：**原样照抄**我给每条标的编号，不许自己重新编号
+- cards：**每条都要有一条结果**，一条都不能漏
+- card_id / card_ids：**原样照抄**我给每条标的编号，不许自己重新编号
 - primary_category：主类名；判不出就填 null
 - tags：副标签数组（可以是空数组 []）
 - reason：一句话理由
 - confidence：0 到 1 的小数，你觉得有多大把握
+- action：merge（该合）或者 review（拿不准，交作者自己看）
 """
 
 
@@ -1169,21 +1245,55 @@ def build_messages(categories, sub_tags, material_title, items,
         template,
         categories="\n\n".join(cats_block),
         sub_tags=("、".join(sub_tags) if sub_tags else "（暂时没有）"),
+        groups=GROUPS_INSTRUCTION,
         user_prompt=extra_block,
     )
 
-    head = "请判断下面 %d 条素材。" % len(items)
+    # ---- 正文分三块：上文 / 本批 / 下文 ----
+    #
+    # 【为什么要有"上文 / 下文"这两块】
+    # 批次是硬切的（第一批 6 条，之后每批 25 条）。一条素材正好跨在两批中间时，
+    # 两批都只能看到半截，于是两批都判"不用合" —— 这个组就永远识别不出来，
+    # 而且不会报任何错。
+    # 所以每批往前、往后各多带几条**只看不判**的邻居，
+    # 让模型能看到"我这批的第一条前面是什么、最后一条后面是什么"。
+    #
+    # 【为什么上下文要分成独立的两块，而不是混在一条流水线上】
+    # 混在一起它们就长得跟本批的卡一样，模型会顺手为它们也出一份分类结果 ——
+    # 那些结果要么被判成越界整批拒收，要么（更糟）覆盖掉上一批刚判好的。
+    # 分成三块、每块带标题，模型一眼就知道哪块是它的活。
+    judge = [it for it in items if not it.get("ctx")]
+    before = [it for it in items if it.get("ctx") == "before"]
+    after = [it for it in items if it.get("ctx") == "after"]
+
+    def _lines(rows):
+        return "\n\n".join("[%s] %s" % (it.get("card_id"),
+                                        (it.get("text") or "").strip())
+                           for it in rows)
+
+    parts = []
+    if before:
+        parts.append(
+            "【上一批的尾巴】\n"
+            "（这几条是上一批已经判过的，给你看边界用："
+            "「不要为它们单独出分类结果」。但如果它们和我下面某几条"
+            "确实该合在一起看，那要写进 groups。）\n\n" + _lines(before))
+    parts.append("【这次要判的卡片】\n\n" + _lines(judge))
+    if after:
+        parts.append(
+            "【下一批的开头】\n"
+            "（同上，只帮你判断最后一条要不要跟它们合看，"
+            "「不要为它们单独出分类结果」。）\n\n" + _lines(after))
+
+    head = "请判断下面 %d 条素材。" % len(judge)
     if material_title:
         head += ("（它们来自一份叫「%s」的素材，这个信息只当背景，"
                  "不用写进理由。）" % material_title)
-    body = "\n\n".join(
-        "[%s] %s" % (it.get("card_id"), (it.get("text") or "").strip())
-        for it in items)
 
     # 这几行不走模板：它们是每次都要现拼的（条数 / 标题 / 正文），
     # 换模板的人不该有机会把它们写丢。模板只管"怎么问"。
     return ([{"role": "system", "content": system},
-             {"role": "user", "content": head + "\n\n" + body}],
+             {"role": "user", "content": head + "\n\n" + "\n\n".join(parts)}],
             src, warn)
 
 
@@ -1202,17 +1312,38 @@ def _as_list(d):
     raise SuggestionError("模型的返回不是数组，是 %s" % type(d).__name__)
 
 
-def _extract_json_array(text):
-    """从模型返回的文本里抠出 JSON 数组。
+def _split_result(d):
+    """把模型给的东西拆成 (逐卡结果, 组结果)。两种情况都得认。
+
+    · 新版：{"cards": [...], "groups": [...]}
+    · 老版：直接一个数组（她手上旧提示词产出的、或者模型自己简化了）
+
+    只回数组时组就是空的。**绝不能因为"没给 groups"就把整批判失败** ——
+    那等于一个新功能把她原来好好的分类搞挂，
+    而且报错信息会指向一个她根本没碰过的地方。
+    """
+    if isinstance(d, dict):
+        cards, groups = d.get("cards"), d.get("groups")
+        if isinstance(cards, list) or isinstance(groups, list):
+            return (cards if isinstance(cards, list) else [],
+                    groups if isinstance(groups, list) else [])
+        if "card_id" in d:                 # 只判了一条，直接给了个对象
+            return [d], []
+        return _as_list(d), []             # 老结构：items / results / data / …
+    return _as_list(d), []
+
+
+def _extract_result(text):
+    """从模型返回的文本里抠出 (逐卡结果, 组结果)。
 
     【为什么不直接 json.loads】
     模型很爱在 JSON 外面裹东西：```json 围栏、「好的，结果如下：」、
     末尾再补一句「以上共 25 条」。这些都是常态，不是极端情况。
-
-    三步走：剥围栏 → 直接 parse → 找第一个 [ 到最后一个 ] 截出来 parse。
+    三步走：剥围栏 → 直接 parse → 截大括号 parse。
+    截的时候**先试对象**：新版要求返回对象，先按数组截会把
+    cards 数组截出来、把 groups 那段留在外面。
     """
     s = (text or "").strip()
-
     if s.startswith("```"):
         nl = s.find("\n")
         if nl >= 0:
@@ -1221,24 +1352,96 @@ def _extract_json_array(text):
             s = s.rstrip()[:-3].rstrip()
 
     try:
-        return _as_list(json.loads(s))
+        return _split_result(json.loads(s))
     except SuggestionError:
         raise
     except Exception:
         pass
 
-    for a, b in (("[", "]"), ("{", "}")):
+    for a, b in (("{", "}"), ("[", "]")):
         i, j = s.find(a), s.rfind(b)
         if i >= 0 and j > i:
             try:
-                return _as_list(json.loads(s[i:j + 1]))
+                return _split_result(json.loads(s[i:j + 1]))
             except SuggestionError:
                 raise
             except Exception:
                 continue
 
     raise SuggestionError(
-        "模型的返回里找不到 JSON 数组。它说的前 200 字：%s" % s[:200])
+        "模型的返回里找不到 JSON。它说的前 200 字：%s" % s[:200])
+
+
+def _norm_card_rows(rows):
+    """把模型给的逐卡结果归一化。**原样带上它给的所有字段。**"""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue                      # 数组里混进别的类型，跳过
+
+        # **原样带上它给的所有字段**，再往下归一化我认识的那几个。
+        #
+        # 为什么不能只挑自己认识的字段：
+        #   _validate_suggestions 里有一条「返回里带了正文就整批拒收」的
+        #   规矩（正文只能来自原材料）。如果这里先把不认识的字段丢掉，
+        #   那条规矩就永远拦不到任何东西 —— 闸门修得再好，
+        #   前面有人把水滤干净了也没用。
+        item = dict(r)
+        cat = r.get("primary_category")
+        item.update({
+            "card_id": r.get("card_id"),
+            # 字符串就去个空格；不是字符串就原样留着，
+            # 让 _validate_suggestions 去拒收（类型坏了说明整批不可信）
+            "primary_category": cat.strip() if isinstance(cat, str) else cat,
+            "tags": r.get("tags") or [],
+            "reason": str(r.get("reason") or ""),
+            "confidence": r.get("confidence"),
+            "suggest_exclude": bool(r.get("suggest_exclude")),
+            "unsure": bool(r.get("unsure")),
+        })
+        out.append(item)
+    return out
+
+
+def _norm_group_rows(rows):
+    """把模型给的组结果归一化。
+
+    【这里只做形状归一化，不判"合不合法"】
+    "这一组该不该收"要看过"这一批发出去过哪些卡"才知道，
+    那是 _validate_groups 的活。两件事混在一起写，
+    以后就会变成"校验规则藏在归一化函数里"，看代码根本看不出来，
+    改一处崩另一处。
+    """
+    out = []
+    for g in rows or []:
+        if not isinstance(g, dict):
+            continue
+
+        ids = g.get("card_ids")
+        if not isinstance(ids, list):
+            # 模型偶尔写成 card_ids: 12（就一条），或者换了个字段名。
+            # 这里先兜住形状，合不合法交给校验层 —— 它认得比较的是"本批发过哪些卡"。
+            one = ids if ids is not None else g.get("cards")
+            ids = one if isinstance(one, list) else ([one] if one is not None else [])
+
+        cat = g.get("primary_category")
+        act = g.get("action")
+        item = dict(g)
+        item.update({
+            "card_ids": ids,
+            "action": str(act).strip().lower() if act is not None else "",
+            "primary_category": cat.strip() if isinstance(cat, str) else cat,
+            "tags": g.get("tags") or [],
+            "reason": str(g.get("reason") or ""),
+            "confidence": g.get("confidence"),
+        })
+        out.append(item)
+    return out
+
+
+def _extract_json_array(text):
+    """只取逐卡结果（老接口，留给占位规则和测试用）。"""
+    return _extract_result(text)[0]
 
 
 def pick_model(model_key=None):
@@ -1320,33 +1523,12 @@ class LlmClassifier(object):
 
         text = _ask(cfg, messages)
 
-        out = []
-        for r in _extract_json_array(text):
-            if not isinstance(r, dict):
-                continue                      # 数组里混进别的类型，跳过
-
-            # **原样带上它给的所有字段**，再往下归一化我认识的那几个。
-            #
-            # 为什么不能只挑自己认识的字段：
-            #   _validate_suggestions 里有一条「返回里带了正文就整批拒收」的
-            #   规矩（正文只能来自原材料）。如果这里先把不认识的字段丢掉，
-            #   那条规矩就永远拦不到任何东西 —— 闸门修得再好，
-            #   前面有人把水滤干净了也没用。
-            item = dict(r)
-            cat = r.get("primary_category")
-            item.update({
-                "card_id": r.get("card_id"),
-                # 字符串就去个空格；不是字符串就原样留着，
-                # 让 _validate_suggestions 去拒收（类型坏了说明整批不可信）
-                "primary_category": cat.strip() if isinstance(cat, str) else cat,
-                "tags": r.get("tags") or [],
-                "reason": str(r.get("reason") or ""),
-                "confidence": r.get("confidence"),
-                "suggest_exclude": bool(r.get("suggest_exclude")),
-                "unsure": bool(r.get("unsure")),
-            })
-            out.append(item)
-        return out
+        # 返回 {"cards": [...], "groups": [...]}。
+        # 老版提示词只回一个数组，_extract_result 也能认（groups 就是空的）——
+        # 一个新功能不该把她原来好好的分类搞挂。
+        raw_cards, raw_groups = _extract_result(text)
+        return {"cards": _norm_card_rows(raw_cards),
+                "groups": _norm_group_rows(raw_groups)}
 
 
 def _ask(cfg, messages):
@@ -1542,6 +1724,129 @@ def _validate_suggestions(raw, valid_ids, category_names):
     if valid_ids and not ok:
         raise SuggestionError("这一批一条建议都没返回")
     return ok, unknown
+
+
+# 一组最多几条卡。
+# 为什么要有上限：模型有时候会把整个批次报成一个大组，
+# 合出来就是一大段没切过的原文 —— 那不是"逻辑素材"，那是"没切"。
+# 6 条 × 每条约 80 字 ≈ 500 字，一条好用的素材差不多就是这个量级。
+MAX_GROUP_CARDS = 6
+
+# 组里出现这几个字段 = 模型想自己造正文。
+# 跟逐卡那边同一条规矩：正文只能来自 materials.content，
+# 模型给的正文一律不算数 —— 一旦收下，卡片和原材料就对不上了。
+_GROUP_TEXT_KEYS = ("text", "content", "body", "正文")
+
+
+def _validate_groups(raw, judge_ids, allowed_ids, category_names=None):
+    """检查组结果。返回 (干净的组列表, 警告语列表)。
+
+    judge_ids     本批**要判**的卡（组的成员里必须至少有它一个）
+    allowed_ids   允许出现在组里的卡 = judge_ids ∪ 本批带的上下文卡
+
+    【这套校验守的是什么】
+    组比逐卡结果危险得多：一条卡主类判错，她扫一眼就能看出来；
+    而一个组合错了、真合下去，就是"她库里少了两张卡、多了一张不该有的"，
+    而且生成出来的大纲看着还是正常的（只是那段细节换了来源）。
+    所以这里宁可把可疑的组丢掉，也不放一条形状不对的进去。
+
+    【为什么"至少要含一条本批的卡"】
+    每批都带着上一批的尾巴当上下文。上一批已经报过的组，
+    这一批从上下文里照样看得见 —— 不拦的话同一条组会被报两遍，
+    她界面上就出现两条一模一样的"建议合并"，点哪条都一样，看着像 bug。
+    """
+    judge_ids = {int(i) for i in (judge_ids or ())}
+    allowed_ids = {int(i) for i in (allowed_ids or ())} | judge_ids
+    allowed_cats = set(category_names or ())
+
+    ok, warns, used = [], [], set()
+
+    for g in raw or []:
+        if not isinstance(g, dict):
+            warns.append("有一组不是对象，已丢掉")
+            continue
+
+        bad = [k for k in _GROUP_TEXT_KEYS if g.get(k)]
+        if bad:
+            warns.append("有一组带了正文（字段 %s）—— 正文只能来自原材料，"
+                         "这一组已丢掉" % bad[0])
+            continue
+
+        ids = g.get("card_ids")
+        if not isinstance(ids, list):
+            warns.append("有一组的 card_ids 不是数组，已丢掉")
+            continue
+        try:
+            ids = [int(i) for i in ids]
+        except (TypeError, ValueError):
+            warns.append("有一组的 card_ids 里有不是整数的编号，已丢掉")
+            continue
+
+        if len(set(ids)) != len(ids):
+            warns.append("有一组的 card_ids 里同一个编号出现了两次，已丢掉")
+            continue
+        if len(ids) < 2:
+            warns.append("只报了一条卡的组不算组，已丢掉")
+            continue
+        if len(ids) > MAX_GROUP_CARDS:
+            warns.append("有一组报了 %d 条卡（最多 %d 条），已丢掉"
+                         % (len(ids), MAX_GROUP_CARDS))
+            continue
+
+        outside = [i for i in ids if i not in allowed_ids]
+        if outside:
+            warns.append("有一组的成员不在这次发出去的卡片里（%s…），已丢掉"
+                         % "、".join(str(i) for i in outside[:3]))
+            continue
+
+        if not (set(ids) & judge_ids):
+            # 全是上下文卡 → 这一组上一批已经报过了，悄悄跳过。
+            # 不打警告：这是每批的正常现象，报出来只会让她以为出了问题。
+            continue
+
+        if set(ids) & used:
+            warns.append("有两组抢了同一张卡，后面那一组已丢掉")
+            continue
+
+        # 不认识的动作 → 按最保守的来（交她过目），而不是丢掉整组。
+        # 丢掉的话，一个本来挺好的组会因为模型把 merge 拼错一个字母就消失。
+        act = g.get("action") or GROUP_ACTION_REVIEW
+        if act not in ALL_GROUP_ACTION:
+            act = GROUP_ACTION_REVIEW
+
+        conf = g.get("confidence")
+        if conf is not None:
+            try:
+                conf = float(conf)
+            except (TypeError, ValueError):
+                conf = None
+            else:
+                if not 0.0 <= conf <= 1.0:
+                    conf = None
+
+        # 类名不认识 → 只把这一个字段降级，不丢整组。
+        # 跟逐卡那边同一个道理（见 _validate_suggestions 的 docstring）：
+        # 为一个小毛病把一条好建议扔掉，代价太大。
+        cat = g.get("primary_category")
+        if cat in (None, "") or cat not in allowed_cats:
+            cat = None
+
+        tags = g.get("tags") or []
+        if not isinstance(tags, list):
+            tags = []
+        tags = [str(t).strip() for t in tags if str(t).strip()]
+
+        used |= set(ids)
+        ok.append({
+            "card_ids": sorted(ids),
+            "action": act,
+            "primary_category": cat,
+            "tags": tags,
+            "reason": str(g.get("reason") or "").strip()[:500],
+            "confidence": conf,
+        })
+
+    return ok, warns
 
 
 # ----------------------------------------------------------------------
@@ -2124,52 +2429,104 @@ def _execute(run_id, owner, classifier_name, card_ids):
     # 第一批只发 6 条，十来秒就能写回一次进度，界面立刻"动"起来。
     # 之后就恢复正常批次：一直用小批次的话，每批都要重发一遍
     # 主类判据（一千多字），总体耗时和费用都会明显涨。
-    first_batch = min(FIRST_BATCH_SIZE, len(card_ids))
-
-    def _batches(ids):
-        if not ids:
-            return
-        yield ids[:FIRST_BATCH_SIZE]
-        for s in range(FIRST_BATCH_SIZE, len(ids), BATCH_SIZE):
-            yield ids[s:s + BATCH_SIZE]
+    # ---- 先算出"每批处理哪一段"，再给每批补上前后邻居 ----
+    #
+    # 为什么不边跑边算：每批要发的邻居是"上一批的尾巴／下一批的开头"，
+    # 得提前知道前面还有没有卡、后面还有没有卡。一次算好放列表里，
+    # 跑的时候照着取就行，也不给"边界算错"留机会。
+    slices = []
+    if card_ids:
+        first = min(FIRST_BATCH_SIZE, len(card_ids))
+        slices.append((0, first))
+        p = first
+        while p < len(card_ids):
+            slices.append((p, min(p + BATCH_SIZE, len(card_ids))))
+            p += BATCH_SIZE
 
     pos = 0        # 已经发出去的条数，用来给 seq 编号
-    for batch_ids in _batches(card_ids):
+    group_stats = {"created": 0, "skipped": 0}
+    group_warns = []
+
+    for (a, b) in slices:
         if _cancelled(run_id):
             cancelled = True
             break
+
+        batch_ids = card_ids[a:b]
+        # 紧挨着这批的前后几条，**只看不判**（理由见 CONTEXT_ROWS 上面那段）
+        ctx_before = card_ids[max(0, a - CONTEXT_ROWS):a]
+        ctx_after = card_ids[b:b + CONTEXT_ROWS]
 
         base_seq = pos + 1
         pos += len(batch_ids)
 
         # ---- 取正文：只在这一刻从 materials.content 现算 ----
+        want_ids = list(dict.fromkeys(ctx_before + batch_ids + ctx_after))
         with db.connect() as conn:
             rows = conn.execute(
                 "SELECT id, start_offset, end_offset FROM cards WHERE owner_id=?"
-                " AND id IN (%s)" % ",".join("?" * len(batch_ids)),
-                [owner] + batch_ids).fetchall()
+                " AND id IN (%s)" % ",".join("?" * len(want_ids)),
+                [owner] + want_ids).fetchall()
             by_id = {r["id"]: r for r in rows}
             content = None
             if rows:
                 content = conn.execute("SELECT content FROM materials WHERE id=?",
                                        (material_id,)).fetchone()["content"]
-            items = []
-            for i, cid in enumerate(batch_ids, base_seq):
-                r = by_id.get(cid)
-                if r is None:
-                    continue
-                items.append({"card_id": cid, "seq": i,
-                              "text": content[r["start_offset"]:r["end_offset"]]})
 
-        if not items:
+        def _mk(cid, seq, kind):
+            r = by_id.get(cid)
+            if r is None:
+                return None
+            return {"card_id": cid, "seq": seq, "ctx": kind,
+                    "text": content[r["start_offset"]:r["end_offset"]]}
+
+        items = []
+        for i, cid in enumerate(batch_ids, base_seq):
+            it = _mk(cid, i, None)
+            if it:
+                items.append(it)
+        for cid in ctx_before:
+            it = _mk(cid, 0, "before")
+            if it:
+                items.append(it)
+        for cid in ctx_after:
+            it = _mk(cid, 0, "after")
+            if it:
+                items.append(it)
+
+        # 本批**真正要判**的那部分。上下文卡混在 items 里只是为了发给模型，
+        # 而计数、写卡片状态、判成败都只能看 judge_items ——
+        # 用错的话，那几条邻居会被当成"漏判的卡"各记一笔失败，
+        # 进度数字也会虚高，她看到的就是"怎么老是差几条"。
+        judge_items = [it for it in items if not it.get("ctx")]
+
+        if not judge_items:
             continue
 
         # ---- 让分类器判 ----
+        judge_ids = {it["card_id"] for it in judge_items}
+        allowed_ids = {it["card_id"] for it in items}
         try:
             raw = clf.classify_batch(items, ctx)
+            # 分类器可以只回逐卡结果（占位规则、或者老接口），
+            # 也可以连"哪几条该合看"一起回。两种都得认 ——
+            # 一个新功能不该把她原来好好的分类搞挂。
+            if isinstance(raw, dict):
+                raw_cards = raw.get("cards") or []
+                raw_groups = raw.get("groups") or []
+            else:
+                raw_cards, raw_groups = (raw or []), []
+
             sugs, batch_unknown = _validate_suggestions(
-                raw, {it["card_id"] for it in items}, cat_names)
+                raw_cards, judge_ids, cat_names)
             unknown_cats |= batch_unknown
+
+            # 组的问题**不整批拒收**：一份组建议坏了（比如编号写错），
+            # 不该牵连这一批好好的分类结果 —— 那等于为了一个新功能
+            # 把老功能一起搞挂。所以组是逐条丢、逐条记原因。
+            groups, gwarns = _validate_groups(
+                raw_groups, judge_ids, allowed_ids, cat_names)
+            group_warns.extend(gwarns)
             err = ""
         except SuggestionError as e:
             # 整批拒收：不写正式分类，全部记失败并留下原因。
@@ -2181,17 +2538,17 @@ def _execute(run_id, owner, classifier_name, card_ids):
             # 注意：**只有"带了正文"这类硬伤才走这里**。
             # "主类名不认识"不整批拒收，在校验里就把那一条降级成"判不出"了 ——
             # 理由见 _validate_suggestions 的 docstring。
-            sugs, err = [], "返回格式不合规：%s" % e
+            sugs, groups, err = [], [], "返回格式不合规：%s" % e
         except Exception as e:
-            sugs, err = [], "分类器报错：%s" % e
+            sugs, groups, err = [], [], "分类器报错：%s" % e
 
         ts = now_str()
         if err:
-            failed += len(items)
+            failed += len(judge_items)
             if len(error_samples) < 3:
                 error_samples.append(err)
             with db.connect() as conn:
-                for it in items:
+                for it in judge_items:
                     conn.execute(
                         "UPDATE classification_items SET status=?, error=?,"
                         " retry_count=retry_count+1, updated_at=?"
@@ -2206,9 +2563,22 @@ def _execute(run_id, owner, classifier_name, card_ids):
             _write_suggestions(run_id, owner, material_id, sugs,
                                cat_id_by_name, tag_id_by_name,
                                run["model_version"] or clf.model_version, ctx)
+
+            # ---- 逻辑素材组：落成"提议"，等她在界面上确认 ----
+            #
+            # 这里**只写提议，不合并**。理由写在 classify_db 那段注释里：
+            # 合并会真的改卡片结构，AI 认错一次她根本不会发现，
+            # 所以第一版一律由她点一下才生效。
+            if groups:
+                gres = cls.create_group_proposals(
+                    owner, material_id, run_id, groups,
+                    cat_id_by_name, tag_id_by_name)
+                group_stats["created"] += gres["created"]
+                group_stats["skipped"] += gres["skipped"]
+
             got = {s["card_id"] for s in sugs}
             with db.connect() as conn:
-                for it in items:
+                for it in judge_items:
                     if it["card_id"] in got:
                         st = ITEM_DONE
                         done += 1
@@ -2259,6 +2629,21 @@ def _execute(run_id, owner, classifier_name, card_ids):
                    "（这些卡片已按「判不出」落库，卡片理由里标了「类名不认」）"
                    % (len(unknown_cats), "、".join(sorted(unknown_cats))))
             note = (note + "；" + tip) if note else tip
+        # 逻辑素材组：**必须说出来**。
+        # 不说的话，她只会看到"分类跑完了"，而库里已经躺着一批组建议 ——
+        # 那些建议不点确认就永远不会变成素材，
+        # 等于她白花钱让 AI 认了一遍、还完全不知道去哪儿找。
+        if group_stats["created"] or group_stats["skipped"]:
+            tip = ("另外认出 %d 个逻辑素材组（一组＝连着几段合起来才算一条完整素材）。"
+                   "去【素材分类】页看，点「合并」才会真的合成一条"
+                   % group_stats["created"])
+            if group_stats["skipped"]:
+                tip += ("；有 %d 组没被收下（多半是和别的组抢了同一张卡）"
+                        % group_stats["skipped"])
+            note = (note + "；" + tip) if note else tip
+        if group_warns:
+            note = ((note + "；") if note else "") + \
+                "分组提示：" + "；".join(group_warns[:3])
         # 提示词文件写坏了 → 必须说出来。
         # 这种情况会静默换用通用模板，她不看任务备注就永远不知道
         # 自己辛苦调的那版根本没生效。

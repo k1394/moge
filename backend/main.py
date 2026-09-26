@@ -724,6 +724,23 @@ def api_categories(user: dict = Depends(auth.current_user)):
         "sub_tags": cls.list_sub_tags(user["owner"], active_only=True),
         "sub_tags_all": cls.list_sub_tags(user["owner"]),
         "statuses": list(sg.ALL_STATUS),
+        # 逻辑素材组：动作和状态的定义处都在后端，前端读这两份，
+        # **不抄中文字面量** —— 抄了的话后端改一个字，前端就静默对不上，
+        # 而且不报错、测试也不失败，只有盯着界面才看得见。
+        "group_actions": list(cls.ALL_GROUP_ACTION),
+        "group_statuses": list(cls.ALL_GROUP_STATUS),
+        "max_group_cards": auto.MAX_GROUP_CARDS,
+        # 上面两个是给人看的清单；这两个是给代码用的 ——
+        # 前端拿 gs.merged 这种键去比对，就不用在 JS 里抄一遍中文。
+        "group_status_keys": {
+            "pending": cls.GROUP_PENDING,
+            "merged": cls.GROUP_MERGED,
+            "ignored": cls.GROUP_IGNORED,
+        },
+        "group_action_keys": {
+            "merge": cls.GROUP_ACTION_MERGE,
+            "review": cls.GROUP_ACTION_REVIEW,
+        },
         "sources": [x["source_collection"] for x in cls.source_list(user["owner"])],
         "rules": [{"key": k, "name": v["name"], "desc": v["desc"]}
                   for k, v in sg.RULES.items()],
@@ -946,6 +963,74 @@ def api_split_card(cid: int, req: SplitCardIn,
         raise HTTPException(status_code=404, detail="没有这张卡片，或者它不属于你")
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("message", "拆分失败"))
+    return res
+
+
+# ---- 逻辑素材组（AI 认出"这几段该合看"，等她点确认）-------------------
+#
+# 【为什么不放在 /api/cards 下面】
+# 组不是卡片本身：它是"几张卡可能要变成一张"的一份**提议**。
+# 提议被忽略、或者一直躺着没人看，都应该跟卡片表毫无关系。
+# 挂到 /api/cards/{cid} 下面会让"这张卡属于哪个组"变成一条隐含关系，
+# 而她实际要处理的是"这条提议"，不是某一张卡。
+
+@app.get("/api/groups")
+def api_list_groups(user: dict = Depends(auth.current_user),
+                    material_id: Optional[int] = None,
+                    status: str = "",
+                    limit: int = Query(200, ge=1, le=500)):
+    """逻辑素材组列表。
+
+    连成员卡的正文一起给 —— 她要看的就是"这几段合起来是不是一条完整素材"，
+    光给编号她没法判断，还得一条条点开看，那就没人愿意确认了。
+    """
+    return {"groups": cls.list_groups(user["owner"], material_id=material_id,
+                                      status=status or None, limit=limit),
+            "counts": cls.count_groups(user["owner"], material_id)}
+
+
+@app.post("/api/groups/{gid}/confirm")
+def api_confirm_group(gid: int, user: dict = Depends(auth.current_user)):
+    """确认合并：这几段合成一条。
+
+    走的是跟人工手选合并同一个内部函数，产出完全一样：
+    一条新卡 + 原卡标「已排除」（可恢复），并留下一条可撤销的记录。
+    """
+    res = cls.confirm_group(gid, user["owner"], operator_id=user["id"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "合并失败"))
+    return res
+
+
+@app.post("/api/groups/{gid}/ignore")
+def api_ignore_group(gid: int, user: dict = Depends(auth.current_user)):
+    """忽略这一组。**只动组的状态，一张卡片都不碰。**"""
+    res = cls.ignore_group(gid, user["owner"], operator_id=user["id"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "忽略失败"))
+    return res
+
+
+@app.post("/api/groups/{gid}/restore")
+def api_restore_group(gid: int, user: dict = Depends(auth.current_user)):
+    """把忽略掉的组放回「待确认」。判断会变，得留一条回头路。"""
+    res = cls.restore_group(gid, user["owner"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "恢复失败"))
+    return res
+
+
+@app.post("/api/groups/{gid}/undo")
+def api_undo_group(gid: int, user: dict = Depends(auth.current_user)):
+    """撤销一次组合并。
+
+    走通用的撤销机制（card_changes），不另写一套 ——
+    它已经处理了最难的那部分：只恢复"这次改过、之后没人再动过"的字段，
+    并把合并出来的那张卡标为排除，让她原来的几段回来。
+    """
+    res = cls.undo_group_merge(gid, user["owner"])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "撤销失败"))
     return res
 
 
