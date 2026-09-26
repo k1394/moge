@@ -608,6 +608,17 @@
   }
   .clfilters .cbs label { display: flex; align-items: center; gap: 5px; }
   .clfilters .cnt { font-size: 12.5px; color: var(--ink-3); }
+  /* 按文件筛的提示条。做成一块有底色的标签 ——
+     它回答的是"我现在看的为什么只有这几张"。
+     不显眼就等于没筛：她会以为卡片丢了。 */
+  .clfilters .matfilter {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--accent-2); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 3px 8px;
+    font-size: 12.5px; color: var(--accent);
+  }
+  .clfilters .matfilter b { font-weight: 600; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .clbatch {
     position: sticky; top: 62px; z-index: 15;
@@ -784,6 +795,73 @@
      她每次进来都得先绕开它。所以平时是灰的，指上去才变红。 */
   .mddel { color: var(--ink-3); }
   .mddel:hover { color: #c0392b; border-color: #c0392b; }
+
+  /* ---- 模型设置：接入点 ----
+     接入点是 2026-09-26 加的那一层「地址 + 密钥」。
+     视觉上做得比模型行**更结实**：改密钥这件事在接入点上做一次就够了，
+     不该再往下逐条改 —— 她要的"统一"就是这个意思。 */
+  .mdsec {
+    display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+    margin: 15px 0 8px; font-size: 13px; font-weight: 600;
+  }
+  .mdsechint { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+  .mdprov {
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--line-2); padding: 11px 12px; margin-bottom: 9px;
+  }
+  .mdprov .phead { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .mdprov .pkey {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .mdprov .pmeta {
+    font-size: 12px; color: var(--ink-3); margin: 5px 0 8px; line-height: 1.6;
+  }
+  .mdprov .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 9px; }
+  .mdprov .pgrid label {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 11.5px; color: var(--ink-3);
+  }
+  .mdprov .pgrid input { font-size: 12.5px; }
+  .mdprov .pacts {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 9px;
+  }
+  .mdprov .pacts input[type=password] {
+    flex: 1 1 200px; min-width: 0; font-size: 12.5px;
+  }
+
+  /* ---- 从接入点拉模型 ---- */
+  .pmtool {
+    display: flex; align-items: center; gap: 9px;
+    flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .pmtool #mpSearch { flex: 1 1 220px; }
+  .pmtool .cnt { font-size: 12.5px; color: var(--ink-3); }
+  .pmlist {
+    max-height: 380px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 9px; padding: 4px 6px;
+  }
+  .pmitem {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 6px; border-radius: 6px; font-size: 12.5px;
+  }
+  .pmitem:hover { background: var(--line-2); }
+  .pmitem .code {
+    flex: 1 1 auto; min-width: 0;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* 已经加过的：留着（她要确认"这个确实在清单里了"），但视觉上退后 */
+  .pmitem.have { color: var(--ink-3); }
+  .pmitem .ptag {
+    flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
+    border: 1px solid var(--line); border-radius: 5px; padding: 0 5px;
+  }
+  .pmactions {
+    display: flex; align-items: center; gap: 9px;
+    margin-top: 11px; flex-wrap: wrap;
+  }
+  .pmactions .cnt { font-size: 12.5px; color: var(--ink-2); flex: 1 1 auto; }
   /* ---- 补充提示词（分类页）----
      默认收起成一行。为什么不默认展开：
      它大多数时候是空的，摊开一块五行的输入框会把她真正要看的
@@ -1284,13 +1362,14 @@
   .olcand > .ch .grow { flex: 1 1 auto; }
   .olcand > .cb {
     padding: 9px 10px; font-size: 12.5px; line-height: 1.85;
-    max-height: 380px; overflow: auto;
+    max-height: 560px; overflow: auto;
   }
   .olcand .ct { font-weight: 600; margin-bottom: 5px; }
   .olcand .cn {
     border-left: 2px solid var(--line); padding-left: 8px; margin: 6px 0;
     font-size: 12px; color: var(--ink-2); white-space: pre-wrap;
   }
+  .olcand .cn b { color: var(--ink); }
   .olcand .cf {
     display: flex; gap: 6px; flex-wrap: wrap;
     padding: 8px 10px; border-top: 1px solid var(--line-2);
@@ -1736,8 +1815,9 @@
           <!-- ============ 大纲库 ============ -->
           <div class="olsec">
             <h3>大纲库</h3>
-            <div class="mdhint">只有点了「推入大纲库」的才在这里。
-              剧情零件的参考次数也只在这时候才加。</div>
+            <div class="mdhint">在候选卡上点「把这一版做成大纲」才会进来 ——
+              点下去不是「定稿」，是「打开来改」：改完点「保存改动」才落到这儿。
+              AI 原稿一直留着，随时能比。剧情零件的参考次数也到这步才加。</div>
             <div id="olLib"></div>
           </div>
         </div>
@@ -2133,6 +2213,19 @@
           选一个预填好地址，把 Key 粘进去就行，地址和模型名都能自己改。
         </span>
       </div>
+      <!-- 接入点：一个「地址 + 密钥」对，填一次；底下的模型只填名字。
+           加这一层的原因（2026-09-26）：她发现"阿里云一个 Key 能调 261 个
+           模型"，而按老结构，每多用一个模型就要把同一把 Key 再抄一遍。 -->
+      <div class="mdsec">
+        接入点（地址 + 密钥，填一次）
+        <span class="mdsechint">同一个接入点下的模型共用这把钥匙 ——
+          改一次密钥，底下所有模型一起生效。</span>
+      </div>
+      <div id="mdProvs"></div>
+      <div class="mdsec">
+        模型
+        <span class="mdsechint">地址和密钥跟着上面的接入点走，这里只需要模型名。</span>
+      </div>
       <div id="mdBody"></div>
       <div class="why" style="margin-top:14px">
         Key 只写在你本机的 <b>data/models.json</b>，界面上永远只显示打码后的样子。
@@ -2142,6 +2235,41 @@
         删掉整条也行，但那样这些设置得重填。<br>
         「测试」会往那家服务商发一句「在吗」，确认地址、模型名、Key 三样都对 ——
         这比跑完 600 张卡才发现填错了省事得多。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 从接入点拉模型 ============
+     为什么要有它：那个阿里云 Key 能调 261 个模型，逐个手抄模型名
+     抄一个错一个。所以让她点一下「拉取」、勾选、加入。
+     为什么要有搜索和「只显示还没加的」：261 项铺开来是没人看得完的，
+     而她要的其实是"还有哪些没加进来"。这两个控件就是为这个存在的。 -->
+<div class="mask" id="mkProvModels">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="mpTitle">拉取模型列表</h2>
+        <p id="mpSub">向接入点问一次它有哪些模型，勾好要用的加进清单。</p>
+      </div>
+      <button class="x" data-close="mkProvModels">&times;</button>
+    </header>
+    <div class="content">
+      <!-- 【id 前缀为什么是 pv 不是 pm】旧的「AI 批量内化」弹层
+           （#mkPickMat）已经占了 pmList 这个名字，而 getElementById
+           只会返回文档里第一个同名的 —— 两边都叫 pmList 的话，
+           我这一节会把那一节顶掉，而且不报错。这里统一用 pv。 -->
+      <div class="pmtool">
+        <input id="mpSearch" placeholder="搜模型名，例如 qwen / glm / deepseek…">
+        <label class="mdchk"><input type="checkbox" id="mpHideHave" checked>只显示还没加的</label>
+        <span class="cnt" id="mpCount"></span>
+        <button class="mini" id="mpRefresh">重新拉一次</button>
+      </div>
+      <div class="pmlist" id="mpList"></div>
+      <div class="pmactions">
+        <span class="cnt" id="mpPicked">已勾 0 个</span>
+        <button class="mini primary" id="mpAdd">加入清单</button>
+        <button class="mini" data-close="mkProvModels">取消</button>
       </div>
     </div>
   </div>
@@ -2482,7 +2610,7 @@
         <label>判据 <span class="req">*</span>
           <span class="hint">什么时候算这一类</span></label>
         <textarea id="ncDesc" rows="3" maxlength="300"
-          placeholder="一两句就够，例如：这一段是在过招，重点是谁占了上风。&#10;&#10;AI 判类时**只看这段说明**。空着的话它只能照名字猜。"></textarea>
+          placeholder="一两句就够，例如：这一段是在过招，重点是谁占了上风。&#10;&#10;AI 判类时只看这段说明。空着的话它只能照名字猜。"></textarea>
         <div class="counter" id="ncDescCnt">0 / 300</div>
       </div>
 
@@ -2490,7 +2618,7 @@
         <label>这类常用的小标签 <span class="hint">选填，点一下选中</span></label>
         <div class="nctags" id="ncTags"></div>
         <div class="hint" style="margin-top:7px">
-          选中只是让它们在该类的小标签列表里排前面，**不会替你勾上** ——
+          选中只是让它们在该类的小标签列表里排前面，不会替你勾上 ——
           副标签是你表达"我以后为什么拿这段素材"的地方。
         </div>
       </div>
@@ -3406,6 +3534,12 @@ async function maybeOfferAdopt() {
 S.cls = {};        // material_id -> 后端给的分类状态
 S.clsMeta = null;  // 接口顺带返回的分类器信息 + 模型清单（选模型要用）
 S.models = [];     // 模型设置面板里的那几条配置（密钥是打码的）
+/* 接入点（地址 + 密钥，填一次）。模型底下挂着它 —— 这是"一个 Key 调
+   一堆模型"落地的地方。密钥同样只在后端，这里拿到的是打码版。 */
+S.providers = [];
+/* 拉模型列表那个弹层的临时状态。放 S 上而不是局部变量，
+   是因为搜索框每敲一下就重画一次，重画时得还记得她勾了哪些。 */
+S.pmProv = null; S.pmRows = []; S.pmFresh = 0; S.pmPicked = {};
 S.runPick = null;  // 「开始自动分类」面板里她挑的方法和模型
 S.catPick = null;  // 「手动归类」面板里她挑的主类和副标签
 S.clsPoll = null;  // 轮询定时器
@@ -3508,18 +3642,29 @@ function clsBarInner(mid) {
 
   } else if (s.state === "partial") {
     chips.push('<span class="chip warn">部分完成</span>');
-    if (s.failed_cards) info.push("失败 " + fmtNum(s.failed_cards) + " 张");
     if (s.ai_suggested) info.push("AI 建议 " + fmtNum(s.ai_suggested) + " 张");
     if (s.low_confidence) {
       chips.push('<span class="chip warn">低置信 ' + fmtNum(s.low_confidence) + ' 张</span>');
     }
     why = clsWhy(s);
+    /* 「失败 N 张」以前是一块**点不动的死标签**。
+       AI 反复判不好的时候，她要的其实是一条"我自己来"的路，
+       所以把它变成按钮：点了就把这一份文件的失败卡片筛出来，
+       底下批量条上的「归类…」接着用 —— 整条路不用她记住任何筛选条件。
+       （真正改主类的是卡片上的「归类」和批量条的「归类…」，
+        这里只负责把她送到那批卡片面前。） */
+    if (s.failed_cards) {
+      btns.push(clsBtn(mid, "failed",
+                       "失败 " + fmtNum(s.failed_cards) + " 张 · 手动归类", ""));
+    }
     btns.push(clsBtn(mid, "retry", "重试失败项", "primary"));
     btns.push(clsBtn(mid, "redo", "重新分类", ""));
 
   } else if (s.state === "failed") {
     chips.push('<span class="chip warn">上次失败</span>');
     why = clsWhy(s);
+    // 整份都判挂的时候，先给她一条手动兜底的路，再让她决定要不要重试
+    btns.push(clsBtn(mid, "failed", "手动归类", ""));
     btns.push(clsBtn(mid, "retry", "重试分类", "primary"));
 
   } else if (s.state === "cancelled") {
@@ -3679,6 +3824,16 @@ async function clsAct(mid, act, el) {
                  "之后可以再点「继续分类」。")) return;
   }
 
+  // 「手动归类」：不发任何请求，只是把这份文件的失败卡片筛出来。
+  // 所以要在 busy 标记和按钮禁用**之前**返回 —— 它不是"跑个任务"，
+  // 不该让状态条闪一下、也不该把按钮锁住。
+  // 标题从她点的那一行里读，省得再为"显示哪份文件"跑一次接口。
+  if (act === "failed") {
+    const row = el && el.closest(".card");
+    const t = row && row.querySelector(".title");
+    return showFailedCards(mid, t ? t.textContent.trim() : "");
+  }
+
   // 重新分类 / 开始：先弹面板让她定"这次用谁判"。
   // 面板里一次说清这几件事：用大模型还是本地规则、重新分类会覆盖多少张、
   // 素材会不会发到服务商那边。比原来那种"一句 confirm 然后闷头跑"诚实得多 ——
@@ -3705,6 +3860,61 @@ async function clsAct(mid, act, el) {
   } finally {
     delete S.clsBusy[mid];
   }
+}
+
+/* 从文件行的「失败 N 张 · 手动归类」过来：把 AI 没判好的那批卡片筛出来。
+ *
+ * 【为什么是"筛出来"，不是"另开一页"】
+ * 卡片流本来就有一整套改主类的能力：卡片上有「归类」，底部批量条有
+ * 「归类…」（选中几张一次定完）。缺的从来不是那个面板 ——
+ * 缺的是**一条走到这批卡片面前的路**。所以这里只做三件事：
+ * 设好筛选、把卡片流拉出来、滚过去。
+ *
+ * 【为什么文件筛要明着摆在筛选条上】
+ * 不摆的话她只会看到"卡片怎么突然只剩十几张"，也找不到退回全库的路。
+ * 所以筛选条那边同时给了「显示全部卡片」。
+ *
+ * 【为什么不写死「失败」两个字】
+ * 卡片状态的唯一口径在后端（segmentation.ALL_STATUS），
+ * 前端从 /api/categories 拿 sk.failed。写死的话，后端哪天改口径，
+ * 这里会静默筛出零张卡 —— 不报错、测试也不失败。
+ */
+async function showFailedCards(mid, title) {
+  /* 【必须先切页】
+     文件行在「总素材库」、卡片流在「素材分类」—— 这是两个页面。
+     只设筛选不切页的话，她点了按钮等于什么都没发生：筛选确实生效了，
+     但那个页面根本没显示。这类"改了却看不见"的坑比报错更难查，
+     因为她会以为按钮坏了、然后放弃手动这条路。
+     （也是同一个道理：功能做对了但没送到她眼前，等于没做。） */
+  goView("classify");
+  /* 等分类页的选项就绪再设筛选。
+     C.sk.failed（"分类失败"这四个字）是跟着 /api/categories 下发的，
+     不等它就用，筛出来的会是空字符串 —— 那就成了一张卡都不显示的怪界面。 */
+  await loadClassify(false);
+  C.f.mat = String(mid);
+  C.f.matName = title || "";
+  C.f.status = (C.sk || {}).failed || "";
+  // 主类/标签筛选会把一部分"失败"卡挡在外面（判失败的卡通常没有主类），
+  // 先清掉 —— 否则她看到的张数会小于文件行上那个数字，
+  // 又变成一个"数字对不上"的谜题。
+  C.f.cat = "";
+  C.f.tag = "";
+  C.f.bad = false;
+  C.f.dup = false;
+  C.f.exclude = false;
+  renderClFilters();
+  await loadCards();
+  /* 滚到**筛选条**，不是滚到卡片流。
+     滚卡片流的话，那条"正只看一份文件 / 显示全部卡片"会被顶出屏幕 ——
+     她看到一屏卡片，却不知道这些为什么只剩这几张、也不知道怎么退回去。
+     筛选条是这屏的"当前位置指示牌"，必须留在视野里。 */
+  const anchor = document.getElementById("clFilters");
+  if (anchor && anchor.scrollIntoView) {
+    anchor.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  toast(C.total
+    ? "下面这 " + C.total + " 张就是 AI 没判好的。勾几条，点底下的「归类…」定主类。"
+    : "这份文件现在没有失败的卡片了。");
 }
 
 /* 按钮用事件委托绑一次就够了。
@@ -4086,7 +4296,17 @@ const C = {
   groups: [], gCounts: {},
   gs: { pending: "", merged: "", ignored: "" },
   ga: { merge: "", review: "" },
-  f: { cat: "", tag: "", status: "", exclude: false, bad: false, dup: false, order: "category" }
+  /* 卡片状态的「键 → 中文」映射，也是后端下发的。
+     用它来表达"AI 没判成功的那一批卡"（sk.failed），
+     这样 JS 里就不用写死「失败」两个字 —— 后端哪天改口径，
+     前端跟着走，不会静默对不上。 */
+  sk: { failed: "" },
+  /* f.mat = 按文件筛卡片。
+     为什么要它：文件行上会报「失败 124 张」，她真正想干的是
+     "把这 124 张找出来自己归个类"。后端一直支持 material_id
+     这个参数，但前端从来没传过，这条路就一直是断的。
+     mat 存成字符串（跟 select 的 value 一致），空串 = 不按文件筛。 */
+  f: { cat: "", tag: "", status: "", exclude: false, bad: false, dup: false, order: "category", mat: "" }
 };
 
 function fill(id, txt) {
@@ -4135,6 +4355,7 @@ async function loadClassify(force) {
       C.rules = opt.rules || [];
       if (opt.group_status_keys) C.gs = opt.group_status_keys;
       if (opt.group_action_keys) C.ga = opt.group_action_keys;
+      if (opt.card_status_keys) C.sk = opt.card_status_keys;
       C.ready = true;
       renderClFilters();
       renderClCatBar();
@@ -5004,6 +5225,9 @@ async function loadCards(append) {
   if (C.f.cat !== "") q.set("category_id", C.f.cat);
   if (C.f.tag) q.set("sub_tag", C.f.tag);
   if (C.f.status) q.set("status", C.f.status);
+  /* 按文件筛。后端一直认这个参数，前端以前从来没传过 ——
+     于是"只想看这一份文件的失败卡片"这条路走不通。 */
+  if (C.f.mat) q.set("material_id", C.f.mat);
   if (C.f.exclude) q.set("include_excluded", "true");
   if (C.f.bad) q.set("verify_error", "true");
   if (C.f.dup) q.set("duplicate", "true");
@@ -5312,6 +5536,15 @@ function renderClFilters() {
         (C.f.order === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") +
     '</select>';
 
+  /* 按文件筛的时候必须**明说现在筛的是哪份文件**，并给一条回全库的路。
+     不说的话她只会看到"卡片怎么突然只剩十几张"，然后退不出去 ——
+     这跟"改了没生效"是同一类伤害：界面骗人，而且不报错。 */
+  const matChip = C.f.mat
+    ? '<span class="matfilter">正只看一份文件：' +
+      '<b>' + esc(C.f.matName || ("#" + C.f.mat)) + '</b>' +
+      '<button class="mini" id="clClearMat">显示全部卡片</button></span>'
+    : "";
+
   box.innerHTML = catSel + tagSel + stSel + orSel +
     '<span class="cbs">' +
       '<label><input type="checkbox" id="fEx"' + (C.f.exclude ? " checked" : "") +
@@ -5321,9 +5554,21 @@ function renderClFilters() {
       '<label><input type="checkbox" id="fDup"' + (C.f.dup ? " checked" : "") +
         '>只看有重复</label>' +
     '</span>' +
+    matChip +
     '<span class="cnt" id="clCount">共 ' + C.total + ' 张</span>' +
     '<button class="mini" id="clUndo"' + (C.lastChange ? "" : " hidden") +
       '>撤销上一次操作</button>';
+
+  const cm = document.getElementById("clClearMat");
+  if (cm) {
+    cm.onclick = () => {
+      C.f.mat = "";
+      C.f.matName = "";
+      C.f.status = "";
+      renderClFilters();
+      loadCards();
+    };
+  }
 
   const on = (id, key, cb) => {
     const el = document.getElementById(id);
@@ -5621,6 +5866,14 @@ async function openModels() {
     const d = await api("/api/models");
     S.models = d.items || [];
     paintAddOptions();
+    /* 【顺序要紧】接入点必须先读回来，模型才画得对。
+       画模型那一行要判断"这条地址是它自己存的、还是跟着接入点走的"，
+       而那个判断要拿接入点的地址来比 —— 先画后读的话，
+       第一次打开面板时接入点还是空的，每条都显示成"自己存了一份"，
+       她刚点的「统一」看上去跟没做一样。
+       （loadProviders 读不到时自己会把错误显示在它那一块，不抛出来，
+         所以这里 await 它不会拦住下面。） */
+    await loadProviders();
     renderModels();
     show("mkModels");
   } catch (e) { toast(e.message, true); }
@@ -5722,6 +5975,29 @@ function modelChips(m) {
   return '<span class="chip local">还没填 Key</span>';
 }
 
+/* 这条模型实际用的是哪个接入点。
+   【为什么要靠地址去猜一次】
+   老配置里模型没有 provider 字段（那是这次新加的），
+   但它自己抄了一份和接入点一模一样的地址 —— 那就是同一个接入点。
+   不认出来的话，界面会显示成"每个模型各存一份地址"，
+   她刚点的「统一」看上去跟没做一样。 */
+function provOf(m) {
+  const provs = S.providers || [];
+  if (m.provider) {
+    const hit = provs.find(x => x.key === m.provider);
+    if (hit) return hit;
+  }
+  if (!m.base_url) return null;
+  return provs.find(x => x.base_url && x.base_url === m.base_url) || null;
+}
+
+/* 地址/密钥是"跟着接入点走"（自己没存），还是"自己有一份"。
+   自己那份跟接入点不同 = 她单独改过，以它自己为准，不能替她合并。 */
+function modelInherits(m) {
+  const pv = provOf(m);
+  return !!(pv && (!m.base_url || m.base_url === pv.base_url));
+}
+
 function renderModels() {
   const box = document.getElementById("mdBody");
   if (!S.models.length) {
@@ -5730,24 +6006,32 @@ function renderModels() {
     return;
   }
   box.innerHTML = S.models.map((m, i) => {
+    const pv = provOf(m);
+    const inh = modelInherits(m);
+    const addr = inh ? "" : (m.base_url || "");
+    const addrPh = inh ? ("跟着 " + pv.key + " 走（" + (pv.base_url || "") + "）")
+                       : "https://…/v1";
+    const keyPh = inh ? ("跟着 " + pv.key + " 走，留空即可")
+                      : (m.has_key
+                         ? "已填 " + esc(m.api_key_masked) + "，留空 = 不改"
+                         : "粘贴 API Key");
     return '<div class="mdrow" data-i="' + i + '">' +
       '<div class="mdhead">' +
         '<input class="mdlabel" data-f="label" value="' + esc(m.label || m.key) + '">' +
         modelChips(m) +
+        (inh ? '<span class="ptag">跟着 ' + esc(pv.key) + '</span>' : '') +
         '<span class="mdkey">' + esc(m.key) + '</span>' +
       '</div>' +
       '<div class="mdnote">' + esc(m.note || "") + '</div>' +
       '<div class="mdgrid">' +
-        '<label>API 地址<input data-f="base_url" value="' + esc(m.base_url || "") +
-          '" placeholder="https://…/v1"></label>' +
+        '<label>API 地址<input data-f="base_url" value="' + esc(addr) +
+          '" placeholder="' + esc(addrPh) + '"></label>' +
         '<label>模型名<input data-f="model" value="' + esc(m.model || "") +
           '" placeholder="服务商文档里写的那个"></label>' +
       '</div>' +
       '<div class="mdrow2">' +
         '<input type="password" data-f="api_key" autocomplete="new-password"' +
-          ' placeholder="' + (m.has_key
-            ? "已填 " + esc(m.api_key_masked) + "，留空 = 不改"
-            : "粘贴 API Key") + '">' +
+          ' placeholder="' + keyPh + '">' +
         '<label class="mdchk"><input type="checkbox" data-f="enabled"' +
           (m.enabled ? " checked" : "") + '>启用</label>' +
         '<button class="mini" data-act="mtest">测试</button>' +
@@ -5755,7 +6039,7 @@ function renderModels() {
           (m._draft ? "保存这条" : "保存") + '</button>' +
       '</div>' +
       '<div class="mdrow2">' +
-        (m.has_key
+        (m.has_key && !inh
           ? '<button class="mini" data-act="mclear">清空密钥</button>' : '') +
         '<span class="grow" style="flex:1"></span>' +
         '<button class="mini mddel" data-act="mdel">从清单里删掉</button>' +
@@ -5779,6 +6063,253 @@ function renderModels() {
     });
   });
 }
+
+/* ---------------- 接入点：一个「地址 + 密钥」对 ---------------- */
+
+async function loadProviders() {
+  const box = document.getElementById("mdProvs");
+  try {
+    const d = await api("/api/providers");
+    S.providers = d.items || [];
+  } catch (e) {
+    // 读不到就**说出来**，但只影响这一节：模型那一节照常能用。
+    // 静默吞掉的话，她会以为"接入点本来就该是空的"。
+    if (box) {
+      box.innerHTML = '<div class="blank">接入点这一节读不出来：' +
+        esc(e.message) + '</div>';
+    }
+    return;
+  }
+  renderProviders();
+}
+
+function renderProviders() {
+  const box = document.getElementById("mdProvs");
+  if (!box) return;
+  if (!S.providers.length) {
+    box.innerHTML = '<div class="blank" style="padding:10px;line-height:1.8">' +
+      '还没有接入点。<br>用下面的「＋ 添加一个模型」时，会照着它填的地址和' +
+      '密钥顺便建一个 —— 也可以先在这儿填好，再去拉它的模型列表。</div>';
+    return;
+  }
+  box.innerHTML = S.providers.map((p, i) =>
+    '<div class="mdprov" data-i="' + i + '">' +
+      '<div class="phead">' +
+        '<input class="mdlabel" data-pf="label" value="' +
+          esc(p.label || p.key) + '">' +
+        '<span class="pkey">' + esc(p.key) + '</span>' +
+        (p.has_key
+          ? '<span class="ptag">已填 ' + esc(p.api_key_masked) + '</span>'
+          : '<span class="ptag" style="border-color:#e0a08a;color:#a8443a">' +
+            '还没填密钥</span>') +
+      '</div>' +
+      '<div class="pmeta">' +
+        (p.note ? esc(p.note) + '<br>' : '') +
+        '底下挂着 ' + p.linked + ' 个模型' +
+        (p.linked ? ' —— 改一次密钥，它们一起生效' : '') +
+      '</div>' +
+      '<div class="pgrid">' +
+        '<label>API 地址<input data-pf="base_url" value="' +
+          esc(p.base_url || "") + '" placeholder="https://…/v1"></label>' +
+        '<label>密钥<input type="password" data-pf="api_key"' +
+          ' autocomplete="new-password" placeholder="' + (p.has_key
+            ? "已填 " + esc(p.api_key_masked) + "，留空 = 不改"
+            : "粘贴 API Key") + '"></label>' +
+      '</div>' +
+      '<div class="pacts">' +
+        '<button class="mini primary" data-pact="psave">保存</button>' +
+        '<button class="mini" data-pact="pfetch">拉取模型列表</button>' +
+        (p.has_key
+          ? '<button class="mini" data-pact="pclear">清空密钥</button>' : '') +
+        '<span style="flex:1 1 auto"></span>' +
+        '<button class="mini mddel" data-pact="pdel">删掉这个接入点</button>' +
+      '</div>' +
+    '</div>').join("");
+
+  box.querySelectorAll(".mdprov").forEach(row => {
+    const i = Number(row.dataset.i);
+    row.querySelectorAll("[data-pact]").forEach(b => {
+      b.onclick = () => provAct(i, b.dataset.pact, row);
+    });
+    row.querySelectorAll("input").forEach(inp => {
+      inp.onkeydown = ev => { if (ev.key === "Enter") provAct(i, "psave", row); };
+    });
+  });
+}
+
+/* 只把**真正有值**的字段发出去 —— 跟模型那一行同一条规矩。
+   后端是 PATCH 语义，"字段在不在请求里"决定改不改；
+   而 api_key 是唯一的例外（界面上永远是打码版，回传只能是空），
+   空就不发 = 不改密钥。 */
+function readProvRow(i, row) {
+  const p = S.providers[i];
+  const v = f => {
+    const el = row.querySelector('[data-pf="' + f + '"]');
+    return el ? el.value.trim() : "";
+  };
+  const body = {
+    key: p.key,
+    label: v("label") || p.label || p.key,
+    base_url: v("base_url"),
+  };
+  const k = v("api_key");
+  if (k) body.api_key = k;
+  return body;
+}
+
+async function provAct(i, act, row) {
+  const p = S.providers[i];
+  if (!p) return;
+  try {
+    if (act === "psave") {
+      await post("/api/providers/save", readProvRow(i, row));
+      await loadProviders();
+      const d = await api("/api/models");
+      S.models = d.items || [];
+      renderModels();
+      toast("接入点已保存。底下挂着的模型会自动用上新的地址和密钥。");
+
+    } else if (act === "pclear") {
+      if (!confirm("把这个接入点（" + (p.label || p.key) + "）的密钥抹掉？\n\n" +
+                   "地址和名字留着，但它底下挂着的 " + p.linked +
+                   " 个模型会跟着不能用 —— 它们共用这把钥匙。")) return;
+      await post("/api/providers/save", { key: p.key, clear_api_key: true });
+      await loadProviders();
+      toast("密钥已抹掉（地址和名字留着）");
+
+    } else if (act === "pdel") {
+      if (!confirm("删掉接入点「" + (p.label || p.key) + "」？\n\n" +
+                   "它底下的 " + p.linked + " 个模型不会跟着删，" +
+                   "会各自留下当前的地址和密钥继续能用。")) return;
+      const r = await post("/api/providers/delete", { key: p.key });
+      S.models = r.models || S.models;
+      await loadProviders();
+      renderModels();
+      toast("接入点已删掉；它底下的模型还留在清单里");
+
+    } else if (act === "pfetch") {
+      await openProvModels(p);
+    }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+/* ---------------- 从接入点拉模型 ----------------
+   这是她那个诉求的正面回答：「一个 api 能调那么多模型，网站能不能统一一下」。
+   261 个模型铺开来没人看得完，所以配了搜索框 + 「只显示还没加的」开关 ——
+   她真正关心的其实是后面那个数字：还有哪些免费的没用上。 */
+
+async function openProvModels(p) {
+  S.pmProv = p;
+  S.pmRows = [];
+  S.pmFresh = 0;
+  S.pmPicked = {};
+  document.getElementById("mpTitle").textContent =
+    "「" + (p.label || p.key) + "」有哪些模型";
+  document.getElementById("mpSearch").value = "";
+  show("mkProvModels");
+  await fetchProvModels();
+}
+
+async function fetchProvModels() {
+  const p = S.pmProv;
+  const box = document.getElementById("mpList");
+  if (!p || !box) return;
+  box.innerHTML = '<div class="blank">正在向接入点要列表…（有几秒）</div>';
+  try {
+    const d = await post("/api/providers/models", { key: p.key });
+    S.pmRows = d.items || [];
+    S.pmFresh = d.fresh || 0;
+    renderProvModels();
+  } catch (e) {
+    /* 拉不到不能只显示一个空列表 —— 她会以为"这家没有模型"，
+       而真正的原因多半是密钥或地址填错了。把话说明白。 */
+    box.innerHTML = '<div class="blank"><b>没拉到模型列表</b><br>' +
+      esc(e.message) +
+      '<br><br>地址和密钥填对了吗？有些服务商不提供这个接口，' +
+      '那就回到上面手填模型名（地址和密钥会跟着接入点走）。</div>';
+    document.getElementById("mpCount").textContent = "";
+    paintPicked();
+  }
+}
+
+function renderProvModels() {
+  const box = document.getElementById("mpList");
+  if (!box) return;
+  const kw = (document.getElementById("mpSearch").value || "")
+    .trim().toLowerCase();
+  const hideHave = document.getElementById("mpHideHave").checked;
+  let rows = S.pmRows || [];
+  if (hideHave) rows = rows.filter(r => !r.already);
+  if (kw) rows = rows.filter(r => r.id.toLowerCase().indexOf(kw) >= 0);
+
+  document.getElementById("mpCount").textContent =
+    "拉到 " + (S.pmRows || []).length + " 个 · 还没加的 " + S.pmFresh + " 个";
+
+  if (!rows.length) {
+    box.innerHTML = '<div class="blank">' +
+      ((S.pmRows || []).length
+        ? "没有符合条件的模型 —— 换个词试试，或者把「只显示还没加的」取消掉。"
+        : "这个接入点没返回任何模型。") + "</div>";
+    paintPicked();
+    return;
+  }
+
+  box.innerHTML = rows.map(r =>
+    '<label class="pmitem' + (r.already ? " have" : "") + '">' +
+      '<input type="checkbox" data-code="' + esc(r.id) + '"' +
+        (r.already ? " disabled"
+                   : (S.pmPicked[r.id] ? " checked" : "")) + '>' +
+      '<span class="code">' + esc(r.id) + '</span>' +
+      (r.already ? '<span class="ptag">已在清单里</span>' : '') +
+    '</label>').join("");
+
+  box.querySelectorAll("input[data-code]").forEach(cb => {
+    cb.onchange = () => {
+      const c = cb.dataset.code;
+      if (cb.checked) S.pmPicked[c] = true; else delete S.pmPicked[c];
+      paintPicked();
+    };
+  });
+  paintPicked();
+}
+
+function paintPicked() {
+  const n = Object.keys(S.pmPicked || {}).length;
+  const el = document.getElementById("mpPicked");
+  if (el) el.textContent = "已勾 " + n + " 个";
+  const b = document.getElementById("mpAdd");
+  if (b) b.disabled = !n;
+}
+
+/* 这几个控件绑一次就够 —— 它们不在会被重画的区域里（只有列表会被重画）。 */
+(function bindProvModelUI() {
+  const add = document.getElementById("mpAdd");
+  if (add) {
+    add.onclick = async () => {
+      const codes = Object.keys(S.pmPicked || {});
+      if (!codes.length) return;
+      try {
+        const r = await post("/api/providers/add-models",
+                             { provider: S.pmProv.key, models: codes });
+        S.models = r.items || S.models;
+        await loadProviders();
+        renderModels();
+        hide("mkProvModels");
+        toast("加进来 " + r.added + " 个模型" +
+              (r.skipped ? "，跳过 " + r.skipped + " 个清单里已有的" : "") +
+              "。它们的地址和密钥跟着接入点走。");
+      } catch (e) { toast(e.message, true); }
+    };
+  }
+  const s = document.getElementById("mpSearch");
+  if (s) s.oninput = renderProvModels;
+  const h = document.getElementById("mpHideHave");
+  if (h) h.onchange = renderProvModels;
+  const rf = document.getElementById("mpRefresh");
+  if (rf) rf.onclick = fetchProvModels;
+})();
 
 /* 把这一行的输入框收成一份请求体。
    【只把"改过的字段"发出去】—— 这是这一整块最容易出错的地方。
@@ -8788,22 +9319,38 @@ function olCandCard(c) {
   } else {
     const nodes = j.nodes || [];
     const total = ((j.word_budget || {}).total) || 0;
+    const nAll = nodes.length;
     body = '<div class="ct">'
       + esc(((j.title_candidates || [])[0]) || "（没起标题）") + '</div>';
     if (j.story_core) body += '<div>' + esc(j.story_core) + '</div>';
+    /* 【这块以前是"显示层截断"的重灾区，改动前先说清代价】
+       以前：段落只画前 6 段、每段正文切到 100 字、结局一个字都不显示。
+       结果是一篇完整的大纲看起来像"写到第 6 段就断了"。她据此判过好几次
+       "生成被截断 / 质量太差"，而库里那份 JSON 一直是完整的。
+       显示层的截断会被当成生成质量问题，比缺功能更伤人 ——
+       她会照着假象去调提示词、重花钱重跑。
+       所以现在一条都不省：段落全画、正文不切、结局和高潮补在最后，
+       框内滚动读全文，并在最上面写明"这是全文、可以滚"。 */
     body += '<div class="m" style="font-size:11.5px;color:var(--ink-3);'
-      + 'margin-top:5px;line-height:1.8">' + nodes.length + ' 段 · 约 '
-      + fmtNum(total) + ' 字 · 用到 ' + ((j.used_plot_ids || []).length)
+      + 'margin-top:5px;line-height:1.8">' + nAll + ' 段 · 实际写出 '
+      + fmtNum(c.output_chars || 0) + ' 字（模型自报各段合计约 '
+      + fmtNum(total) + ' 字）'
+      + ' · 用到 ' + ((j.used_plot_ids || []).length)
       + ' 条零件 · ' + (j.logic_risks || []).length + ' 条逻辑风险</div>';
-    body += nodes.slice(0, 6).map((n, i) =>
+    body += '<div class="m" style="font-size:11.5px;color:var(--ink-3);'
+      + 'line-height:1.8">下面是全文：' + nAll
+      + ' 段一句没省，结局也在这儿，框里可以滚。要动手改就点最下面那个按钮。</div>';
+    body += nodes.map((n, i) =>
       '<div class="cn">' + (i + 1) + ". " + esc(n.node_title || "")
       + "（" + fmtNum(n.estimated_words || 0) + " 字）"
-      + (n.event ? "<br>" + esc(String(n.event).slice(0, 100)) : "")
+      + (n.event ? "<br>" + esc(String(n.event)) : "")
       + '</div>').join("");
-    if (nodes.length > 6) {
-      body += '<div style="color:var(--ink-3)">……还有 ' + (nodes.length - 6)
-        + ' 段</div>';
-    }
+    const cli = (typeof j.climax === "object" && j.climax)
+      ? (j.climax.description || "") : (j.climax || "");
+    if (cli) body += '<div class="cn cx"><b>高潮和转折</b><br>'
+      + esc(String(cli)) + '</div>';
+    if (j.ending) body += '<div class="cn cx"><b>结局</b><br>'
+      + esc(String(j.ending)) + '</div>';
   }
   let ch = '<div class="ch">' + esc(c.model_name || c.model_key)
     + (c.adopted ? ' <span class="chip ok">已推入</span>' : '')

@@ -65,6 +65,7 @@
 import inspect
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -166,7 +167,7 @@ DEFAULT_MODELS = [
 # 界面上允许她手填的字段。多出来的字段一律丢掉 ——
 # 免得配置文件里被塞进奇怪的东西。
 _ALLOWED_FIELDS = ("key", "label", "base_url", "model", "api_key",
-                   "enabled", "note", "custom")
+                   "enabled", "note", "custom", "provider")
 
 
 # ----------------------------------------------------------------------
@@ -248,21 +249,64 @@ def _clean(item):
     return out
 
 
-def load_models(create=True):
-    """读清单。文件不存在就生成一份默认的（不含密钥）。
+# ----------------------------------------------------------------------
+# 三之二、接入点（providers）
+#
+# 【为什么要有这一层】
+# 她原话：「阿里云一个 api 可以调用那么多模型，网站能不能统一一下，
+# 我想用其他模型的免费额度。」
+# 实测：她那个阿里云 Key 的 /models 能拉到 261 个模型，
+# 里面不光通义 —— glm-5.3、kimi/kimi-k2.8-preview、deepseek-v4.1-flash、
+# stepfun/step-5-preview 全都能调。
+#
+# 按老结构（每条模型自带地址 + 密钥），要用 20 个模型就得把同一个 Key
+# 抄 20 遍 —— 现在的文件里 qwen-plus 和 qwen-max 已经抄了两遍。
+# 所以拆成两层：
+#     接入点 = 「地址 + 密钥」，填一次
+#     模型   = 挂在某个接入点下，只填模型名
+#
+# 【向后兼容怎么保证】
+# providers 是**新增**的一节。老文件里没有它，代码不会因此读不出来：
+# load_models() 的结果跟以前一字不差（模型自己填了地址/密钥就用自己的）。
+# 接入点只在内存里推导，她主动保存时才落盘 —— 这样即便推导逻辑有问题，
+# 也只是"接入点显示得不好看"，不会让正在跑的分类和大纲哑掉。
+# ----------------------------------------------------------------------
 
-    【为什么不把清单写死在代码里】
-    因为密钥得有个地方放，而代码要进公开仓库。
-    清单文件放 data/（不同步），代码里只留默认模板。
+PROVIDER_FIELDS = ("key", "label", "base_url", "api_key", "note")
+
+
+def _clean_provider(item):
+    """把一条接入点洗干净。字段少，规矩跟 _clean 一样。"""
+    if not isinstance(item, dict):
+        return None
+    out = {}
+    for f in PROVIDER_FIELDS:
+        if f in item:
+            out[f] = item[f]
+    out["key"] = str(out.get("key") or "").strip()
+    if not out["key"]:
+        return None                       # 没名字的接入点没法被引用
+    out["label"] = str(out.get("label") or out["key"]).strip()
+    # 地址统一去掉末尾斜杠：她抄文档时常常带一个 "/v1/"，
+    # 拼 "/models" 时会变成 "//models"，有的服务商因此 404。
+    out["base_url"] = str(out.get("base_url") or "").strip().rstrip("/")
+    out["api_key"] = str(out.get("api_key") or "").strip()
+    out["note"] = str(out.get("note") or "").strip()
+    return out
+
+
+def _read_raw():
+    """读整个 models.json，返回原始的两节 (providers, models)。
+
+    【为什么要"整个读"】
+    这个文件里现在住着两样东西：接入点和模型。
+    以前 save_models() 是"直接覆盖整个文件"，加了 providers 之后
+    那样写会把她的接入点**连同里面的密钥一起抹掉** —— 而且不报错。
+    所以读写都改成"整个文件进出"。
     """
     path = models_path()
     if not os.path.isfile(path):
-        if not create:
-            return []
-        items = [_clean(m) for m in DEFAULT_MODELS]
-        save_models([m for m in items if m])
-        return [m for m in items if m]
-
+        return [], []
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
@@ -274,35 +318,418 @@ def load_models(create=True):
             % (_scrub(e, ""), path))
 
     if isinstance(raw, dict):
-        raw = raw.get("models") or []
-    if not isinstance(raw, list):
-        raise LlmError("模型清单格式不对：应该是一个列表。位置：%s" % path)
-
-    out = []
-    for it in raw:
-        c = _clean(it)
-        if c:
-            out.append(c)
-    return out
+        provs = raw.get("providers") or []
+        models = raw.get("models") or []
+    else:
+        # 更老的格式：整个文件就是一个数组
+        provs, models = [], raw
+    return (provs if isinstance(provs, list) else [],
+            models if isinstance(models, list) else [])
 
 
-def save_models(items):
-    """把清单写回去。**这是密钥唯一落地的地方。**"""
+def _write_raw(providers, models):
+    """把两节一起写回去。**这是密钥唯一落地的地方。**"""
     path = models_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    cleaned = []
-    for it in items or []:
-        c = _clean(it)
+
+    pout, mout = [], []
+    for p in providers or []:
+        c = _clean_provider(p)
         if c:
-            cleaned.append(c)
-    payload = {"_说明": "这个文件里存着 API 密钥，别往外发、别提交到 git。"
-                        "data/ 目录已经在 .gitignore 里。",
-               "models": cleaned}
+            pout.append(c)
+    for m in models or []:
+        c = _clean(m)
+        if c:
+            mout.append(c)
+
+    # ---- 让"照着接入点走"这件事真的成立 ----
+    #
+    # 【为什么写的时候要动这两下】
+    # 老配置里 qwen-plus 和 qwen-max 各自抄了一份阿里云的 Key。
+    # 这两份要是留着，她以后在接入点上换 Key，这两个模型**不会跟着变** ——
+    # load_models 的回填规则是"模型自己填了就以它自己为准"。
+    # 于是"统一"成了一句空话，而且不报错：某个模型悄悄还在用旧钥匙，
+    # 表现是"我明明换了 Key 它还是 401"。
+    #
+    # 所以落盘时做两件事（只在这个唯一出口做，别处不许各写一套）：
+    #   ① 没写 provider 的老条目，按「地址 + 密钥」认领一个接入点
+    #   ② 跟接入点**完全相同**的地址/密钥是冗余，清掉（留空 = 跟着接入点走）
+    #
+    # 【边界：只清"两边一模一样"的】
+    # 她要是单独把某个模型的地址改成了中转站，那两栏不一样，原样保留 ——
+    # 那个模型就该用它自己的。
+    if pout:
+        sig_to_key = {}
+        for p in pout:
+            sig_to_key[(p.get("base_url") or "", p.get("api_key") or "")] = p["key"]
+        pmap = {p["key"]: p for p in pout}
+        for m in mout:
+            if not m.get("provider"):
+                hit = sig_to_key.get((m.get("base_url") or "",
+                                      m.get("api_key") or ""))
+                if hit:
+                    m["provider"] = hit
+            p = pmap.get(m.get("provider") or "")
+            if not p:
+                continue
+            if m.get("base_url") and m["base_url"] == p.get("base_url"):
+                m["base_url"] = ""
+            if m.get("api_key") and m["api_key"] == p.get("api_key"):
+                m["api_key"] = ""
+
+    payload = {
+        "_说明": "这个文件里存着 API 密钥，别往外发、别提交到 git。"
+                 "data/ 目录已经在 .gitignore 里。",
+        "_接入点": "providers = 一个「地址 + 密钥」对，填一次即可。"
+                   "models 里的 provider 指向它，就不必每个模型抄一遍钥匙；"
+                   "模型自己填了 base_url / api_key 的话以它自己为准。",
+        "providers": pout,
+        "models": mout,
+    }
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)          # 先写临时文件再换，写一半断电不会留个坏文件
-    return cleaned
+    return pout, mout
+
+
+def _provider_key_from_url(base_url, taken):
+    """按地址给接入点起个能看懂的名字（dashscope / deepseek / siliconflow…）。
+
+    为什么不用 p1、p2：她要在界面上认出"这堆模型是哪家的"，
+    叫 p1 等于没名字。重名时加个序号。
+    """
+    host = ""
+    m = re.search(r"https?://([^/:]+)", base_url or "")
+    if m:
+        host = m.group(1)
+    parts = [x for x in host.split(".") if x and x not in
+             ("api", "www", "com", "cn", "net", "org")]
+    # 取**最长**的那一段当名字：
+    #   dashscope.aliyuncs.com → dashscope（而不是 aliyuncs）
+    #   open.bigmodel.cn       → bigmodel（而不是 open）
+    # 域名里品牌名一般是最长的一段；而 "open" / "api" / "gateway"
+    # 这类前缀很通用，拿它当名字会冒出一堆叫 open 的接入点，认不出来。
+    base = max(parts, key=len) if parts else "provider"
+    base = re.sub(r"[^a-z0-9_-]", "", base.lower()) or "provider"
+    key = base
+    n = 2
+    while key in taken:
+        key = "%s%d" % (base, n)
+        n += 1
+    return key
+
+
+def _derive_providers():
+    """老文件（扁平结构）→ 在内存里推出接入点。
+
+    【为什么不写成"迁移一次、直接改文件"】
+    她的 qwen-plus 就躺在这个文件里，分类和大纲每天在用。
+    迁移代码要是写坏一次，那两件事一起哑。所以这里只在内存里推、
+    不改文件；只有她主动动过模型设置，才把新结构落盘。
+    推导是纯函数，推错最坏就是"接入点名字难看"，不会影响 load_models()。
+    """
+    _, models = _read_raw()
+    out, seen = [], {}
+    for m in models:
+        c = _clean(m)
+        if not c:
+            continue
+        sig = (c["base_url"], c["api_key"])
+        if not sig[0] and not sig[1]:
+            continue                       # 地址和密钥都空，不配当接入点
+        if sig in seen:
+            continue
+        key = _provider_key_from_url(c["base_url"], [p["key"] for p in out])
+        seen[sig] = key
+        out.append({"key": key,
+                    "label": (c["base_url"].split("//")[-1].split("/")[0]
+                              if c["base_url"] else key),
+                    "base_url": c["base_url"],
+                    "api_key": c["api_key"],
+                    "note": "自动从已有的模型里认出来的"})
+    return out
+
+
+def load_providers():
+    """读接入点清单。文件里没写这一节就从模型里推导。"""
+    provs, _ = _read_raw()
+    out = []
+    for p in provs:
+        c = _clean_provider(p)
+        if c:
+            out.append(c)
+    return out if out else _derive_providers()
+
+
+def save_providers(items):
+    """只改接入点那一节，模型不动。"""
+    _, models = _read_raw()
+    pout, _ = _write_raw(items, models)
+    return pout
+
+
+def public_providers():
+    """给界面看的接入点清单：密钥打码 + 标出能不能用 + 底下挂了几个模型。
+
+    跟 public_models() 同一条规矩：真钥匙不出后端。
+    """
+    models = load_models()
+    out = []
+    for p in load_providers():
+        d = dict(p)
+        d["api_key_masked"] = mask_key(p.get("api_key"))
+        d["has_key"] = bool((p.get("api_key") or "").strip())
+        d.pop("api_key", None)
+        d["model_count"] = len([m for m in models
+                                if m.get("provider") == p["key"]])
+        # 这个接入点现在有没有"因为地址+密钥相同而被认成它"的模型。
+        # 老文件里模型没有 provider 字段，靠这个也能把归属算对。
+        d["linked"] = len([m for m in models
+                           if m.get("provider") == p["key"]
+                           or (not m.get("provider")
+                               and m.get("base_url") == p.get("base_url")
+                               and m.get("api_key") == p.get("api_key"))])
+        out.append(d)
+    return out
+
+
+def get_provider(key):
+    key = (key or "").strip()
+    for p in load_providers():
+        if p["key"] == key:
+            return p
+    return None
+
+
+def upsert_provider(item):
+    """新增或改一条接入点。PATCH 语义跟 upsert_model 完全一致 ——
+    包括 api_key 那条例外：空字符串 = "我没改密钥"，不是"清空"。
+
+    【为什么要单独盯着 sent 这个集合】
+    _clean_provider 会把没传的字段补成空串（它得保证返回的结构完整）。
+    要是照着这份"补全过"的结果去覆盖，她只想改个名字，
+    地址就会被空串抹掉 —— 而且不报错，只是那个接入点突然连不上了。
+    所以这里按"请求里**真的出现过**哪些字段"来改。
+    """
+    c = _clean_provider(item)
+    if not c:
+        return None
+    sent = set(item.keys()) if isinstance(item, dict) else set()
+    provs = load_providers()
+    for i, p in enumerate(provs):
+        if p["key"] != c["key"]:
+            continue
+        for k, v in c.items():
+            if k not in sent:
+                continue                   # 没传 = 不改
+            if k == "api_key" and not v:
+                continue                   # 传了但是空 = 不改密钥（界面是打码版）
+            provs[i][k] = v
+        save_providers(provs)
+        return provs[i]
+    provs.append(c)
+    save_providers(provs)
+    return c
+
+
+def clear_provider_key(key):
+    """只把密钥抹掉，地址和名字留着。"""
+    provs = load_providers()
+    hit = None
+    for p in provs:
+        if p["key"] == (key or "").strip():
+            p["api_key"] = ""
+            hit = p
+    if hit:
+        save_providers(provs)
+    return hit
+
+
+def delete_provider(key):
+    """删掉一个接入点。**挂在它下面的模型不跟着删** ——
+    她只是不想再看见这个接入点，不代表那些模型不要了。
+    那些模型会保留自己当前的地址和密钥（等于"就地独立"）。
+    """
+    key = (key or "").strip()
+    provs = load_providers()
+    keep = [p for p in provs if p["key"] != key]
+    if len(keep) == len(provs):
+        return False
+    # 先把该接入点的地址/密钥写进它下面的模型里，再摘掉引用 ——
+    # 顺序反了的话，模型会在一瞬间变成"没有地址也没有钥匙"的空壳。
+    gone = [p for p in provs if p["key"] == key][0]
+    models = load_models()
+    for m in models:
+        if m.get("provider") == key:
+            if not m.get("base_url"):
+                m["base_url"] = gone.get("base_url") or ""
+            if not m.get("api_key"):
+                m["api_key"] = gone.get("api_key") or ""
+            m["provider"] = ""
+    save_providers(keep)
+    save_models(models)
+    return True
+
+
+def fetch_remote_models(provider_key, timeout=30):
+    """从接入点拉它有哪些模型（OpenAI 兼容的 GET /models）。
+
+    【为什么在服务端拉，不让她浏览器直接拉】
+    两个理由，缺一不可：
+      · 密钥：浏览器里发请求得先把 Key 交给前端 —— 那等于公开
+        （截图、开发者工具、缓存都会留痕）。这条规矩整个项目都在守。
+      · 跨域：各家服务商不会为我们的网页开 CORS，浏览器直拉必被拦。
+    """
+    p = get_provider(provider_key)
+    if not p:
+        raise LlmError("没有「%s」这个接入点。" % (provider_key or ""))
+    if not (p.get("api_key") or "").strip():
+        raise LlmError("这个接入点还没填密钥 —— 先填上密钥，再拉模型列表。")
+    base = (p.get("base_url") or "").strip().rstrip("/")
+    if not base:
+        raise LlmError("这个接入点还没填 API 地址。")
+
+    req = urllib.request.Request(base + "/models", headers={
+        "Authorization": "Bearer " + p["api_key"],
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:                                  # pragma: no cover
+            pass
+        if e.code in (401, 403):
+            raise LlmError("这个接入点不认这个密钥（HTTP %s）。"
+                           "检查一下 Key 有没有复制全。" % e.code)
+        raise LlmError("拉模型列表失败（HTTP %s）：%s"
+                       % (e.code, detail or "服务商没给原因"))
+    except Exception as e:
+        raise LlmError("连不上这个接入点：%s" % _scrub(e, p["api_key"]))
+
+    try:
+        d = json.loads(raw)
+    except Exception:
+        raise LlmError("服务商返回的不是 JSON，前 200 字：%s" % raw[:200])
+
+    rows = d.get("data") if isinstance(d, dict) else d
+    if not isinstance(rows, list):
+        raise LlmError("返回里没有模型列表（应该是一个 data 数组）—— "
+                       "有些服务商不提供这个接口，那就只好手填模型名。")
+    out = []
+    for x in rows:
+        if isinstance(x, dict):
+            mid = str(x.get("id") or "").strip()
+            if mid:
+                out.append({"id": mid, "owned_by": str(x.get("owned_by") or "")})
+        elif isinstance(x, str) and x.strip():
+            out.append({"id": x.strip(), "owned_by": ""})
+    return out
+
+
+def add_models_from_provider(provider_key, codes):
+    """把从这个接入点勾来的模型批量加进清单。
+
+    返回 (加了几条, 跳过了几条)。跳过的原因只有一种：清单里已经有同名 model。
+    为什么要按 model 去重、而不是按 key：她要的是"同一个模型别出现两次"，
+    而 key 是她能改的显示名（改个名字再勾一次，不该变成两条）。
+    """
+    p = get_provider(provider_key)
+    if not p:
+        raise LlmError("没有「%s」这个接入点。" % (provider_key or ""))
+    models = load_models()
+    have_model = {(m.get("model") or "").strip() for m in models}
+    used_keys = {m["key"] for m in models}
+
+    added = skipped = 0
+    for code in codes or []:
+        code = str(code or "").strip()
+        if not code or code in have_model:
+            skipped += 1
+            continue
+        # key 直接就用模型名（qwen3.7-plus 这种）—— 它本来就是全站引用名，
+        # 而且她一眼能认出来。撞名了才加序号。
+        key, n = code, 2
+        while key in used_keys:
+            key = "%s-%d" % (code, n)
+            n += 1
+        used_keys.add(key)
+        have_model.add(code)
+        models.append({
+            "key": key,
+            "label": code,
+            "provider": p["key"],
+            "model": code,
+            "base_url": "",            # 留空 = 跟着接入点走
+            "api_key": "",             # 同上（这正是"统一"的意义）
+            "enabled": True,
+            "note": "从「%s」拉进来的" % p["label"],
+        })
+        added += 1
+    if added:
+        save_models(models)
+    return added, skipped
+
+
+def load_models(create=True):
+    """读清单。文件不存在就生成一份默认的（不含密钥）。
+
+    【为什么不把清单写死在代码里】
+    因为密钥得有个地方放，而代码要进公开仓库。
+    清单文件放 data/（不同步），代码里只留默认模板。
+
+    【接入点回填】
+    模型自己没填地址/密钥时，用它的接入点（provider）那两条填上。
+    这就是"填一次 Key，下面所有模型都能用"的实现处 ——
+    也是老配置一字不改还能跑的原因：老条目自己带着地址和密钥，
+    回填这一步不会碰它们。
+    """
+    provs, raw_models = _read_raw()
+
+    if not raw_models and not provs:
+        if not create:
+            return []
+        items = [_clean(m) for m in DEFAULT_MODELS]
+        items = [m for m in items if m]
+        save_models(items)
+        return items
+
+    by_key = {}
+    for x in provs:
+        c = _clean_provider(x)
+        if c:
+            by_key[c["key"]] = c
+
+    out = []
+    for it in raw_models:
+        c = _clean(it)
+        if not c:
+            continue
+        p = by_key.get(c.get("provider") or "")
+        if p:
+            if not c["base_url"]:
+                c["base_url"] = p["base_url"]
+            if not c["api_key"]:
+                c["api_key"] = p["api_key"]
+            if not c["label"] or c["label"] == c["key"]:
+                c["label"] = c["model"] or c["key"]
+        out.append(c)
+    return out
+
+
+def save_models(items):
+    """把模型清单写回去（接入点那一节原样保留）。
+
+    【为什么这里要读一遍再写】
+    见 _read_raw 的说明：直接覆盖整个文件会把她的接入点连密钥一起抹掉。
+    """
+    provs, _ = _read_raw()
+    _, mout = _write_raw(provs, items)
+    return mout
 
 
 def public_models():

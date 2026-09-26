@@ -1810,9 +1810,19 @@ def _validate_groups(raw, judge_ids, allowed_ids, category_names=None):
 
         # 不认识的动作 → 按最保守的来（交她过目），而不是丢掉整组。
         # 丢掉的话，一个本来挺好的组会因为模型把 merge 拼错一个字母就消失。
-        act = g.get("action") or GROUP_ACTION_REVIEW
-        if act not in ALL_GROUP_ACTION:
-            act = GROUP_ACTION_REVIEW
+        #
+        # 【这三个名字必须带 cls. 前缀，不许写裸名】
+        # 2026-09-26 事故：这里原本写的是裸名 ALL_GROUP_ACTION /
+        # GROUP_ACTION_REVIEW，而它们定义在 classify_db 里、本模块没有
+        # 直接 import 它们的名字 —— 于是每次模型一返回 groups 就抛
+        # NameError，被 _execute 的 except Exception 接住，**整批卡片
+        # 全被记成"分类器报错"失败**。她因此看到"失败 124 张、重试很多次
+        # 还是失败"——重试当然没用，因为每次都会在同一行炸。
+        # 教训：这个模块引常量一律 cls.XXX；写裸名不会报导入错，
+        # 只会在真跑起来的时候炸，而且炸得面目全非。
+        act = g.get("action") or cls.GROUP_ACTION_REVIEW
+        if act not in cls.ALL_GROUP_ACTION:
+            act = cls.GROUP_ACTION_REVIEW
 
         conf = g.get("confidence")
         if conf is not None:
@@ -2524,9 +2534,26 @@ def _execute(run_id, owner, classifier_name, card_ids):
             # 组的问题**不整批拒收**：一份组建议坏了（比如编号写错），
             # 不该牵连这一批好好的分类结果 —— 那等于为了一个新功能
             # 把老功能一起搞挂。所以组是逐条丢、逐条记原因。
-            groups, gwarns = _validate_groups(
-                raw_groups, judge_ids, allowed_ids, cat_names)
-            group_warns.extend(gwarns)
+            #
+            # 【为什么这句承诺还要单包一层 try 才算数】
+            # "逐条丢"说的是数据不对的情形；但校验函数**自己抛异常**时
+            # 是另一回事 —— 那会冒到下面那个 except Exception，
+            # 把整批 sugs 一起清掉、judge_items 全记失败。
+            # 2026-09-26 就是这么炸的：组校验里一个 NameError 冒了出去，
+            # 124 张卡的分类陪葬 —— 正是这段注释说不该发生的事。
+            # 所以承诺要落成代码：这条 try 的存在就是为了让"组坏"和
+            # "卡坏"彻底脱钩，组校验再怎么出岔子，sugs 照常落库。
+            try:
+                groups, gwarns = _validate_groups(
+                    raw_groups, judge_ids, allowed_ids, cat_names)
+                group_warns.extend(gwarns)
+            except Exception as e:                     # pragma: no cover
+                # 不静默吞掉：写进任务备注，否则这个功能悄悄失效，
+                # 她只会觉得"怎么不给我提合并建议了"，查都无从查起。
+                groups = []
+                group_warns.append(
+                    "这一批的逻辑素材组校验出错（%s），已跳过这几组；"
+                    "卡片分类不受影响。" % e)
             err = ""
         except SuggestionError as e:
             # 整批拒收：不写正式分类，全部记失败并留下原因。

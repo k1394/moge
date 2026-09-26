@@ -543,11 +543,37 @@ def _plots_block(items):
 
 
 def _target_words_block(target_words, tier):
+    """「结构规模」那一段：这一档多少字、几个节点、每段多长。
+
+    【口径只有这一个出口】节点数和每段字数都在这里说给模型。
+    以前本文件和一个 outline_db.word_budget_hint() 都在说同一件事，
+    措辞还不一样，改一处忘一处就会给模型两套说法 —— 2026-09-26 合并。
+
+    关键是**把每段字数摆在前面**：以前是先说"建议 5～8 个节点"，
+    每段字数由它倒推成 1000～1600 字，于是模型每段都写肥，
+    十个字段摊进去平均一个才一百来字，全是概括。
+    """
+    try:
+        n = int(target_words or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return "预期正文字数：没填。"
     lo, hi = tier["nodes"]
-    return (
-        "预期正文字数：%d 字（%s 这一档：%s）。\n"
-        "按这一档，情节节点建议 %d～%d 个。"
-        % (int(target_words or 0), tier["label"], tier["hint"], lo, hi))
+    head = ("预期正文字数：%d 字（%s 这一档：%s）。"
+            % (n, tier["label"], tier["hint"]))
+    per = n // max(1, hi)
+    if per > odb.NODE_WORDS_MAX:
+        # 撞到节点数上限（字数很大）。这时**不能**再报"每段 450～800 字"——
+        # 那是凑不满的谎话，模型为了对上会硬拆出几百个节点。
+        # 老实说清代价：每段会比理想长，或者干脆拆篇。
+        return (head + "\n节点数已压到上限 %d 个，每段大约 %d 字，超过 %d～%d "
+                "的理想区间 —— 建议拆成多篇写，或者接受每段写长一点。"
+                % (odb.NODE_COUNT_MAX, per,
+                   odb.NODE_WORDS_MIN, odb.NODE_WORDS_MAX))
+    return (head + "\n按每段 %d～%d 字算，应该是 %d～%d 个情节节点。"
+            "宁可多切几段，也不要让一段里塞下两件事。" % (
+                odb.NODE_WORDS_MIN, odb.NODE_WORDS_MAX, lo, hi))
 
 
 def _constraints_block(hook, design, hook_ai_derived=False):
@@ -1330,6 +1356,13 @@ def get_run(run_id, owner):
     d["candidates"] = []
     for c in cands:
         d["candidates"].append({
+            # run_id 必须带上：前端点「把这一版做成大纲」时要拿它去取
+            # **生成那一刻**的输入快照（世界观 / 角色卡 / 一句话梗），
+            # 不能取界面上此刻的值 —— 她生成完可能又改过世界观。
+            # 少了它，前端 data-run 就是 undefined，"undefined" 转数字成 NaN，
+            # 请求变成 /api/outline-runs/NaN（422），然后**静默**退回表单现值：
+            # 存下来的大纲跟 AI 当时看到的那份根本不是一回事，而且不报错。
+            "run_id": rid,
             "id": c["id"], "model_key": c["model_key"],
             "model_name": c["model_name"], "status": c["status"],
             "error": c["error"][:600] if c["error"] else "",
@@ -1540,7 +1573,9 @@ def _self_check():                                          # pragma: no cover
     check("空输入时零件有兜底说法",
           "没有可用的剧情零件" in msgs[0]["content"], True)
     check("目标字数的档位写进去了",
-          "5～8 个" in msgs[0]["content"], True)
+          "10～17 个" in msgs[0]["content"], True)
+    check("同一段里说清了每段该写多长（不然模型会把每段写肥）",
+          "每段 450～800 字" in msgs[0]["content"], True)
 
     _privacy = _privacy_note({"worldview": "x" * 100, "characters": [{}],
                               "plots": [{}], "hook": "h", "design": "",

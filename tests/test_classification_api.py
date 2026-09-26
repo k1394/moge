@@ -962,9 +962,49 @@ def data_layer_tests():
                 o["text"] = "我顺手把正文重写了一遍"
             return out
 
+    class GroupClassifier(auto.PlaceholderClassifier):
+        """判得好好的，还额外给出「哪几条该合看」的建议。
+
+        【这个分类器存在的唯一理由：补一个致命盲区】
+        2026-09-26 事故：`_validate_groups` 里把常量写成了裸名
+        （`ALL_GROUP_ACTION` 而不是 `cls.ALL_GROUP_ACTION`），
+        于是模型每返回一次 groups 就抛 NameError，冒到 _execute 的
+        `except Exception` 被接住 → **整批卡片全记"分类器报错"失败**。
+        她的界面因此显示"失败 124 张"，点多少次「重试失败项」都没用
+        （每次都会在同一行炸）。
+
+        而当时**测试全绿**：因为上面三个假分类器都不返回 groups，
+        `_validate_groups` 的循环体一次都没进去过 ——
+        全绿只证明"没返回组时能跑"，不证明"返回组时能跑"。
+        所以这里必须有个会真的返回 groups 的假分类器，
+        而且故意混进**拼错的 action** 和**忘填的 action**，
+        把那条降级分支也一并走到。
+        """
+        name = "group_test"
+        model_version = "group-test-v1"
+
+        def classify_batch(self, items, ctx):
+            cards = auto.PlaceholderClassifier.classify_batch(self, items, ctx)
+            judge = [it["card_id"] for it in items if not it.get("ctx")]
+            groups = []
+            # 每 2 张一组，动作轮着来：合法 merge / 拼错的 / 没填的。
+            # 两两步进，所以组与组不会抢同一张卡（抢了会被校验丢掉，
+            # 那这条测试就测不到降级分支了）。
+            for i in range(0, len(judge) - 1, 2):
+                kind = (i // 2) % 3
+                g = {"card_ids": judge[i:i + 2], "reason": "测试用：这两条连着看"}
+                if kind == 0:
+                    g["action"] = "merge"
+                elif kind == 1:
+                    g["action"] = "mergeee"      # 拼错 → 该降级成 review
+                # kind == 2：干脆不填 action → 也该降级成 review
+                groups.append(g)
+            return {"cards": cards, "groups": groups}
+
     auto.CLASSIFIERS["slow_test"] = SlowClassifier()
     auto.CLASSIFIERS["boom_test"] = BoomClassifier()
     auto.CLASSIFIERS["body_test"] = BodyClassifier()
+    auto.CLASSIFIERS["group_test"] = GroupClassifier()
 
     def cat_id(name):
         for c in cls.list_categories():
@@ -1288,6 +1328,47 @@ def data_layer_tests():
     got = db.get_material(mid, owner=owner)["content"]
     check("整段测试跑下来 materials.content 一个字符都没变",
           got == TEXT, "%d 字" % len(got))
+
+    # ---- 组建议坏了，不该牵连卡片分类 --------------------------------
+    #
+    # 这一段补的是 2026-09-26 的盲区：模型只要返回"哪几条该合看"的建议，
+    # 校验里一个 NameError 就把**整批卡片**记成失败 —— 她点了很多次
+    # 「重试失败项」全是白点，因为每次都会在同一行炸。
+    # 根因是没有假分类器会返回 groups，那条分支从没被执行过；
+    # GroupClassifier 就是为它造的。
+    #
+    # 这里必须**同时**验两件事：卡片照常分好类（老功能没被新功能搞挂），
+    # 以及该降级的组降级（新功能自己也没坏）。
+    #
+    # 【为什么放在最后】它会重置卡片现场（这正是【17】重试测试要靠的
+    # 前提），放中间会把【17】的前置条件踩掉。借现场之前先排在别人后面。
+    # 【为什么不借前面那份素材的现场】
+    # 试过，跑出来只有 1 组、还恰好没有 merge —— 因为前面十几段测试
+    # 已经把那份素材的卡片排除的排除、改状态的改状态。
+    # 一段测试依赖"邻居跑剩的样子"，就会时绿时红，而且红的时候
+    # 指向的地方跟真正的原因差着十万八千里。所以这里自己建一份新的：
+    # 干净、可重复、跟前面互不影响。
+    print("\n【21】组建议坏了，不该牵连卡片分类（补 09-26 的盲区）")
+    gmid = db.save_material("组建议盲区测试稿", TEXT, owner=owner)["id"]
+    cls.apply_split(gmid, owner)
+    _rgrp, idgrp = auto.create_run(owner, gmid, classifier_name="group_test",
+                                   background=False)
+    run6 = auto.get_run(idgrp, owner)
+    check("返回了组建议，任务照样跑成功（不是整批报错）",
+          run6["status"] == auto.RUN_COMPLETED,
+          "%s / %s" % (run6["status_text"], (run6["error"] or "")[:70]))
+    with db.connect() as conn:
+        n_ai = conn.execute(
+            "SELECT COUNT(*) FROM cards WHERE material_id=? AND source=?",
+            (gmid, sg.SOURCE_AI)).fetchone()[0]
+        acts = [x[0] for x in conn.execute(
+            "SELECT action FROM card_groups WHERE material_id=?",
+            (gmid,)).fetchall()]
+    check("卡片该分的都分了（没被组建议带下水）", n_ai > 0, "%d 张" % n_ai)
+    check("组建议落库了", len(acts) > 0, "共 %d 组" % len(acts))
+    check("拼错的动作降级成 review（而不是丢掉整组、更不是让整批陪葬）",
+          "mergeee" not in acts and "merge" in acts,
+          "库里的动作：" + str(sorted(set(acts))))
 
     shutil.rmtree(tmp, ignore_errors=True)
 

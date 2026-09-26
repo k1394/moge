@@ -90,15 +90,56 @@ PLOT_USABLE_STATUS = (pdb.PLOT_STATUS_CONFIRMED, pdb.PLOT_STATUS_EDITED)
 # 也可能给 15 个（每段 500 字，全是空壳）。这两种都不可用。
 # 所以范围由后端定死，模型只能在区间里挑，挑出界要写警告。
 WORD_TIERS = (
-    {"key": "tiny",   "min": 0,     "max": 5999,  "nodes": (3, 5),
+    {"key": "tiny",   "min": 0,     "max": 5999,    "sample": 5000,
      "label": "5000 字上下", "hint": "单一核心冲突，角色少，结局收束快"},
-    {"key": "short",  "min": 6000,  "max": 9999,  "nodes": (5, 8),
+    {"key": "short",  "min": 6000,  "max": 9999,    "sample": 8000,
      "label": "6000～9000 字", "hint": "完整起承转合，至少一次明显转折"},
-    {"key": "medium", "min": 10000, "max": 15000, "nodes": (7, 12),
+    {"key": "medium", "min": 10000, "max": 15000,   "sample": 12500,
      "label": "10000～15000 字", "hint": "冲突和关系变化更充分，可以有副冲突"},
-    {"key": "long",   "min": 15001, "max": 10 ** 9, "nodes": (10, 14),
+    {"key": "long",   "min": 15001, "max": 10 ** 9, "sample": 20000,
      "label": "15000 字以上", "hint": "已接近中短篇，动手前建议再确认一次"},
 )
+# 【为什么档位里没有"建议几个节点"】见下面 NODE_WORDS_* 的说明 ——
+# 节点数不是一个独立参数，它是"预期字数 ÷ 每段字数"算出来的**结果**。
+# 写死在这里就会出现两个真相，改一个忘另一个。
+# sample 是这一档的**代表字数**，只给"界面上大概显示几个节点"用；
+# 真正要精确节点数，得用 word_tier(实际字数)。
+
+# ----------------------------------------------------------------------
+# 每段写多长：结构规模的**主约束**
+#
+# 【为什么把"每段多少字"提到主位】以前这里是反的：先定"建议几个节点"
+# （8000 字建议 5～8 个），每段字数由它倒推 → 1000～1600 字/段。
+# 于是提示词一边写着"字数多了要多一次转折、不是把每段写长"，
+# 一边告诉模型"每段 1000～1600 字" —— 模型当然听后者。
+# 结果就是节点少、每段肥：十个字段摊进 1500 字，平均一个才一百来字，
+# 看着都填了，其实全是概括，"细到能直接动笔"根本无从谈起。
+#
+# 现在反过来：一段该写多长**先定**（够把一个场景写清楚，又不至于塞进
+# 两三件事），节点数由预期字数除出来。8000 字 → 10～17 个节点。
+# ----------------------------------------------------------------------
+NODE_WORDS_MIN = 450     # 再短就装不下一个完整的场景
+NODE_WORDS_MAX = 800     # 再长就说明这一段里塞了不止一件事，该拆
+NODE_WORDS_TARGET = 600  # 给界面看的手感值（"大约一段 600 字"）
+NODE_COUNT_MAX = 30      # 多到这数就该提醒：分批会拖很久，也未必是她要的
+
+
+def node_range_for(words):
+    """按"每段多少字"倒推这个预期字数该有几个节点。
+
+    区间是**算出来的**、不是拍的：下限 = 每段都顶格写满 800 字，
+    上限 = 每段都只写 450 字。所以报出来的区间跟每段字数永远自洽 ——
+    不会出现"建议 10～17 个节点、每个 1000 字"这种凑不满的话。
+    """
+    try:
+        n = int(words or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return (0, 0)
+    lo = max(2, -(-n // NODE_WORDS_MAX))     # 向上取整
+    hi = max(lo, n // NODE_WORDS_MIN)        # 向下取整
+    return (min(lo, NODE_COUNT_MAX), min(hi, NODE_COUNT_MAX))
 
 TARGET_WORDS_MIN = 1000
 TARGET_WORDS_MAX = 200000
@@ -641,38 +682,43 @@ def _has_table(conn, name):
 # ----------------------------------------------------------------------
 
 def word_tier(words):
-    """这个字数属于哪一档。返回 WORD_TIERS 里的一条（字典副本）。"""
+    """这个字数属于哪一档。返回 WORD_TIERS 里的一条（字典副本）。
+
+    nodes（建议节点数）**在这里现算**，不写死在 WORD_TIERS 里 ——
+    它由"预期字数 ÷ 每段字数"决定，见 NODE_WORDS_* 的注释。
+    """
     try:
         n = int(words or 0)
     except (TypeError, ValueError):
         n = 0
+    d = None
     for t in WORD_TIERS:
         if t["min"] <= n <= t["max"]:
-            return dict(t)
-    return dict(WORD_TIERS[0])
+            d = dict(t)
+            break
+    if d is None:
+        d = dict(WORD_TIERS[0])
+    d["nodes"] = list(node_range_for(n))
+    return d
 
 
 def tier_of_key(key):
+    """按 key 取字数档。
+
+    【这里故意不给 nodes】节点数得知道**确切字数**才算得准，而这个函数
+    只知道一个档位名。要节点数请用 word_tier(实际字数)，别在这儿凑一个
+    看起来合理的数字出来。
+    """
     for t in WORD_TIERS:
         if t["key"] == key:
             return dict(t)
     return None
 
 
-def word_budget_hint(words):
-    """给一句"这一段大概该写多长"的提示（均匀分配，仅供参考）。"""
-    t = word_tier(words)
-    try:
-        n = int(words or 0)
-    except (TypeError, ValueError):
-        n = 0
-    if n <= 0:
-        return ""
-    lo, hi = t["nodes"]
-    # 每段字数就给个粗略区间：按"最多几段"算下限、按"最少几段"算上限，
-    # 这只是给她一个手感；真正的分配是模型按情节轻重写、她再调的。
-    return "建议 %d～%d 个情节节点，每个节点大约 %d～%d 字。" % (
-        lo, hi, n // max(1, hi), n // max(1, lo))
+# 【"发给模型的那句话"不在这里】它由 outline_ai._target_words_block() 拼 ——
+# 那边还要带上档位说明（"6000～9000 字这一档：完整起承转合…"）。
+# 以前这个文件里另有一个 word_budget_hint() 也在说节点数和每段字数，
+# 措辞还不一样，两处必然走岔 —— 2026-09-26 合并成 _target_words_block 一个出口。
 
 
 # ----------------------------------------------------------------------
@@ -2132,13 +2178,30 @@ def _self_check():                                          # pragma: no cover
         except ValueError:
             check("%s 要报错" % why, True, True)
 
-    # 结构规模校验：8000 字给 12 个节点要警告
+    # 结构规模校验。8000 字的口径是「每段 450～800 字 → 10～17 个节点」
+    # （2026-09-26 改过：以前先定 5～8 个节点、每段字数由它倒推，
+    #  结果每段被写肥、十个字段摊进去全是概括）。所以要测区间外的两个方向，
+    # 外加区间内**不该**被提醒。
     obj, _w = clean_outline_payload({"nodes": [
-        {"node_title": "第%d段" % i, "event": "发生了事情", "estimated_words": 600}
-        for i in range(1, 13)]}, {1})
+        {"node_title": "第%d段" % i, "event": "发生了事情", "estimated_words": 300}
+        for i in range(1, 26)]}, {1})
     ws = validate_outline(obj, 8000)
-    check("8000 字 12 个节点会被提醒",
+    check("8000 字给 25 个节点（超出上限）会被提醒",
           any("空壳" in x for x in ws), True)
+
+    obj_few, _wf = clean_outline_payload({"nodes": [
+        {"node_title": "第%d段" % i, "event": "发生了事情", "estimated_words": 1600}
+        for i in range(1, 6)]}, {1})
+    ws_few = validate_outline(obj_few, 8000)
+    check("8000 字只给 5 个节点（少于下限）会被提醒每段偏长",
+          any("偏长" in x for x in ws_few), True)
+
+    obj_ok, _wo = clean_outline_payload({"nodes": [
+        {"node_title": "第%d段" % i, "event": "发生了事情", "estimated_words": 600}
+        for i in range(1, 14)]}, {1})
+    ws_ok = validate_outline(obj_ok, 8000)
+    check("8000 字给 13 个节点（落在区间内）不该被结构规模提醒",
+          not any(("空壳" in x) or ("偏长" in x) for x in ws_ok), True)
 
     # 空泛句子要被抓出来
     obj2, _w2 = clean_outline_payload({"nodes": [

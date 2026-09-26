@@ -350,7 +350,10 @@ def http_tests():
         check("预览给出会发多少字", (pv.get("send_chars") or 0) > 1000,
               "send_chars=%s" % pv.get("send_chars"))
         check("预览给出字数档", pv["tier"]["label"] == "6000～9000 字")
-        check("预览给出建议节点数", pv["tier"]["nodes"] == [5, 8])
+        # 8000 字按「每段 450～800 字」算：ceil(8000/800)=10 到 8000//450=17。
+        # 口径 2026-09-26 改过：以前是先定节点数（5～8）、每段字数由它倒推，
+        # 结果每段被写肥；现在反过来，每段字数先定、节点数由它算。
+        check("预览给出建议节点数", pv["tier"]["nodes"] == [10, 17])
         check("预览列出候选零件", len(pv["plots"]) == 2)
         check("隐私提示说了会发什么", "角色卡" in pv["privacy"])
         check("隐私提示有字数", "字" in pv["privacy"])

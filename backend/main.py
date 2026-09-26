@@ -741,6 +741,15 @@ def api_categories(user: dict = Depends(auth.current_user)):
             "merge": cls.GROUP_ACTION_MERGE,
             "review": cls.GROUP_ACTION_REVIEW,
         },
+        # 卡片状态的「键 → 中文」，跟上面 group_status_keys 一个道理。
+        # 前端要说"AI 没判成功的那一批卡"时来这儿取，**不在 JS 里抄中文** ——
+        # 抄了的话后端把「分类失败」改成别的措辞，前端的筛选会静默筛出零张，
+        # 不报错、测试也不失败，只有她盯着界面才看得见。
+        "card_status_keys": {
+            "failed": sg.STATUS_FAILED,
+            "pending": sg.STATUS_PENDING,
+            "excluded": sg.STATUS_EXCLUDED,
+        },
         "sources": [x["source_collection"] for x in cls.source_list(user["owner"])],
         "rules": [{"key": k, "name": v["name"], "desc": v["desc"]}
                   for k, v in sg.RULES.items()],
@@ -1768,6 +1777,120 @@ def api_delete_model(req: ModelIn, user: dict = Depends(auth.current_user)):
     return {"ok": True, "items": llm.public_models()}
 
 
+# ----------------------------------------------------------------------
+# 接入点：一个「地址 + 密钥」对，底下可以挂很多模型
+#
+# 【为什么单独拆出这一层】
+# 她原话：「阿里云一个 api 可以调用那么多模型，网站能不能统一一下，
+# 我想用其他模型的免费额度。」
+# 实测：她那个阿里云 Key 的 /models 能拉到 261 个模型，里面不光通义 ——
+# GLM、Kimi、DeepSeek、Step 全都能调。
+# 按老结构（每条模型自带地址+密钥），想用 20 个就得把同一个 Key 抄 20 遍
+# （现在文件里 qwen-plus 和 qwen-max 已经抄了两遍）。
+# 所以：密钥填一次，模型只填名字。
+# ----------------------------------------------------------------------
+
+class ProviderIn(BaseModel):
+    """一条接入点。字段比模型少 —— 就「名字 + 地址 + 密钥」三样。
+
+    clear_api_key 跟 ModelIn 那边同一个道理：它是一个**动作**开关，
+    不能靠 api_key="" 来表达 —— 空串在保存那一步的含义是"我没改密钥"，
+    两种意图共用一个值必然分不清。
+    """
+    key: str = ""
+    label: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    note: str = ""
+    clear_api_key: bool = False
+
+
+class AddModelsIn(BaseModel):
+    """从接入点勾选模型批量加入清单。"""
+    provider: str = ""
+    models: list = []
+
+
+@app.get("/api/providers")
+def api_providers(user: dict = Depends(auth.current_user)):
+    """接入点清单。**密钥打码，真钥匙不出后端。**"""
+    return {"items": llm.public_providers()}
+
+
+@app.post("/api/providers/save")
+def api_save_provider(req: ProviderIn, user: dict = Depends(auth.current_user)):
+    """新增或改一条接入点（按 key 认）。PATCH 语义同模型那边。"""
+    want = _body_dict(req, sent_only=True)
+    try:
+        if want.pop("clear_api_key", False):
+            llm.clear_provider_key(want.get("key"))
+        if not (want.get("key") or "").strip():
+            raise HTTPException(status_code=400, detail="这条接入点没有名字")
+        llm.upsert_provider(want)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "items": llm.public_providers()}
+
+
+@app.post("/api/providers/delete")
+def api_delete_provider(req: ProviderIn, user: dict = Depends(auth.current_user)):
+    """删掉一个接入点。
+
+    **它下面的模型不跟着删** —— 删接入点不代表那些模型不要了。
+    那些模型会把当前的地址和密钥就地留下，继续能用
+    （数据层里先把地址/密钥写进模型，再摘引用，顺序不能反）。
+    """
+    key = (req.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="没说是哪一个")
+    try:
+        llm.delete_provider(key)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "items": llm.public_providers(),
+            "models": llm.public_models()}
+
+
+@app.post("/api/providers/models")
+def api_provider_models(req: ProviderIn, user: dict = Depends(auth.current_user)):
+    """拉这个接入点有哪些模型可用（界面上那个「拉取模型列表」）。
+
+    【为什么在服务端拉，不让她浏览器直接拉】
+    两个理由缺一不可：密钥不出后端（浏览器里出现过就等于公开）；
+    各家服务商也不会为我们的网页开 CORS，浏览器直连必被拦。
+    """
+    key = (req.key or "").strip()
+    try:
+        rows = llm.fetch_remote_models(key)
+    except llm.LlmError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+    # 标出"清单里已经有了"，并把新的排前面 ——
+    # 261 个模型铺开来，她要的是"哪些还没加"，不是从头翻到尾。
+    have = {(m.get("model") or "").strip() for m in llm.load_models()}
+    for r in rows:
+        r["already"] = r["id"] in have
+    rows.sort(key=lambda r: (r["already"], r["id"]))
+    return {"ok": True, "total": len(rows),
+            "fresh": len([r for r in rows if not r["already"]]),
+            "items": rows}
+
+
+@app.post("/api/providers/add-models")
+def api_add_models_from_provider(req: AddModelsIn,
+                                 user: dict = Depends(auth.current_user)):
+    """把勾选的模型批量加进清单。它们的地址和密钥都跟着接入点走 ——
+    这就是"填一次 Key，下面所有模型一起能用"落地的地方。"""
+    try:
+        added, skipped = llm.add_models_from_provider(req.provider, req.models)
+    except llm.LlmError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    return {"ok": True, "added": added, "skipped": skipped,
+            "items": llm.public_models()}
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 剧情内化库：剧情零件
 #
@@ -2660,7 +2783,11 @@ def api_outline_meta(user: dict = Depends(auth.current_user)):
     return {
         "types": list(odb.ALL_OUTLINE_TYPES),
         "tiers": [{"key": t["key"], "label": t["label"], "min": t["min"],
-                   "max": t["max"], "nodes": list(t["nodes"]),
+                   "max": t["max"],
+                   # 节点数是按"每段多少字"算出来的，档位里没有现成的值；
+                   # 这里用这一档的代表字数算个大概给她看，真正的分配
+                   # 由 _target_words_block(实际字数) 发给模型。
+                   "nodes": list(odb.node_range_for(t["sample"])),
                    "hint": t["hint"]} for t in odb.WORD_TIERS],
         "problems": list(odb.PROBLEM_TYPES),
         "node_fields": [{"key": k, "label": odb.NODE_FIELD_LABELS[k]}
@@ -2851,6 +2978,35 @@ def api_save_outline(req: OutlineSaveIn,
     else:
         # 改一份已有的大纲：原稿用库里存着的那份（数据层会自己去取）。
         body["has_ai_original"] = True
+
+    # ---- 生成那一刻的输入快照：缺了由服务端从那次任务补 ----
+    # 【为什么补】跟上面"AI 原稿由服务端取"是同一个道理：写进大纲的
+    # 「世界观 / 角色卡 / 一句话梗」必须是她生成那一刻的那一份。从界面上
+    # 现取的话，她生成完又改过世界观，存进大纲的就成了新写的那段 ——
+    # 跟 AI 实际看到的不一样，以后复盘怎么都对不上。
+    #
+    # 【为什么会有"缺"的情况】她从历史任务里挑一版做大纲时，前端要先
+    # 去问那次任务的输入；这一步一旦拿不到（比如候选里没带 run_id），
+    # 就会退回"界面上此刻的值"。退回是静默的 —— 世界观可能空着，
+    # 而空世界观会被下面的数据层校验直接挡下（400），她只看到"存不进去"。
+    # 所以这里只在**缺**的时候补，不覆盖她明确传上来的值。
+    rid = body.get("run_id")
+    if rid:
+        try:
+            run = oai.get_run(int(rid), user["owner"])
+        except (TypeError, ValueError):
+            run = None
+        ri = ((run or {}).get("input") or {})
+        if not str(body.get("world_input_snapshot") or "").strip() \
+                and ri.get("worldview"):
+            body["world_input_snapshot"] = ri["worldview"]
+        if not (body.get("character_ids") or []) and ri.get("character_ids"):
+            body["character_ids"] = ri["character_ids"]
+        if not str(body.get("one_sentence_hook") or "").strip() \
+                and ri.get("one_sentence_hook"):
+            body["one_sentence_hook"] = ri["one_sentence_hook"]
+        if not str(body.get("world_name") or "").strip() and ri.get("world_name"):
+            body["world_name"] = ri["world_name"]
 
     res = _odb_call(odb.save_outline, user["owner"], body)
     res["ok"] = True
