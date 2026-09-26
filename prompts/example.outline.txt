@@ -59,6 +59,12 @@
 - 高潮要有铺垫，转折要有原因，结局要回应故事核心。
 - 各节点预计字数加起来要接近预期字数。
 
+【分阶段生成协议】（示例，正式措辞见 prompts/outline.txt）
+你被分几步调用，每步只做一件事：先规划（只出节点骨架），再按
+2～4 个节点一批写细，最后收尾补高潮和结局。每批返回 complete、
+next_action、last_node_id、has_ending、continuation_cursor。
+没写完、没高潮结局之前 complete 必须填 false，不许假装写完了。
+
 【输出格式】只输出一个合法 JSON 对象，前后不要任何解释：
 
 {

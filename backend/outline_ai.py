@@ -323,6 +323,9 @@ source_plot_ids 里写上它的 plot_id。没用就别挂 ——
 {user_prompt}
 
 记住最后一遍：**只输出一个合法 JSON 对象**，前后不要写任何解释。
+
+另外：生成会被分成几步（先规划节点骨架，再分批写节点，最后补高潮结局）。
+每一步的指令会告诉你要输出哪一块，你只输出那一块，字段名按上面的来。
 """
 
 
@@ -607,8 +610,8 @@ def _learning_block(examples):
     return "\n".join(parts)
 
 
-def build_messages(ctx):
-    """拼这次要发出去的提示词。返回 messages 列表。"""
+def _system_block(ctx):
+    """拼 system 提示词（分阶段时每一轮都用同一份，只换 user 指令）。"""
     extra = (ctx.get("user_prompt") or "").strip()
     if extra:
         user_block = (
@@ -618,8 +621,7 @@ def build_messages(ctx):
             "-----------\n%s\n-----------" % extra)
     else:
         user_block = "（她这次没有额外交代。）"
-
-    system = _fill_slots(
+    return _fill_slots(
         ctx.get("template") or GENERIC_OUTLINE_PROMPT,
         worldview=_worldview_block(ctx.get("worldview")),
         characters=_characters_block(ctx.get("characters") or []),
@@ -630,11 +632,75 @@ def build_messages(ctx):
         learning_examples=_learning_block(ctx.get("learning") or []),
         user_prompt=user_block,
     )
+
+
+def build_messages(ctx):
+    """拼这次要发出去的提示词。返回 messages 列表。
+
+    这个版本是**一次出整篇**的老口径（预览页还在用它算"这次会发多少字"）。
+    真正跑的时候走 _generate_staged() 的分阶段路径，system 块跟这里同源
+    （都走 _system_block），所以预览的字数口径和实际一致。
+    """
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": _system_block(ctx)},
         {"role": "user", "content":
             "请按上面的全部要求，给这一篇同人短篇出一份可以直接动笔的细纲，"
             "只输出一个合法 JSON 对象。"},
+    ]
+
+
+def _staged_messages(ctx, kind, extra_user=""):
+    """分阶段路径的消息。system 永远是同一份，user 按阶段变。
+
+    kind: "plan" / "nodes" / "finalize" / "repair"
+    """
+    system = _system_block(ctx)
+    directive = {
+        "plan": (
+            "现在只做「规划」这一步，不要写任何节点正文。\n"
+            "输出一个 JSON 对象，包含：\n"
+            "  story_core（这篇真正讲什么）\n"
+            "  character_functions（每个角色的目标/阻碍/变化）\n"
+            "  node_plan（数组，每个元素是你要写的每一个节点的骨架：\n"
+            "     node_id、purpose、estimated_words、required_event（这一段必须发生什么）、\n"
+            "     source_plot_ids（拟用哪几条零件）、causal_link（这段怎么触发下一段））\n"
+            "  expected_node_count（一共几个节点）\n"
+            "node_plan 里的节点数必须符合上面「结构规模」那一节给的范围。\n"
+            "只输出一个合法 JSON 对象，不要别的。"
+        ),
+        "nodes": (
+            "接着写节点正文。这一步只写下面指定的这一批节点，\n"
+            "每个节点写到能直接动笔的完整程度（在哪、谁、做什么、冲突、\n"
+            "情绪变化、透露的信息、怎么接下一段），字段要跟 node_plan 一致。\n"
+            "上一批已经写好的节点会附在后面，只当上下文参考，不要重写，\n"
+            "只要让这一批的第一段接住上一批最后一段的因果。\n"
+            "输出一个 JSON 对象：{\"nodes\": [这一批的完整节点数组],\n"
+            "  \"complete\": 是否全部节点都写完了, \"next_action\": \"done\"/\"continue\",\n"
+            "  \"last_node_id\": \"这一批最后写到的节点\", \"has_ending\": false,\n"
+            "  \"continuation_cursor\": \"没写完就写接下来该写哪个节点，写完了就空串\"}\n"
+            "只输出一个合法 JSON 对象。"
+        ),
+        "finalize": (
+            "节点正文都写完了。这一步只做收尾：\n"
+            "根据已经写好的所有节点，补上 title_candidates、theme_tone、\n"
+            "overview（一段完整因果链把整篇串起来）、climax（高潮和转折是哪一段、\n"
+            "为什么）、ending（结局，以及它怎么回应故事核心）、logic_risks。\n"
+            "输出一个 JSON 对象，字段名就是这六个，别重复输出节点。\n"
+            "只输出一个合法 JSON 对象。"
+        ),
+        "repair": (
+            "上一步检查发现这份大纲还缺东西。只补下面列出的缺失部分，\n"
+            "不要重写已有的内容：\n"
+            "  · 缺某几个节点（断号）：只补这几个节点的完整正文\n"
+            "  · 缺高潮/结局/总览：只补这些字段\n"
+            "输出一个 JSON 对象，只包含要补的那部分。只输出合法 JSON。"
+        ),
+    }[kind]
+    if extra_user:
+        directive = directive + "\n\n" + extra_user
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": directive},
     ]
 
 
@@ -1127,6 +1193,232 @@ def _model_label(key):
         return key
 
 
+# ----------------------------------------------------------------------
+# 分阶段生成：A 规划 → B 节点分批 → C 检查 → D 只补缺失
+# ----------------------------------------------------------------------
+#
+# 【为什么要把"一次长请求"拆开】
+# 她最大的两个抱怨：大纲在结尾被掐断、节点之间没因果。两者根子是同一个：
+# 让模型一次吐出整篇几千字，字数上限一到，最后几段就断了；而一次生成的
+# 注意力也顾不齐"每个节点怎么接下一个"。
+# 拆成"先规划骨架 → 再按 2~4 个节点分批写细 → 收尾补高潮结局"之后：
+#   · 每一批都很短，不会撞字数上限；就算撞了，只续写这一批，不动前面的
+#   · 每批都把上一批最后一段喂进去，因果链是显式接上的，不是模型"自觉"
+#   · 检查发现缺高潮/结局/断号时，只补那一点，不重写整篇（不重花钱）
+
+NODE_BATCH = 3          # 一批写几个节点（任务书 2~4，取中间值）
+
+
+def _chat_json(cfg, msgs, opts):
+    """发一次 JSON 请求。返回 (解析出的对象或 None, usage, finish_reason, 错误串)。
+
+    finish_reason 一路带上 —— 它是"这一批是不是被字数上限掐断"的唯一硬证据，
+    跟单次长请求时代一样关键（见 _run_one_model 里那段注释）。
+    """
+    try:
+        out = cls.llm.chat(cfg, msgs, json_mode=True, **opts)
+    except Exception as e:
+        # json_mode 不被支持时退一次（跟分类、内化同一套兜底）
+        if getattr(e, "status", None) == 400:
+            try:
+                out = cls.llm.chat(cfg, msgs, json_mode=False, **opts)
+            except Exception as e2:
+                return None, {}, "", str(e2)
+        else:
+            return None, {}, "", str(e)
+    raw = (out.get("content") or "").strip()
+    finish = (out.get("finish_reason") or "").strip() or cls.llm.FINISH_UNKNOWN
+    usage = out.get("usage") or {}
+    if not raw:
+        return None, usage, finish, "模型返回了空内容（可能是被截断或触发了内容策略）。"
+    try:
+        obj = _extract_json_object(raw)
+    except ValueError as e:
+        return None, usage, finish, str(e)
+    return obj, usage, finish, ""
+
+
+def _merge_usage(total, one):
+    """把一次请求的 usage 累进 total（prompt/completion/total 三项）。"""
+    for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        try:
+            total[k] = total.get(k, 0) + int(one.get(k) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def _generate_staged(ctx, cfg, opts):
+    """分阶段生成一份大纲。返回 (payload_dict, meta)。
+
+    payload_dict 与 clean_outline_payload 的输出完全兼容，下游
+    （候选卡渲染、diff、学习、落库）一个字都不用改。
+
+    meta 记：每个阶段几批、token 累加、每批的 finish_reason、给她的警告。
+    """
+    known = {p["id"] for p in ctx["plots"]}
+    target = int(ctx.get("target_words") or 0)
+    tier = ctx.get("tier") or odb.word_tier(target)
+    usage_total = {}
+    stage_notes = []       # 给界面的分阶段进度（"规划 1 次 / 节点 3 批 / 收尾 1 次"）
+    warns = []
+    input_chars = 0
+
+    # ============ A 规划 ============
+    msgs = _staged_messages(ctx, "plan")
+    input_chars += sum(len(m["content"]) for m in msgs)
+    plan, u, fin, err = _chat_json(cfg, msgs, opts)
+    _merge_usage(usage_total, u)
+    if plan is None:
+        raise ValueError("规划阶段失败：%s" % err)
+    if not isinstance(plan, dict):
+        plan = {}
+    node_plan = plan.get("node_plan") or []
+    if not isinstance(node_plan, list) or not node_plan:
+        raise ValueError("规划阶段没给出节点骨架（node_plan 是空的）。")
+    # 骨架编号由我们统一编 n1..nN —— 模型的编号可能跳、可能重，
+    # 不在这里归一的话，后面"断号检查"和"排序"全错位。
+    node_plan = [dict(x) if isinstance(x, dict) else {} for x in node_plan]
+    for i, x in enumerate(node_plan, 1):
+        x["node_id"] = "n%d" % i
+    expected = len(node_plan)
+    stage_notes.append("规划 1 次，%d 个节点" % expected)
+
+    # ============ B 节点分批写细 ============
+    nodes = []              # 已写好的完整节点（按顺序）
+    by_id = {}              # node_id → 节点，用于衔接和断号检查
+    batch_plans = [node_plan[i:i + NODE_BATCH]
+                   for i in range(0, len(node_plan), NODE_BATCH)]
+    prev_tail = ""          # 上一批最后一段的因果尾巴，喂给下一批作衔接
+
+    for bi, batch in enumerate(batch_plans, 1):
+        # 这一批要写哪些节点 + 它们各自的骨架要求
+        spec = "\n".join(
+            "- %s：%s（约 %s 字；必须发生：%s）"
+            % (str(x.get("node_id") or ""), str(x.get("purpose") or "")[:80],
+               x.get("estimated_words") or 0,
+               str(x.get("required_event") or "")[:120])
+            for x in batch)
+        ctx_note = ("这一批要写这些节点（编号必须一致）：\n%s\n" % spec)
+        if prev_tail:
+            ctx_note += ("上一批最后写到的因果是：%s\n"
+                         "这一批第一段要从这里接着往下走。\n" % prev_tail[:300])
+        ctx_note += ("上一批已经写好的节点（只作上下文，不要重写）：%s\n"
+                     % ("、".join(by_id.keys()) if by_id else "（这是第一批）"))
+        msgs = _staged_messages(ctx, "nodes", ctx_note)
+        input_chars += sum(len(m["content"]) for m in msgs)
+        obj, u, fin, err = _chat_json(cfg, msgs, opts)
+        _merge_usage(usage_total, u)
+        if obj is None:
+            # 这一批整批失败：记警告，跳到下一批（别让一个批坏掉整篇）。
+            # 后面 C 检查会抓出缺的节点，交给 D 补。
+            warns.append("第 %d 批节点写失败（%s），后面检查会补。"
+                         % (bi, err[:120]))
+            stage_notes.append("第 %d 批失败" % bi)
+            continue
+        batch_nodes = obj.get("nodes") if isinstance(obj, dict) else None
+        if not isinstance(batch_nodes, list):
+            batch_nodes = []
+        for nv in batch_nodes:
+            if not isinstance(nv, dict):
+                continue
+            nid = str(nv.get("node_id") or "").strip()
+            if not nid:
+                continue
+            if nid in by_id:   # 模型重写/重复给同一编号，跳过
+                continue
+            by_id[nid] = nv
+            nodes.append(nv)
+        # 记这一批的尾巴，给下一批衔接
+        if batch_nodes:
+            last = batch_nodes[-1]
+            tail = " ".join(str(last.get(k) or "") for k in
+                            ("event", "result", "connection_to_next"))
+            prev_tail = tail[:300]
+        # 被字数上限掐断：这一批可能没写全，C 会抓出来，D 补
+        if fin == cls.llm.FINISH_LENGTH:
+            warns.append("第 %d 批被字数上限掐断，可能有节点没写完，"
+                         "检查后会补。" % bi)
+        stage_notes.append("第 %d 批 %s" % (bi, "完成" if obj is not None else "失败"))
+
+    # ============ C 收尾（补高潮/结局/总览） ============
+    msgs = _staged_messages(ctx, "finalize")
+    input_chars += sum(len(m["content"]) for m in msgs)
+    finz, u, fin, err = _chat_json(cfg, msgs, opts)
+    _merge_usage(usage_total, u)
+    tail_fields = {}
+    if isinstance(finz, dict):
+        tail_fields = finz
+    elif finz is not None:
+        warns.append("收尾阶段没返回对象（%s），高潮结局可能缺失。" % err[:120])
+    stage_notes.append("收尾 1 次")
+
+    # ============ 拼最终 payload（与 clean_outline_payload 兼容）============
+    payload = {
+        "title_candidates": tail_fields.get("title_candidates") or [],
+        "story_core": str(plan.get("story_core") or tail_fields.get("story_core") or ""),
+        "theme_tone": str(tail_fields.get("theme_tone") or ""),
+        "character_functions": plan.get("character_functions") or [],
+        "overview": str(tail_fields.get("overview") or ""),
+        "nodes": nodes,
+        "climax": str(tail_fields.get("climax") or ""),
+        "ending": str(tail_fields.get("ending") or ""),
+        "logic_risks": tail_fields.get("logic_risks") or plan.get("logic_risks") or [],
+    }
+
+    # ============ C 检查（本地硬检查）============
+    # 断号 / 缺节点：plan 里声明了 N 个，实际写出来 M 个
+    planned_ids = [str(x.get("node_id") or "") for x in node_plan]
+    got_ids = set(by_id.keys())
+    missing = [x for x in planned_ids if x and x not in got_ids]
+    if missing:
+        warns.append("缺 %d 个节点没写出来：%s" % (len(missing),
+                    "、".join(missing[:5])))
+
+    # ============ D 只补缺失 ============
+    if missing:
+        msgs = _staged_messages(
+            ctx, "repair",
+            "缺这些节点，只补它们（编号必须一致）：%s\n"
+            "每个节点写到完整程度，字段跟前面对齐。" % "、".join(missing))
+        input_chars += sum(len(m["content"]) for m in msgs)
+        rep, u, fin, err = _chat_json(cfg, msgs, opts)
+        _merge_usage(usage_total, u)
+        stage_notes.append("补缺 1 次")
+        if isinstance(rep, dict):
+            rep_nodes = rep.get("nodes") or []
+            for nv in (rep_nodes if isinstance(rep_nodes, list) else []):
+                if isinstance(nv, dict):
+                    nid = str(nv.get("node_id") or "").strip()
+                    if nid and nid in planned_ids and nid not in by_id:
+                        by_id[nid] = nv
+                        nodes.append(nv)
+            # 补缺也可能顺便补了高潮结局
+            if not payload["climax"] and rep.get("climax"):
+                payload["climax"] = str(rep["climax"])
+            if not payload["ending"] and rep.get("ending"):
+                payload["ending"] = str(rep["ending"])
+            if not payload["overview"] and rep.get("overview"):
+                payload["overview"] = str(rep["overview"])
+        else:
+            warns.append("补缺失节点也失败了（%s）。" % err[:120])
+
+    # nodes 按 plan 顺序重排（分批写出来可能乱序）
+    order = {nid: i for i, nid in enumerate(planned_ids)}
+    nodes.sort(key=lambda n: order.get(str(n.get("node_id") or ""), 9999))
+    payload["nodes"] = nodes
+
+    meta = {
+        "usage_total": usage_total,
+        "input_chars": input_chars,
+        "output_chars": sum(len(str(n)) for n in nodes),
+        "stage_notes": stage_notes,
+        "warns": warns,
+        "known": known,
+    }
+    return payload, meta
+
+
 def _run_one_model(run_id, owner, model_key, ctx):
     """一个模型的一次生成。**每个模型只碰自己那一行候选**，
     绝不读别的模型的结果（计划第五.5：不同模型不能互相读取结果）。"""
@@ -1158,29 +1450,24 @@ def _run_one_model(run_id, owner, model_key, ctx):
     # 理由见 OUTLINE_TIMEOUT / OUTLINE_MAX_RETRY 那两段注释。
     _opts = dict(temperature=0.7, timeout=OUTLINE_TIMEOUT,
                  max_retry=OUTLINE_MAX_RETRY)
-    try:
-        out = cls.llm.chat(cfg, msgs, json_mode=True, **_opts)
-    except Exception as e:
-        # json_mode 不被支持时退一次（跟分类、内化同一套兜底）
-        if getattr(e, "status", None) == 400:
-            try:
-                out = cls.llm.chat(cfg, msgs, json_mode=False, **_opts)
-            except Exception as e2:
-                _fail(str(e2))
-                return
-        else:
-            _fail(str(e))
-            return
 
-    raw = out.get("content") or ""
-    if not raw.strip():
-        _fail("模型返回了空内容（可能是被截断或触发了内容策略）。")
+    # ---- 分阶段生成：A 规划 → B 节点分批 → C 检查 → D 只补缺失 ----
+    # 替代过去"一次 chat 出整篇"。理由见 _generate_staged 顶部注释。
+    try:
+        payload, meta = _generate_staged(ctx, cfg, _opts)
+    except ValueError as e:
+        _fail(str(e))
+        return
+    except Exception as e:                                   # pragma: no cover
+        _fail("分阶段生成时出错：%s" % e)
         return
 
-    # ---- 解析 + 校验 ----
-    known = {p["id"] for p in ctx["plots"]}
+    # ---- 解析 + 校验（跟老路径同一套清洗，下游全不动）----
+    known = meta["known"]
+    input_chars = meta["input_chars"] or input_chars
+    usage_total = meta["usage_total"]
+    stage_notes = meta.get("stage_notes") or []
     try:
-        payload = _extract_json_object(raw)
         obj, warns = odb.clean_outline_payload(payload, known)
     except ValueError as e:
         _fail("模型的返回没法当成大纲用：%s" % e)
@@ -1189,29 +1476,27 @@ def _run_one_model(run_id, owner, model_key, ctx):
         _fail("读模型返回时出错：%s" % e)
         return
 
-    warns = list(warns) + odb.validate_outline(obj, ctx["target_words"], known)
+    warns = list(warns) + list(meta.get("warns") or []) \
+        + odb.validate_outline(obj, ctx["target_words"], known)
 
     # ---- 结束原因 ----
-    # 「结构体检」只能看出"缺结局、缺高潮"这类**内容形态**问题；
-    # 它看不出"这篇是被硬掐断的" —— 而后者才是最会骗人的一种：
-    # 正文半截，可每个字段单独看都合法、模型自填的预计字数也照旧。
-    # 所以撞到字数上限时，把这条提醒插到**最前面**，让她扫一眼就知道
-    # 这版不能直接拿去写。
-    finish = (out.get("finish_reason") or "").strip() or cls.llm.FINISH_UNKNOWN
-    if finish == cls.llm.FINISH_LENGTH:
-        warns.insert(0, "这一版被字数上限掐断了，模型没写完 —— "
-                        "最后一段是断的。要么少参考几条重跑，"
-                        "要么把它当草稿接着往下补。")
-    elif finish == cls.llm.FINISH_FILTER:
-        warns.insert(0, "这一版被内容策略拦下了，内容不完整。")
+    # 分阶段之后，没有"一次长请求的 finish_reason"了。但"有没有哪一批被
+    # 字数上限掐断"仍然要让她看见 —— 把这层信息压进第一条警告。
+    # 判断依据：任何一批报过 length，或者补缺后节点仍有缺失（结构缺口）。
+    if stage_notes:
+        warns.insert(0, "分阶段生成：%s。" % " / ".join(stage_notes))
 
     # 结构缺口单独算一份存下来：列表接口 /api/outline-runs 不带 content_json，
     # 而候选卡上那行"体检结论"要在列表里就显示得出来。
     gaps = odb.structure_gaps(obj)
 
     text = odb.render_outline_text(obj)
-    usage = out.get("usage") or {}
+    usage = usage_total
     names = {p["id"]: (p.get("title") or "") for p in ctx["plots"]}
+    # 分阶段没有"一次长请求的 finish_reason"。记 stop 表示"编排正常跑完"；
+    # "有没有写完"由 gaps_json 和 warnings 兜底（缺高潮/结局会进 gaps）。
+    finish = cls.llm.FINISH_STOP
+    output_chars = meta.get("output_chars") or len(text)
 
     with db.connect() as conn:
         conn.execute(
@@ -1224,7 +1509,8 @@ def _run_one_model(run_id, owner, model_key, ctx):
             (CAND_DONE, odb._dumps(obj), text,
              odb._dumps(obj.get("used_plot_ids") or []),
              odb._dumps([names.get(i, "") for i in (obj.get("used_plot_ids") or [])]),
-             odb._dumps(warns), raw[:200000], input_chars, len(raw),
+             odb._dumps(warns), odb._dumps(payload)[:200000], input_chars,
+             output_chars,
              int(usage.get("prompt_tokens") or 0),
              int(usage.get("completion_tokens") or 0), finish, odb._dumps(gaps),
              int((time.time() - t0) * 1000), label,
