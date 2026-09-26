@@ -1195,6 +1195,13 @@
   /* 世界观输入框：比别处长，因为它是这一页最重要的输入 */
   #olWorld { min-height: 132px; }
   #olDesign { min-height: 84px; }
+  /* 草稿说明条：一句话讲清"你填的东西会留着，要清自己清"。
+     她上次的困惑正是"填完点一次生成就没了，只能重敲" —— 这句就是答它。 */
+  .drafttip {
+    flex: 0 0 auto; font-size: 12px; color: var(--ink-3);
+    border: 1px dashed var(--line); border-radius: 8px;
+    padding: 7px 10px; line-height: 1.7; margin-bottom: 12px;
+  }
 
   /* ---- 角色卡选择（横向一排小卡） ---- */
   .olchars {
@@ -1684,6 +1691,7 @@
           <button class="btn" id="olWorldBtn">世界观库</button>
           <button class="btn" id="olCharBtn">角色卡</button>
           <button class="btn" id="olPromptBtn">补充提示词</button>
+          <button class="btn" id="olWipeText">清空输入</button>
           <button class="btn" id="olReload">刷新</button>
         </div>
       </header>
@@ -1701,6 +1709,10 @@
 
             <!-- ============ 左：输入 ============ -->
             <div class="olcol">
+              <div class="drafttip">
+                你填的东西会自己留着 —— 换页、刷新、重新登录都不会丢，
+                只有你自己清掉才算没（把内容整段删掉，或点「清空输入」）。
+              </div>
               <div class="field">
                 <label>世界观 <span class="chip">必填</span></label>
                 <textarea id="olWorld" rows="7" spellcheck="false"
@@ -1711,6 +1723,7 @@
                   <input type="file" id="olWorldFile" hidden
                          accept=".txt,.md,.docx,.pdf">
                   <button class="mini" id="olWorldSave">存进世界观库</button>
+                  <button class="mini" id="olWorldClear">清空这框</button>
                   <span class="grow"></span>
                   <span class="mdhint" id="olWorldCnt">0 字</span>
                 </div>
@@ -3089,6 +3102,109 @@ function toast(msg, bad) {
    登录过期后，任何一个请求都会走到这里，自动弹回登录页。
    于是每个具体的功能（列表、导入、上传、删除…）都不用自己写
    "如果没登录该怎么办"。这叫把重复逻辑收到一个地方。 */
+/* ============================================================
+   草稿层：她填过的东西，不许自己消失
+   ============================================================
+   这些输入框以前只活在内存里 —— 切一次页、刷新一次、重新登录一次，
+   她刚写的一屏世界观就没了，只能重敲。她提的原话是：
+
+     「网站里所有要用户填的地方，包括自定义提示词都不要自动清空，
+       让用户自己清」
+
+   这一层就干三件事：
+     ① 敲一下存一下（防抖 400ms，写进浏览器本地）
+     ② 进页面 / 重画时，先把她上次填的灌回去
+     ③ 只有她主动清（点「清空」，或者把内容整段删空）才算没了
+
+   为什么存浏览器本地、不存服务端：这些是**还没提交的草稿**。
+   服务端不该替她存半成品；而且她换台机器也不该把草稿带过去。
+   密钥之类的敏感值一律不进这里 —— 它们走的是 models.json。
+   ============================================================ */
+
+const DRAFT_KEY = "moge_draft_v1";
+let DRAFT = {};
+try { DRAFT = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}") || {}; }
+catch (e) { DRAFT = {}; }   // 本地存储坏了也不能让整个页面起不来
+let _draftTimer = 0;
+
+function draftFlush() {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(DRAFT)); } catch (e) {}
+}
+
+/* 输入框 id → 草稿键。加个前缀是为了以后想存别的类型（选择状态）时
+   不会跟输入框的键撞上。 */
+function draftKeyOf(id) { return "f:" + id; }
+
+function draftText(key) {
+  const v = DRAFT[key];
+  return typeof v === "string" ? v : "";
+}
+
+/* 存。**空字符串等于「她清掉了」** —— 这条规则就是"让用户自己清"：
+   她把框整段删空，草稿跟着没，不用另外给每个框都配一个删除按钮。 */
+function draftPut(key, val) {
+  val = (val == null) ? "" : String(val);
+  if (!val) {
+    if (!(key in DRAFT)) return;
+    delete DRAFT[key];
+  } else {
+    if (DRAFT[key] === val) return;
+    DRAFT[key] = val;
+  }
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(draftFlush, 400);   // 打字过程中不必每次都写盘
+}
+
+function draftPutJSON(key, val) {
+  draftPut(key, JSON.stringify(val == null ? null : val));
+}
+
+function draftGetJSON(key, fallback) {
+  try {
+    const v = DRAFT[key];
+    if (typeof v !== "string" || !v) return fallback;
+    const o = JSON.parse(v);
+    return o == null ? fallback : o;
+  } catch (e) { return fallback; }
+}
+
+/* 把草稿灌进框里。返回是否真灌了 —— 调用方有时要知道
+   （比如"新建"弹层想提示她"上次没提交的内容还在"）。 */
+function draftFill(elOrId, after) {
+  const el = (typeof elOrId === "string")
+    ? document.getElementById(elOrId) : elOrId;
+  if (!el) return false;
+  const v = draftText(draftKeyOf(el.id));
+  if (!v || v === el.value) return false;
+  el.value = v;
+  if (after) after();
+  return true;
+}
+
+/* 把一个框接上草稿：先回填一次，之后敲一下就存一下。
+   回填只在"草稿和框里现在的不一样"时才做 —— 否则会把 HTML 里
+   写死的默认值（比如预期字数 8000）冲掉。 */
+function draftBind(id, after) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const key = draftKeyOf(id);
+  const v = draftText(key);
+  if (v && v !== el.value) { el.value = v; if (after) after(); }
+  el.addEventListener("input", () => {
+    draftPut(key, el.value);
+    if (after) after();
+  });
+  return el;
+}
+
+/* 清掉一个框的草稿 + 把框删空。她点「清空」时走这里。 */
+function draftWipe(id, after) {
+  const el = document.getElementById(id);
+  draftPut(draftKeyOf(id), "");
+  if (el) el.value = "";
+  if (after) after();
+}
+
 async function api(url, opt) {
   const r = await fetch(url, opt);
   let data = null;
@@ -4490,9 +4606,40 @@ function pfD(prefix) {
            clear: g("Clear"), save: g("Save"), note: g("Note") };
 }
 
+/* 每一档对应哪些输入框。内化那一档有两个（内化页常驻一个、弹层里一个），
+   它们显示的是同一份东西，所以框里一变就要互相同步。 */
+const PF_TEXT_IDS = { classify: ["clPText"], infuse: ["ifPText", "ipText"],
+                      outline: ["olPText"] };
+
+/* 这一档她自己敲的那份草稿（跟服务端已保存的那份是两回事）。
+   两个框都存过的时候，取非空的那个。 */
+function pfDraftText(kind) {
+  const ids = PF_TEXT_IDS[kind] || [];
+  for (let i = 0; i < ids.length; i++) {
+    const v = draftText(draftKeyOf(ids[i]));
+    if (v) return v;
+  }
+  return "";
+}
+
+/* 某个提示词框变了：存草稿 + 把同档的另一个框同步成一样的。
+   不同步的话，她在【剧情内化】页写完，打开内化弹层会看见一个空框，
+   以为白写了。 */
+function pfTextChanged(kind, selfId) {
+  const el = document.getElementById(selfId);
+  if (!el) return;
+  draftPut(draftKeyOf(selfId), el.value);
+  (PF_TEXT_IDS[kind] || []).forEach(id => {
+    if (id === selfId) return;
+    const other = document.getElementById(id);
+    if (other && other.value !== el.value) other.value = el.value;
+  });
+}
+
 function pfS(kind) {
   if (!S.pf[kind]) {
-    S.pf[kind] = { content: "", max: 5000, tab: "pick", pick: null };
+    S.pf[kind] = { content: pfDraftText(kind), max: 5000,
+                   tab: "pick", pick: null };
   }
   return S.pf[kind];
 }
@@ -4501,13 +4648,19 @@ function pfS(kind) {
    上一轮跑完到现在，她可能在别的地方改过。 */
 async function pfLoad(kind) {
   const keep = S.pf[kind] || {};
+  /* 她自己敲的草稿优先于服务端那份 —— 这是「不要自动清空」的关键一处。
+     服务端那份是"上次保存的"，草稿是"她刚写完还没保存的"，后者显然更该赢。
+     不这么写的话，每次重新进页面、每次 pfLoad，都会拿服务端那份把
+     她还没保存的改动**盖掉** —— 表现就是"我明明写了，它自己没了"。 */
+  const draft = pfDraftText(kind);
   try {
     const r = await api(PF_KINDS[kind].defaultUrl);
-    S.pf[kind] = { content: r.content || "", max: r.max || 5000,
+    S.pf[kind] = { content: draft || r.content || "", max: r.max || 5000,
                    tab: keep.tab || "pick", pick: keep.pick || null };
   } catch (e) {
     // 读不到就当空的，绝不因为这一条让整个弹层打不开
-    S.pf[kind] = { content: "", max: 5000, tab: "pick", pick: null };
+    S.pf[kind] = { content: draft || "", max: 5000,
+                   tab: "pick", pick: null };
   }
   await pfLoadLib(kind);
   return S.pf[kind];
@@ -4768,6 +4921,13 @@ async function pfSaveDefault(kind, prefix) {
 async function pfClearDefault(kind, prefix) {
   const dom = pfD(prefix);
   const st = pfS(kind);
+  // 她主动点「清空」= 连草稿一起清。不清的话下次进页面草稿又灌回来了，
+  // 她会以为"清空"这个按钮是坏的。
+  draftPut(draftKeyOf(prefix + "Text"), "");
+  (PF_TEXT_IDS[kind] || []).forEach(id => {
+    const other = document.getElementById(id);
+    if (other) other.value = "";
+  });
   if (dom.text) { dom.text.value = ""; dom.text.focus(); }
   st.pick = null;
   pfPaintCount(kind, prefix);
@@ -7174,7 +7334,10 @@ document.getElementById("clReload").onclick = async () => {
    （原来还有个"展开/收起"，搬进弹层之后去掉了 —— 弹层里没有收起来的理由）
    下面这几行只接自动分类那一个位置（前缀 clP）；
    内化的两个位置在它们自己那一节里接。 */
-document.getElementById("clPText").oninput = () => pfPaintCount("classify", "clP");
+document.getElementById("clPText").oninput = () => {
+  pfTextChanged("classify", "clPText");
+  pfPaintCount("classify", "clP");
+};
 
 function setClTab(tab) { pfSetTab("classify", "clP", tab, pfOpts("clP")); }
 document.getElementById("clPTabPick").onclick = () => setClTab("pick");
@@ -7524,8 +7687,10 @@ function wireInfuse() {
 
   // 提示词这一块整个交给共用的那套（跟自动分类同一个选择器）。
   // 前缀 ifP → 控件 id 是 ifPTabPick / ifPText / ifPPickMine ……
-  document.getElementById("ifPText").oninput =
-    () => pfPaintCount("infuse", "ifP");
+  document.getElementById("ifPText").oninput = () => {
+    pfTextChanged("infuse", "ifPText");
+    pfPaintCount("infuse", "ifP");
+  };
   document.getElementById("ifPTabPick").onclick =
     () => pfSetTab("infuse", "ifP", "pick", pfOpts("ifP"));
   document.getElementById("ifPTabEdit").onclick =
@@ -7611,7 +7776,10 @@ async function openInfPrompt() {
 
 // 这个弹层的控件是静态的，脚本跑到这里时它们已经在 DOM 里了，
 // 直接绑一次就够（不像状态条那样会被重画）。
-document.getElementById("ipText").oninput = () => pfPaintCount("infuse", "ip");
+document.getElementById("ipText").oninput = () => {
+  pfTextChanged("infuse", "ipText");
+  pfPaintCount("infuse", "ip");
+};
 document.getElementById("ipTabPick").onclick =
   () => pfSetTab("infuse", "ip", "pick", pfOpts("ip"));
 document.getElementById("ipTabEdit").onclick =
@@ -8734,6 +8902,43 @@ const OL = {
 
 function olEl(id) { return document.getElementById(id); }
 
+/* ---------------- 大纲页的"选了哪些"也留着 ----------------
+   她要的是"多次生成"：这次出来的不满意，改两句再来一次。
+   模型勾选、关联的角色卡、手挑的零件要是每次进页面都重置，
+   第二次就得从头勾一遍 —— 这正是她说的"很不方便"。
+
+   这里只存"选了哪些"，不存内容本身。内容（世界观正文、角色卡字段）
+   一律由服务端给：本地存一份的话，卡被改了、删了、停用了，
+   草稿里那份还是旧的，她就会看着一张已经不存在的卡去生成。 */
+const OL_CHOICE = { models: "c:ol.models", chars: "c:ol.chars",
+                    poolMode: "c:ol.poolmode", picked: "c:ol.picked",
+                    worldId: "c:ol.worldid", worldName: "c:ol.worldname" };
+
+function olSaveChoices() {
+  draftPutJSON(OL_CHOICE.models,
+    Object.keys(OL.models).filter(k => OL.models[k]));
+  draftPutJSON(OL_CHOICE.chars, Object.keys(OL.chars).map(Number));
+  draftPut(OL_CHOICE.poolMode, OL.poolMode);
+  draftPutJSON(OL_CHOICE.picked,
+    Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number));
+  draftPut(OL_CHOICE.worldId, OL.worldId ? String(OL.worldId) : "");
+  draftPut(OL_CHOICE.worldName, OL.worldName || "");
+}
+
+/* 启动时把上次的勾选摆回 OL 里。角色卡要等 /api/characters 回来之后
+   才认得出哪些还有效，所以这里只把 id 记下来（见 olLoadChars）。 */
+function olRestoreChoices() {
+  const ms = draftGetJSON(OL_CHOICE.models, null);
+  if (Array.isArray(ms)) ms.forEach(k => { OL.models[k] = true; });
+  const pm = draftText(OL_CHOICE.poolMode);
+  if (pm === "auto" || pm === "manual") OL.poolMode = pm;
+  const pk = draftGetJSON(OL_CHOICE.picked, null);
+  if (Array.isArray(pk)) pk.forEach(id => { OL.picked[id] = true; });
+  OL.worldId = Number(draftText(OL_CHOICE.worldId)) || 0;
+  OL.worldName = draftText(OL_CHOICE.worldName) || "";
+  OL.charIds = draftGetJSON(OL_CHOICE.chars, null);
+}
+
 /* ---------------- 读数据 ---------------- */
 
 async function loadOutline(force) {
@@ -8834,6 +9039,7 @@ function olPaintModels() {
       } else {
         delete OL.models[m.key];
       }
+      olSaveChoices();   // 勾选也留着，下次进页面还是这几只
       olPaintModelNote();
     };
   });
@@ -8858,6 +9064,12 @@ function olPaintModelNote() {
 async function olLoadChars() {
   const r = await api("/api/characters");
   OL.charList = r.characters || [];
+  // 草稿里记着"上次关联了哪几张"：先把 id 摆进 OL.chars，
+  // 下面那个 alive 过滤就会把它们捞回来（还是现拉下来的最新那份卡）。
+  if (Array.isArray(OL.charIds)) {
+    OL.charIds.forEach(id => { if (!OL.chars[id]) OL.chars[id] = {}; });
+    OL.charIds = null;
+  }
   // 勾着的那张要是被删了或停用了，就取消勾选 ——
   // 不然她会看着"已关联 2 张"，然后每次生成都在服务端被挡回来。
   const alive = {};
@@ -8865,6 +9077,7 @@ async function olLoadChars() {
     if (OL.chars[c.id] && c.status === "启用") alive[c.id] = c;
   });
   OL.chars = alive;
+  olSaveChoices();   // 顺便把草稿里已经失效的那些也去掉
   olPaintChars();
   olPaintCharList();
   olPaintStats();
@@ -8888,6 +9101,7 @@ function olPaintChars() {
   box.querySelectorAll("[data-olchar]").forEach(b => {
     b.onclick = () => {
       delete OL.chars[b.dataset.olchar];
+      olSaveChoices();
       olPaintChars();
       olPaintCharList();
     };
@@ -10309,7 +10523,10 @@ async function olDelChar(id) {
    olPTabPick / olPText / olPPickMine…… 加这一档只改了 PF_KINDS
    和 PF_PANELS 各一行，函数一个都没动（这是那套组件当初的设计意图）。 */
 
-olEl("olPText").oninput = () => pfPaintCount("outline", "olP");
+olEl("olPText").oninput = () => {
+  pfTextChanged("outline", "olPText");
+  pfPaintCount("outline", "olP");
+};
 olEl("olPTabPick").onclick = () => pfSetTab("outline", "olP", "pick", pfOpts("olP"));
 olEl("olPTabEdit").onclick = () => pfSetTab("outline", "olP", "edit", pfOpts("olP"));
 olEl("olPNew").onclick = () => openPromptForm("outline", null);
@@ -10357,6 +10574,38 @@ olEl("olPromptBtn").onclick = () => {
 };
 
 olEl("olWorld").oninput = olPaintWorldCnt;
+
+/* 「清空这框」：世界观是这几块里最长的，误点一次代价大 —— 先问一句。 */
+olEl("olWorldClear").onclick = () => {
+  if (olEl("olWorld").value &&
+      !confirm("把世界观这一框清空？\n\n"
+             + "撤销不了 —— 内容长的话，先复制一份再清。")) return;
+  draftWipe("olWorld", olPaintWorldCnt);
+  // 从库里挑的那份也一起断掉，不然她看着"清空了，可旁边还挂着个名字"
+  OL.worldId = 0; OL.worldName = "";
+  olSaveChoices();
+  toast("世界观已清空");
+};
+
+/* 「清空输入」：一次清掉她自己敲过的这几块文本。
+   字数、勾的模型、挑的零件**不动** —— 那些是设置，清掉要重设一遍，
+   跟她要的"清空内容重新来一遍"不是一回事。 */
+olEl("olWipeText").onclick = () => {
+  const has = ["olWorld", "olHook", "olDesign", "olPText"]
+    .some(id => (olEl(id).value || "").trim());
+  if (!has) { toast("现在是空的，没有要清的东西"); return; }
+  if (!confirm("清空这页你填的文本？\n\n"
+             + "世界观、一句话梗、情节设计、补充提示词都会删掉，撤销不了。\n"
+             + "（预期字数、勾的模型、挑的零件不动。）")) return;
+  ["olWorld", "olHook", "olDesign"].forEach(id => draftWipe(id));
+  draftWipe("olPText");
+  pfTextChanged("outline", "olPText");
+  OL.worldId = 0; OL.worldName = "";
+  olSaveChoices();
+  olPaintWorldCnt();
+  pfPaintCount("outline", "olP");
+  toast("已清空，重新填就行");
+};
 olEl("olWorld").onchange = olPaintWorldCnt;
 olEl("olWords").oninput = olPaintTier;
 olEl("olWorldRead").onclick = () => olEl("olWorldFile").click();
@@ -10385,11 +10634,13 @@ olEl("olWorldFile").onchange = async () => {
 
 olEl("olPoolAuto").onclick = () => {
   OL.poolMode = "auto";
+  olSaveChoices();
   olPaintPool();
   olPaintPoolNote();
 };
 olEl("olPoolManual").onclick = () => {
   OL.poolMode = "manual";
+  olSaveChoices();
   olPaintPool();
   olPaintPoolNote();
 };
@@ -10406,6 +10657,7 @@ olEl("olPool").onclick = e => {
   }
   const id = Number(row.dataset.olplot);
   if (OL.picked[id]) delete OL.picked[id]; else OL.picked[id] = true;
+  olSaveChoices();
   olPaintPool();
   olPaintPoolNote();
 };
@@ -10596,6 +10848,7 @@ olEl("olcList").onclick = e => {
   const c = OL.charList.find(x => x.id === Number(row.dataset.olc));
   if (!c || c.status !== "启用") return;
   if (OL.chars[c.id]) delete OL.chars[c.id]; else OL.chars[c.id] = c;
+  olSaveChoices();
   olPaintChars();
   olPaintCharList();
 };
@@ -10681,6 +10934,27 @@ function olSeedModel() {
   const ok = (((OL.meta || {}).models) || []).find(m => m.usable);
   if (ok) OL.models[ok.key] = true;
 }
+
+/* ---------------- 启动：把草稿接上 ----------------
+   顺序有讲究：先把上次的勾选摆回 OL，再把草稿灌进输入框。
+   这两步都得在任何 loadXxx 之前做完 —— 否则界面会先按"空的"画一遍，
+   她眼前闪一下"我填的东西呢"，再看见它冒出来。
+
+   弹层里的新建输入（新建零件、新建分类那些）暂时没在这儿。
+   它们有"打开就是新建一条"的语义，留着上次的内容容易被误提交 ——
+   要不要一起留，我留给她定。 */
+
+olRestoreChoices();
+
+draftBind("olWorld", olPaintWorldCnt);
+draftBind("olHook");
+draftBind("olDesign");
+draftBind("olWords", olPaintTier);
+draftBind("olPoolSize", olPaintPoolNote);
+draftBind("olPText", () => pfPaintCount("outline", "olP"));
+draftBind("clPText", () => pfPaintCount("classify", "clP"));
+draftBind("ifPText", () => pfPaintCount("infuse", "ifP"));
+draftBind("ipText", () => pfPaintCount("infuse", "ip"));
 
 /* ---------------- 启动 ---------------- */
 
