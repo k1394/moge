@@ -768,6 +768,16 @@
     font-size: 11.5px; color: var(--ink-3);
   }
   .mdgrid input { font-size: 12.5px; }
+  /* 模型名那一格：输入框 + 「拉模型列表」并排。
+     按钮为什么长在这儿、而不是挤到下面那一排 ——
+     她卡住的那一刻就是"不知道模型名该填什么"，
+     按钮必须出现在问题旁边，而不是让她自己去别处找。
+     中转站尤其如此：后台那列「分组」写着 GPT PLUS，看着就像模型名。 */
+  .mdminline {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .mdminline input { flex: 1 1 auto; min-width: 0; }
+  .mdminline button { flex: 0 0 auto; white-space: nowrap; }
   .mdtool {
     display: flex; align-items: center; gap: 9px;
     flex-wrap: wrap; margin-bottom: 11px;
@@ -854,6 +864,12 @@
   /* 已经加过的：留着（她要确认"这个确实在清单里了"），但视觉上退后 */
   .pmitem.have { color: var(--ink-3); }
   .pmitem .ptag {
+    flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
+    border: 1px solid var(--line); border-radius: 5px; padding: 0 5px;
+  }
+  /* 「点一个填进模型名」那一档：整行可点，右边写明点下去会怎样 */
+  .pmitem.pick { cursor: pointer; }
+  .pmitem .pmuse {
     flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
     border: 1px solid var(--line); border-radius: 5px; padding: 0 5px;
   }
@@ -3540,6 +3556,11 @@ S.providers = [];
 /* 拉模型列表那个弹层的临时状态。放 S 上而不是局部变量，
    是因为搜索框每敲一下就重画一次，重画时得还记得她勾了哪些。 */
 S.pmProv = null; S.pmRows = []; S.pmFresh = 0; S.pmPicked = {};
+/* 拉模型那个弹层有两个入口，靠 pmMode 分：
+     "add"  = 从接入点那一行进来 → 勾选后加进清单
+     "fill" = 从模型行的「拉模型列表」进来 → 点一个直接填进模型名
+   pmFill 记着"要填给谁"（那一行的模型名输入框）。 */
+S.pmMode = "add"; S.pmFill = null;
 S.runPick = null;  // 「开始自动分类」面板里她挑的方法和模型
 S.catPick = null;  // 「手动归类」面板里她挑的主类和副标签
 S.clsPoll = null;  // 轮询定时器
@@ -6026,8 +6047,11 @@ function renderModels() {
       '<div class="mdgrid">' +
         '<label>API 地址<input data-f="base_url" value="' + esc(addr) +
           '" placeholder="' + esc(addrPh) + '"></label>' +
-        '<label>模型名<input data-f="model" value="' + esc(m.model || "") +
-          '" placeholder="服务商文档里写的那个"></label>' +
+        '<label>模型名<span class="mdminline">' +
+          '<input data-f="model" value="' + esc(m.model || "") +
+            '" placeholder="服务商文档里写的那个">' +
+          '<button class="mini" type="button" data-act="mlist">拉模型列表</button>' +
+        '</span></label>' +
       '</div>' +
       '<div class="mdrow2">' +
         '<input type="password" data-f="api_key" autocomplete="new-password"' +
@@ -6053,6 +6077,7 @@ function renderModels() {
     const kw = get("api_key"), en = get("enabled");
 
     row.querySelector('[data-act="mtest"]').onclick = () => testModel(i, row);
+    row.querySelector('[data-act="mlist"]').onclick = () => openRowModels(i, row);
     row.querySelector('[data-act="msave"]').onclick = () => saveModel(i, row);
     const mc = row.querySelector('[data-act="mclear"]');
     if (mc) mc.onclick = () => clearModelKey(i, row);
@@ -6088,8 +6113,11 @@ function renderProviders() {
   if (!box) return;
   if (!S.providers.length) {
     box.innerHTML = '<div class="blank" style="padding:10px;line-height:1.8">' +
-      '还没有接入点。<br>用下面的「＋ 添加一个模型」时，会照着它填的地址和' +
-      '密钥顺便建一个 —— 也可以先在这儿填好，再去拉它的模型列表。</div>';
+      '还没有接入点。<br>' +
+      '在下面「＋ 添加一个模型」里把地址和密钥填好、点「保存」，' +
+      '这里就会自动多出一个接入点 —— 那时能一次勾一堆模型进来。<br>' +
+      '想先看一家认哪些模型，不用等保存：在下面那一行的「模型名」' +
+      '旁边点「拉模型列表」就行。</div>';
     return;
   }
   box.innerHTML = S.providers.map((p, i) =>
@@ -6200,25 +6228,97 @@ async function provAct(i, act, row) {
    261 个模型铺开来没人看得完，所以配了搜索框 + 「只显示还没加的」开关 ——
    她真正关心的其实是后面那个数字：还有哪些免费的没用上。 */
 
+/* 入口一：接入点那一行的「拉取模型列表」—— 勾选 → 加进清单。 */
 async function openProvModels(p) {
+  S.pmMode = "add";
+  S.pmFill = null;
   S.pmProv = p;
   S.pmRows = [];
   S.pmFresh = 0;
   S.pmPicked = {};
   document.getElementById("mpTitle").textContent =
     "「" + (p.label || p.key) + "」有哪些模型";
+  document.getElementById("mpSub").textContent =
+    "向这个接入点问一次它有哪些模型，勾好要用的加进清单。";
   document.getElementById("mpSearch").value = "";
+  document.getElementById("mpHideHave").checked = true;
+  chromeProvModels();
   show("mkProvModels");
   await fetchProvModels();
+}
+
+/* 入口二：模型行上的「拉模型列表」—— 点一个 → 填进「模型名」。
+
+   为什么非要有这个入口，那是 2026-09-26 解开的一场死锁：
+     不知道模型名 → 想拉列表 → 拉列表要先有接入点 →
+     接入点要等"保存模型"那一步才认领出来 → 模型名填不对就测不过、
+     她不敢保存 → 拉不出列表。
+   破法：不要求先保存，就拿输入框里当下的地址和密钥去问一次。
+   （密钥是发给我们自己后端的、请求也在后端发出，全项目的规矩没破。） */
+async function openRowModels(i, row) {
+  const g = f => row.querySelector('[data-f="' + f + '"]');
+  const m = S.models[i] || {};
+  const addr = (g("base_url").value || "").trim() || (m.base_url || "");
+  S.pmMode = "fill";
+  S.pmFill = g("model");
+  S.pmProv = {
+    key: m.key || "",
+    label: m.label || m.key || "这一条",
+    base_url: addr,
+    api_key: (g("api_key").value || "").trim()
+  };
+  S.pmRows = [];
+  S.pmFresh = 0;
+  S.pmPicked = {};
+  document.getElementById("mpTitle").textContent = "这个地址认哪些模型";
+  document.getElementById("mpSub").textContent =
+    "这是它自己汇报上来的模型名 —— 点一个，就填进上面那行的「模型名」。";
+  document.getElementById("mpSearch").value = "";
+  /* 这一档下「只显示还没加的」没意义（她多半是条新行，一个都没加过），
+     取消掉，免得她看到一个被筛短的列表还以为"就这么多"。 */
+  document.getElementById("mpHideHave").checked = false;
+  chromeProvModels();
+  show("mkProvModels");
+  await fetchProvModels();
+}
+
+/* 底部那一条按模式换：add 模式靠勾选 + 「加入清单」，
+   fill 模式点行就行，没有勾选这回事 —— 所以把左边的计数换成一句说明。 */
+function chromeProvModels() {
+  const fill = S.pmMode === "fill";
+  const picked = document.getElementById("mpPicked");
+  const add = document.getElementById("mpAdd");
+  /* 用行内 display，不用 hidden 属性：只要样式里给过一个 display，
+     作者样式就会盖掉浏览器默认的 [hidden]{display:none}，
+     于是"藏起来"其实没藏。行内样式没这个风险。 */
+  if (add) add.style.display = fill ? "none" : "";
+  /* 「只显示还没加的」在 fill 模式下是句废话 ——
+     她多半是刚建了那一行，一个都还没加过；勾着它只会让列表看着变短。
+     连它的勾选框一起藏（本来就已经给它取消勾选了）。 */
+  const hh = document.getElementById("mpHideHave");
+  if (hh && hh.parentNode) hh.parentNode.style.display = fill ? "none" : "";
+  if (picked) {
+    picked.textContent = fill
+      ? "点上面任意一行，模型名就填到那一行里"
+      : "已勾 0 个";
+  }
 }
 
 async function fetchProvModels() {
   const p = S.pmProv;
   const box = document.getElementById("mpList");
   if (!p || !box) return;
-  box.innerHTML = '<div class="blank">正在向接入点要列表…（有几秒）</div>';
+  box.innerHTML = '<div class="blank">正在向它要列表…（有几秒）</div>';
+  /* fill 模式（模型行进来的）要把输入框里当下的地址和密钥一起带上 ——
+     地址可能是刚敲的，密钥更是（界面上存的是打码版，回传不了原文）。
+     只在后端发出去，这是"密钥不出后端"那条规矩的落点。 */
+  const body = { key: p.key };
+  if (S.pmMode === "fill") {
+    body.base_url = p.base_url || "";
+    body.api_key = p.api_key || "";
+  }
   try {
-    const d = await post("/api/providers/models", { key: p.key });
+    const d = await post("/api/providers/models", body);
     S.pmRows = d.items || [];
     S.pmFresh = d.fresh || 0;
     renderProvModels();
@@ -6227,8 +6327,12 @@ async function fetchProvModels() {
        而真正的原因多半是密钥或地址填错了。把话说明白。 */
     box.innerHTML = '<div class="blank"><b>没拉到模型列表</b><br>' +
       esc(e.message) +
-      '<br><br>地址和密钥填对了吗？有些服务商不提供这个接口，' +
-      '那就回到上面手填模型名（地址和密钥会跟着接入点走）。</div>';
+      '<br><br>' + (S.pmMode === "fill"
+        ? "地址和密钥都填对了吗？地址一般要带 /v1 结尾，"
+          + "不是中转站的网站首页。"
+        : "地址和密钥填对了吗？有些服务商不提供这个接口，"
+          + "那就回到上面手填模型名（地址和密钥会跟着接入点走）。") +
+      '</div>';
     document.getElementById("mpCount").textContent = "";
     paintPicked();
   }
@@ -6256,6 +6360,26 @@ function renderProvModels() {
     return;
   }
 
+  /* fill 模式：整行就是一个按钮，点一下把名字填进那一行。
+     不留勾选框 —— 一次只填一个，多一个"勾"的动作纯属多余。 */
+  if (S.pmMode === "fill") {
+    box.innerHTML = rows.map(r =>
+      '<div class="pmitem pick" data-code="' + esc(r.id) + '">' +
+        '<span class="code">' + esc(r.id) + '</span>' +
+        '<span class="pmuse">填这个</span>' +
+      '</div>').join("");
+    box.querySelectorAll(".pmitem.pick").forEach(el => {
+      el.onclick = () => {
+        const to = S.pmFill;
+        if (to) to.value = el.dataset.code;
+        hide("mkProvModels");
+        toast("模型名填好了：「" + el.dataset.code +
+              "」—— 点「测试」确认能通，再点「保存」。");
+      };
+    });
+    return;
+  }
+
   box.innerHTML = rows.map(r =>
     '<label class="pmitem' + (r.already ? " have" : "") + '">' +
       '<input type="checkbox" data-code="' + esc(r.id) + '"' +
@@ -6276,6 +6400,9 @@ function renderProvModels() {
 }
 
 function paintPicked() {
+  /* fill 模式（从模型行进来）没有勾选这回事 ——
+     直接返回，别把 chromeProvModels 写下的那句说明覆盖成"已勾 0 个"。 */
+  if (S.pmMode === "fill") return;
   const n = Object.keys(S.pmPicked || {}).length;
   const el = document.getElementById("mpPicked");
   if (el) el.textContent = "已勾 " + n + " 个";
@@ -6288,6 +6415,7 @@ function paintPicked() {
   const add = document.getElementById("mpAdd");
   if (add) {
     add.onclick = async () => {
+      if (S.pmMode === "fill") return;   // 这一档按钮已被藏起来，兜个底
       const codes = Object.keys(S.pmPicked || {});
       if (!codes.length) return;
       try {

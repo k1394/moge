@@ -1745,12 +1745,7 @@ def api_test_model(req: ModelIn, user: dict = Depends(auth.current_user)):
     顺带把用量也带回来（让她对"跑一遍要花多少"有个直觉）。
     """
     want = _body_dict(req, sent_only=True)
-    base = llm.get_model(want.get("key")) or {}
-    cfg = {}
-    for f in ("key", "label", "base_url", "model", "api_key", "note"):
-        v = (want.get(f) or "").strip()
-        # 空的一律用已存的 —— 界面回传的是打码版，本来也回传不了原文
-        cfg[f] = v or (base.get(f) or "")
+    cfg = llm.merge_model_cfg(want)
 
     try:
         r = llm.chat(cfg, [{"role": "user", "content": "在吗？回我一个字就行。"}],
@@ -1855,15 +1850,28 @@ def api_delete_provider(req: ProviderIn, user: dict = Depends(auth.current_user)
 
 @app.post("/api/providers/models")
 def api_provider_models(req: ProviderIn, user: dict = Depends(auth.current_user)):
-    """拉这个接入点有哪些模型可用（界面上那个「拉取模型列表」）。
+    """拉这个地址有哪些模型可用（界面上那个「拉取模型列表」）。
 
     【为什么在服务端拉，不让她浏览器直接拉】
     两个理由缺一不可：密钥不出后端（浏览器里出现过就等于公开）；
     各家服务商也不会为我们的网页开 CORS，浏览器直连必被拦。
+
+    【两个入口，走两条路】这是 2026-09-26 补的：
+      · 接入点那一行的按钮 → 只传 key，按**已经存好的**接入点拉；
+      · 模型行上的「看它有哪些模型」→ 传地址（+刚敲的密钥），
+        按**输入框当下的值**拉。
+    为什么非要有第二条：她配一个新中转站时，最需要模型列表的一刻
+    正是"还没保存"的时候 —— 那时接入点还不存在，第一个入口根本
+    没出现在她眼前。结果就是"填不出模型名 → 测不过 → 不敢保存 →
+    拉不了列表 → 更填不出模型名"的死循环。
     """
     key = (req.key or "").strip()
+    want = _body_dict(req, sent_only=True)
     try:
-        rows = llm.fetch_remote_models(key)
+        if (want.get("base_url") or "").strip():
+            rows = llm.fetch_models_for_cfg(llm.merge_model_cfg(want))
+        else:
+            rows = llm.fetch_remote_models(key)
     except llm.LlmError as e:
         raise HTTPException(status_code=400, detail=e.message)
 

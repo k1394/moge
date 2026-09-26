@@ -572,8 +572,22 @@ def delete_provider(key):
     return True
 
 
-def fetch_remote_models(provider_key, timeout=30):
-    """从接入点拉它有哪些模型（OpenAI 兼容的 GET /models）。
+def _looks_like_webpage(raw):
+    """这段返回看着像网页而不是接口数据吗？
+
+    用来把「地址少写了 /v1」这个坑单独认出来。
+    为什么值得单认：她填中转站时最容易只填网站域名（https://xxx.shop），
+    那样请求打到首页上，回来的是一整页 HTML —— 界面上的原话是
+    「返回的不是 JSON，前 200 字：<!doctype html>…」，她看了只会
+    以为"这家不支持"，然后去别处折腾，而问题其实就差一个 /v1。
+    """
+    s = (raw or "").lstrip()[:300].lower()
+    return (s.startswith("<!doctype") or s.startswith("<html")
+            or "<head>" in s[:300] or "<body" in s[:300])
+
+
+def _fetch_models_from(base_url, api_key, timeout=30):
+    """拿一份「地址 + 密钥」去问它有哪些模型（OpenAI 兼容的 GET /models）。
 
     【为什么在服务端拉，不让她浏览器直接拉】
     两个理由，缺一不可：
@@ -581,17 +595,14 @@ def fetch_remote_models(provider_key, timeout=30):
         （截图、开发者工具、缓存都会留痕）。这条规矩整个项目都在守。
       · 跨域：各家服务商不会为我们的网页开 CORS，浏览器直拉必被拦。
     """
-    p = get_provider(provider_key)
-    if not p:
-        raise LlmError("没有「%s」这个接入点。" % (provider_key or ""))
-    if not (p.get("api_key") or "").strip():
-        raise LlmError("这个接入点还没填密钥 —— 先填上密钥，再拉模型列表。")
-    base = (p.get("base_url") or "").strip().rstrip("/")
+    base = (base_url or "").strip().rstrip("/")
     if not base:
-        raise LlmError("这个接入点还没填 API 地址。")
+        raise LlmError("还没填 API 地址 —— 填上再拉模型列表。")
+    if not (api_key or "").strip():
+        raise LlmError("这一行还没有密钥 —— 先填上 Key，再拉模型列表。")
 
     req = urllib.request.Request(base + "/models", headers={
-        "Authorization": "Bearer " + p["api_key"],
+        "Authorization": "Bearer " + api_key,
         "Accept": "application/json",
     })
     try:
@@ -604,17 +615,25 @@ def fetch_remote_models(provider_key, timeout=30):
         except Exception:                                  # pragma: no cover
             pass
         if e.code in (401, 403):
-            raise LlmError("这个接入点不认这个密钥（HTTP %s）。"
+            raise LlmError("这个地址不认这个密钥（HTTP %s）。"
                            "检查一下 Key 有没有复制全。" % e.code)
         raise LlmError("拉模型列表失败（HTTP %s）：%s"
                        % (e.code, detail or "服务商没给原因"))
     except Exception as e:
-        raise LlmError("连不上这个接入点：%s" % _scrub(e, p["api_key"]))
+        raise LlmError("连不上这个地址：%s" % _scrub(e, api_key))
 
     try:
         d = json.loads(raw)
     except Exception:
-        raise LlmError("服务商返回的不是 JSON，前 200 字：%s" % raw[:200])
+        if _looks_like_webpage(raw):
+            raise LlmError(
+                "这个地址返回的是一整个网页，不是接口数据。\n"
+                "多半是「API 地址」少写了 /v1 —— 中转站尤其容易这样：\n"
+                "  现在填的：%s\n"
+                "  应该填成：%s/v1\n"
+                "（也检查一下是不是把控制台首页地址粘过来了。）" % (base, base))
+        raise LlmError("服务商返回的不是 JSON，前 200 字：%s"
+                       % _scrub(raw[:200], api_key))
 
     rows = d.get("data") if isinstance(d, dict) else d
     if not isinstance(rows, list):
@@ -629,6 +648,55 @@ def fetch_remote_models(provider_key, timeout=30):
         elif isinstance(x, str) and x.strip():
             out.append({"id": x.strip(), "owned_by": ""})
     return out
+
+
+def fetch_remote_models(provider_key, timeout=30):
+    """按接入点拉它的模型列表。"""
+    p = get_provider(provider_key)
+    if not p:
+        raise LlmError("没有「%s」这个接入点。" % (provider_key or ""))
+    return _fetch_models_from(p.get("base_url"), p.get("api_key"), timeout)
+
+
+def _key_for_base(base_url):
+    """这个地址在清单里有没有钥匙？有就借来用。
+
+    【为什么需要】
+    她填一个新中转站时，地址和 Key 是刚敲进输入框的、还没保存 ——
+    这时候"模型列表"正是最需要的东西（不然不知道模型名叫什么）。
+    但空输入框回传不了密钥（界面上显示的是打码版），
+    所以往回找一层：同名地址的接入点、或者某条模型存过的。
+    找不到也没关系，调用方会给出"先去填 Key"的提示。
+    """
+    want = (base_url or "").strip().rstrip("/").lower()
+    if not want:
+        return ""
+    for p in load_providers():
+        if (p.get("base_url") or "").strip().rstrip("/").lower() == want:
+            k = (p.get("api_key") or "").strip()
+            if k:
+                return k
+    for m in load_models():
+        if (m.get("base_url") or "").strip().rstrip("/").lower() == want:
+            k = (m.get("api_key") or "").strip()
+            if k:
+                return k
+    return ""
+
+
+def fetch_models_for_cfg(cfg, timeout=30):
+    """按一份**还没保存**的地址/密钥拉模型列表。
+
+    存在的理由就是那场死锁：
+      不知道模型名 → 想拉列表 → 拉列表要先有接入点 →
+      接入点靠"保存模型"时才顺便认领 → 模型名填不对就测不过、她不敢保存。
+    破法就是允许拿输入框里当下的值直接拉。
+    """
+    base = (cfg.get("base_url") or "").strip()
+    key = (cfg.get("api_key") or "").strip()
+    if not key:
+        key = _key_for_base(base)
+    return _fetch_models_from(base, key, timeout)
 
 
 def add_models_from_provider(provider_key, codes):
@@ -756,6 +824,27 @@ def get_model(key):
         if m["key"] == key:
             return m
     return None
+
+
+def merge_model_cfg(want):
+    """把「界面上刚填的」和「已经存过的」合成一份能用的配置。
+
+    【为什么必须合】
+    界面上的密钥框，她没改的时候回传的是空值（打码版只当占位符显示，
+    不是输入框的值）。只按请求里传的字段走，一条存好的模型会变成
+    "没填密钥"—— 测试和拉模型列表都会莫名其妙地失败。
+
+    PATCH 语义在这儿的落点：请求里没出现的字段用已存的兜底；
+    出现了但是空串的，也当"没改"处理 —— 空串在界面上没法表达
+    "我要清空"（清空有专门的开关，见 ModelIn.clear_api_key）。
+    """
+    w = want or {}
+    base = get_model(w.get("key")) or {}
+    cfg = {}
+    for f in ("key", "label", "base_url", "model", "api_key", "note"):
+        v = (w.get(f) or "").strip()
+        cfg[f] = v or (base.get(f) or "")
+    return cfg
 
 
 def usable_models():
@@ -902,12 +991,15 @@ def finish_label(reason):
     return FINISH_LABELS.get(r, "结束了（%s）" % r)
 
 
-def _pick_content(raw, key):
+def _pick_content(raw, key, label="", base=""):
     """从返回的 JSON 里挑出模型说的话，**连同这次是怎么结束的**。
 
     为什么单独写：不同家的返回结构大同小异但细节有差
     （有的 content 是 None + reasoning_content，有的 choices 可能为空），
     挑不出来的时候要给一句人能看懂的话，而不是 KeyError。
+
+    label / base 只是给报错用的（"哪一条、打的哪个地址"）。不传也行，
+    那种时候退回笼统的说法 —— 测试里就是这么调的。
 
     返回 (正文, 用量, finish_reason)。第三个值见上面常量区的说明 ——
     它决定"这篇是不是写完了"，不能丢。
@@ -915,7 +1007,18 @@ def _pick_content(raw, key):
     try:
         d = json.loads(raw)
     except Exception:
-        raise LlmError("模型返回的不是 JSON，前 200 字：%s" % raw[:200])
+        if _looks_like_webpage(raw):
+            # 这一条她真会碰到：中转站地址只填了域名、漏了 /v1，
+            # 请求打到首页上，回来的是一整页 HTML。
+            raise LlmError(
+                "%s这个地址返回的是一整个网页，不是接口数据。\n"
+                "多半是「API 地址」少写了 /v1 —— 中转站尤其容易这样：\n"
+                "  现在填的：%s\n"
+                "  应该填成：%s/v1\n"
+                "（也检查一下是不是把控制台首页地址粘过来了。）"
+                % (("「%s」的 " % label) if label else "", base, base))
+        raise LlmError("模型返回的不是 JSON，前 200 字：%s"
+                       % _scrub(raw[:200], key))
 
     choices = d.get("choices") or []
     if not choices:
@@ -999,7 +1102,7 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
         try:
             with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as resp:
                 raw = resp.read().decode("utf-8", "replace")
-            text, usage, finish = _pick_content(raw, key)
+            text, usage, finish = _pick_content(raw, key, label, base)
             return {"content": text, "usage": usage, "model": model,
                     "finish_reason": finish}
 
@@ -1028,10 +1131,21 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
                     % (label, e.code, model, base, detail), status=e.code)
 
             if e.code == 404:
+                # 中转站特有的大坑，单独写清楚：
+                # 它们后台有一列叫「分组」或「套餐」，写着 GPT PLUS / default
+                # 这种看着很像模型名的东西 —— 那是**计费分组**，不是模型名。
+                # 她照抄过去，上游就回一句"没有这个模型"。
                 raise LlmError(
-                    "「%s」找不到这个模型（HTTP 404，模型名：%s）。"
-                    "多半是模型名过时了 —— 去「模型设置」里改成控制台上的名字。\n"
-                    "上游原话：%s" % (label, model, detail), status=e.code)
+                    "「%s」说它没有这个模型（HTTP 404，模型名：%s）。\n"
+                    "两个常见原因，对一下：\n"
+                    "  ① 填的是「分组 / 套餐」名，不是模型名 —— "
+                    "中转站后台那列写的 GPT PLUS、default 之类是计费分组，"
+                    "模型名长这样：gpt-4o、gpt-4o-mini、claude-sonnet-4。\n"
+                    "  ② 模型名过时了，服务商改版换过名字。\n"
+                    "怎么办：点这一行旁边那个「拉模型列表」——"
+                    "它会把这家真正认的名字列出来，点一个就填进模型名。\n"
+                    "当前地址：%s\n上游原话：%s" % (label, model, base, detail),
+                    status=e.code)
 
             if e.code == 429 or e.code >= 500:
                 last = LlmError(

@@ -24,6 +24,7 @@
     .venv\\Scripts\\python.exe -X utf8 tests/test_providers.py
 """
 
+import io
 import json
 import os
 import shutil
@@ -230,6 +231,100 @@ def main():
          llm.get_provider("bigmodel")["api_key"], SK_B)
     llm.clear_provider_key("bigmodel")
     same("明确清空才真的清掉", llm.get_provider("bigmodel")["api_key"], "")
+
+    # ---------------- 【9】 2026-09-26 补 ----------------
+    print("\n【9】还没保存也能拉模型列表（解开那场死锁）")
+    #
+    # 这一段盯的是她配中转站时踩到的那场死循环：
+    #     不知道模型名填什么 → 想拉列表 → 拉列表要先有接入点 →
+    #     接入点要等"保存模型"那一步才认领出来 →
+    #     模型名填不对就测不过、她不敢保存 → 拉不出列表。
+    # 破法的关键就一句：允许拿**输入框里当下的值**直接拉。
+    # 所以这里必须证明 fetch_models_for_cfg() 不依赖任何已存的接入点。
+    #
+    real_urlopen = llm.urllib.request.urlopen
+    seen = []
+
+    class FakeResp(object):
+        def __init__(self, body):
+            self._b = body.encode("utf-8")
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def reply_with(body):
+        def _f(req, timeout=None):
+            seen.append(req)
+            return FakeResp(body)
+        return _f
+
+    def raise_http(code, body):
+        def _f(req, timeout=None):
+            seen.append(req)
+            raise llm.urllib.error.HTTPError(
+                req.full_url, code, "err", None,
+                io.BytesIO(body.encode("utf-8")))
+        return _f
+
+    try:
+        # ① 一条接入点都不新建，直接按"输入框里的地址 + 密钥"拉
+        llm.urllib.request.urlopen = reply_with(json.dumps(
+            {"data": [{"id": "gpt-4o-mini"}, {"id": "gpt-4o"}]}))
+        rows = llm.fetch_models_for_cfg(
+            {"base_url": "https://relay.example.com/v1/", "api_key": "sk-relay-1"})
+        same("临时凭据能拉到列表",
+             [r["id"] for r in rows], ["gpt-4o-mini", "gpt-4o"])
+        same("打的是 /models，末尾多余的斜杠收干净了",
+             seen[-1].full_url, "https://relay.example.com/v1/models")
+        same("用的是传进来那把钥匙（不是接入点里的）",
+             seen[-1].get_header("Authorization"), "Bearer sk-relay-1")
+
+        # ② 密钥框空着、但地址能对上某个接入点 → 借它的钥匙
+        llm.upsert_provider({"key": "borrow",
+                             "base_url": "https://borrow.example.com/v1",
+                             "api_key": "sk-borrow-9"})
+        llm.fetch_models_for_cfg(
+            {"base_url": "https://borrow.example.com/v1", "api_key": ""})
+        same("没给密钥时借了同地址接入点那把",
+             seen[-1].get_header("Authorization"), "Bearer sk-borrow-9")
+
+        # ③ 地址少了 /v1：要直接点破，别让她以为"这家不支持"
+        llm.urllib.request.urlopen = reply_with(
+            "<!doctype html><html><head><title>我的中转站</title></head></html>")
+        try:
+            llm.fetch_models_for_cfg(
+                {"base_url": "https://relay.example.com", "api_key": "sk-relay-1"})
+            check("地址少了 /v1 时应当报错", False, "居然当成正常返回了")
+        except llm.LlmError as e:
+            check("少了 /v1 时说清「返回的是网页不是接口数据」",
+                  "/v1" in e.message, e.message.splitlines()[0][:70])
+
+        # ④ 404：把中转站特有的"分组名不等于模型名"这个坑指出来
+        #    上游原话就是她截图里那句 —— 拿真句子当素材，不自己造。
+        llm.urllib.request.urlopen = raise_http(
+            404, '{"error":{"message":"Model \'GPT PLUS\' is not supported '
+                 'by any configured account in this group","type":'
+                 '"model_not_found"}}')
+        try:
+            llm.chat({"key": "relay", "label": "中转站 / 其它 OpenAI 兼容服务",
+                      "base_url": "https://relay.example.com/v1",
+                      "model": "GPT PLUS", "api_key": "sk-relay-1"},
+                     [{"role": "user", "content": "在吗？"}], max_retry=1)
+            check("404 应当报错", False, "居然成功了")
+        except llm.LlmError as e:
+            check("404 文案点破「分组名不是模型名」", "分组" in e.message)
+            check("404 文案给了出路（去拉模型列表）",
+                  "拉模型列表" in e.message)
+            check("上游原话也留着（她能复制去问客服）",
+                  "GPT PLUS" in e.message)
+    finally:
+        llm.urllib.request.urlopen = real_urlopen
 
     print("\n" + "=" * 66)
     print("通过 %d 项，失败 %d 项" % (OK, FAIL))
