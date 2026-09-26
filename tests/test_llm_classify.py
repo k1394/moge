@@ -717,6 +717,77 @@ def main():
         llm.chat = real_chat
 
     # ------------------------------------------------------------------
+    # 重试次数：长任务只发一次，短任务照旧 3 次
+    # ------------------------------------------------------------------
+    # 这一段不联网：把 urlopen 换成"每次都失败"，然后数它被调了几次。
+    #
+    # 为什么值得单独钉死：生成大纲一次要吐 8000 字，超时后重试等于把
+    # 等待时间翻倍 —— 她 2026-09-26 真踩过一次，跑了 9 分钟（180×3 + 退避）
+    # 拿回一个必然失败。而且超时只是"我们这边不等了"，服务端那边可能
+    # 已经把字写完了，重试一次就多扣一笔钱。所以大纲传 max_retry=1。
+    # 分类/内化那种短活吃默认的 3 次是对的，也要一起钉住，别被误改。
+    print()
+    print("---- 重试次数（长任务 vs 短任务）----")
+    _orig_urlopen = llm.urllib.request.urlopen
+    _orig_sleep = llm.time.sleep
+    calls = {"n": 0}
+
+    def _dead_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise llm.urllib.error.URLError("假装连不上")
+
+    llm.urllib.request.urlopen = _dead_urlopen
+    llm.time.sleep = lambda s: None          # 别真等 2 + 4 秒
+    try:
+        cfg = {"key": "t", "label": "假模型", "api_key": "sk-x",
+               "base_url": "http://127.0.0.1:9/v1", "model": "m"}
+
+        err1 = ""
+        calls["n"] = 0
+        try:
+            llm.chat(cfg, [{"role": "user", "content": "hi"}], max_retry=1)
+        except Exception as e:
+            err1 = str(e)
+        check("max_retry=1 时只发一次（大纲就是这么用的）", calls["n"], 1)
+        check("只发一次时，报错不说「一共试了」", "一共试了" in err1, False)
+        check("报错仍然说清是什么毛病（连不上）", "连不上" in err1, True)
+
+        err3 = ""
+        calls["n"] = 0
+        try:
+            llm.chat(cfg, [{"role": "user", "content": "hi"}])
+        except Exception as e:
+            err3 = str(e)
+        check("不传 max_retry 时还是 3 次（分类/内化照旧）", calls["n"], 3)
+        check("试了不止一次时，报错里写明试了几次",
+              "一共试了 3 次" in err3, True)
+
+        # 再让 urlopen 抛 TimeoutError，看报错里写的是不是我传进去的那个数。
+        # 这条才真正证明 timeout 传到底了 —— 光看签名上有这个参数不算数。
+        seen = {}
+
+        def _slow_urlopen(req, timeout=None):
+            calls["n"] += 1
+            seen["timeout"] = timeout
+            raise TimeoutError("假装超时")
+
+        llm.urllib.request.urlopen = _slow_urlopen
+        err_to = ""
+        calls["n"] = 0
+        try:
+            llm.chat(cfg, [{"role": "user", "content": "hi"}],
+                     timeout=600, max_retry=1)
+        except Exception as e:
+            err_to = str(e)
+        check("urlopen 收到的是 600 秒，不是写死的 180",
+              seen.get("timeout"), 600)
+        check("超时报错里写的也是 600 秒", "超过 600 秒" in err_to, True)
+        check("超时之后没有再试一次", calls["n"], 1)
+    finally:
+        llm.urllib.request.urlopen = _orig_urlopen
+        llm.time.sleep = _orig_sleep
+
+    # ------------------------------------------------------------------
     print("\n" + "=" * 66)
     print("通过 %d 项，失败 %d 项" % (PASS, FAIL))
     return FAIL == 0

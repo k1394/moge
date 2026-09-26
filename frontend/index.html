@@ -1229,6 +1229,13 @@
     margin-top: 7px; font-size: 12px; line-height: 1.8;
     color: var(--ink-2); white-space: pre-wrap;
   }
+  /* 跑着的时候唯一能看的东西：已经等了多久、最坏还要等多久。
+     没有这两句，她只能对着一个不动的进度条猜"是不是卡死了"。 */
+  .olwait {
+    margin-top: 7px; font-size: 12px; line-height: 1.8;
+    color: var(--ink-2); font-variant-numeric: tabular-nums;
+  }
+  .olwait b { color: var(--accent); font-weight: 600; }
   /* 候选并排：每个模型一列，窄屏摞起来。
      用 flex-wrap 而不是横向滚动 —— 她要"并排比较"，
      逼她左右拖动就把比较这件事毁了。 */
@@ -7989,10 +7996,15 @@ function olPaintModels() {
 function olPaintModelNote() {
   const box = olEl("olModelNote");
   if (!box) return;
+  const L = ((OL.meta || {}).limits) || {};
   const n = Object.keys(OL.models).filter(k => OL.models[k]).length;
   const cases = (((OL.meta || {}).learning) || {}).cases || 0;
   if (!n) { box.textContent = "勾一个或几个。勾几个就各出一份候选，你挑。"; return; }
+  // "要等多久"必须先讲在前面：大纲要吐几千字，跟分类那种几秒就回来的活
+  // 不是一个量级。不先说清楚，她跑到第八分钟就会以为卡死了。
   box.textContent = "已勾 " + n + " 个，会各出一份候选（并发跑，不是排队）。"
+    + "写大纲慢，一般几分钟；单个模型最长等 "
+    + olFmtDur(Number(L.outline_timeout) || 600) + "。"
     + (cases ? "另外会参考你标过的 " + cases + " 条「不可用」。" : "");
 }
 
@@ -8369,6 +8381,49 @@ function olIsActive(status) {
   return (((OL.meta || {}).run_active) || []).indexOf(status) >= 0;
 }
 
+/* ---------- 跑了多久 / 最坏还要等多久 ---------- */
+/* 任务卡上必须写清这两件事。她第一次跑的时候，界面只有一条不动的
+   进度条和「在跑」两个字，八分钟过去了什么都不知道 —— 只能来问我
+   "是不是卡死了"。其实服务端有完整的开始时间，算一下就出来了。 */
+
+function olParseTs(s) {
+  // 服务端给的是 "2026-09-26 13:19:12" 这种写法。
+  // **不能用 new Date(s)** —— 带空格不是标准格式，各浏览器解析结果不一致
+  // （Safari 直接给 Invalid Date）。手动拆，稳。
+  const m = String(s || "").match(
+    /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+}
+
+function olFmtDur(sec) {
+  sec = Math.max(0, Math.floor(Number(sec) || 0));
+  if (sec < 60) return sec + " 秒";
+  const m = Math.floor(sec / 60), r = sec % 60;
+  if (m < 60) return r ? (m + " 分 " + r + " 秒") : (m + " 分");
+  return Math.floor(m / 60) + " 小时 " + (m % 60) + " 分";
+}
+
+function olWaitText(run) {
+  const L = ((OL.meta || {}).limits) || {};
+  const t0 = olParseTs(run.started_at || run.created_at);
+  if (!t0) return "";
+  const sec = Math.floor((Date.now() - t0.getTime()) / 1000);
+  const limit = Number(L.outline_timeout) || 600;
+  const running = Math.max(0, (run.total_models || 0)
+    - (run.done_models || 0) - (run.failed_models || 0));
+  // 上限说的是"单个模型"的上限。几个模型是**同时**发出去的，
+  // 所以整个任务也就是这个量级，不会乘上模型个数 —— 这点必须写明白，
+  // 不然她会以为勾 3 个就要等三个 10 分钟。
+  let s = "已等 <b>" + olFmtDur(sec) + "</b>";
+  if (running > 0) s += "，还有 " + running + " 个模型在回话";
+  const left = limit - sec;
+  s += left > 0
+    ? "。单个模型最长等 " + olFmtDur(limit) + "，还剩 " + olFmtDur(left) + "。"
+    : "。已经到 " + olFmtDur(limit) + " 的上限了，下一轮检查就会有结果。";
+  return s;
+}
+
 function olPoll(runId) {
   OL.pollRun = runId;
   if (OL.poll) clearInterval(OL.poll);
@@ -8465,6 +8520,10 @@ function olPaintRuns() {
     rh += '<div class="bar"><i style="width:' + pct + '%"></i></div>';
     rh += '<div class="rmeta">' + done + " 好 / " + failed + " 没成 / "
       + Math.max(0, total - done - failed) + ' 在跑</div>';
+    if (active) {
+      const wait = olWaitText(run);
+      if (wait) rh += '<div class="olwait">' + wait + '</div>';
+    }
     if (run.note) rh += '<div class="rnote">' + esc(run.note) + '</div>';
     if (run.error) rh += '<div class="rnote" style="color:var(--danger)">'
       + esc(run.error) + '</div>';

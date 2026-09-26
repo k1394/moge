@@ -48,15 +48,21 @@
     所以调用方是分批的（见 classification.BATCH_SIZE）。
     这一层负责单次请求的可靠性：
 
-    - 超时：单次 180 秒。分类一批 25 条，正常十几秒就回来了，
-      给到 180 秒是为了兜住模型偶发的慢。
+    - 超时：单次 180 秒（默认值，调用方可以覆盖）。分类一批 25 条，
+      正常十几秒就回来了，给到 180 秒是为了兜住模型偶发的慢。
+      **生成大纲不吃这个默认值** —— 它一次要吐 8000 字，
+      outline_ai 自己传 OUTLINE_TIMEOUT=600，理由见常量区的注释。
     - 重试：只有"重试有意义"的错才重试 ——
       429（限流）、5xx（服务端抽风）、网络断。
       401（密钥不对）、400（请求不合法）**不重试**，因为重试一百次
       还是同样的结果，白白等，还把真正的错因埋掉。
+      次数默认 3 次，长任务可以传 max_retry 砍掉（大纲传 1 次）。
+      超时算不算"重试有意义"要看任务：短问答重试划算，
+      长生成不划算 —— 详见 MAX_RETRY 上面的注释。
     - 退避：等 2 秒、4 秒、8 秒。紧接着重试只会再撞一次限流。
 """
 
+import inspect
 import json
 import os
 import time
@@ -72,6 +78,17 @@ from backend import db
 
 MODELS_FILE = "models.json"
 
+# 这三个默认值是照着「短回答」定的：分类、内化一次只吐几百字，
+# 180 秒绰绰有余，失败了再试两次也划算。
+#
+# **长任务必须自己传 timeout / max_retry，别吃这套默认值。**
+# 生成大纲一次要吐 8000 字，单个模型就要跑一两分钟，180 秒是掐着线过的
+# （实测通义千问 108 秒，离超时只剩 72 秒）；一旦超时还会重试 3 次，
+# 等于白等 9 分钟去等一个注定不回的请求。而且超时只是「我们不等了」，
+# 服务端那边该算的已经算完了 —— 重试一次就可能多扣一次钱。
+# 所以 outline_ai 显式传了 OUTLINE_TIMEOUT / max_retry=1。
+#
+# 改这里的数之前先算一遍：最坏等待 = timeout × max_retry + 退避总和。
 TIMEOUT = 180          # 单次请求超时（秒）
 MAX_RETRY = 3          # 最多试 3 次（含第一次）
 RETRY_BACKOFF = 2.0    # 退避基数：第 n 次失败后等 2**n 秒
@@ -438,12 +455,17 @@ def _pick_content(raw, key):
     return text, d.get("usage") or {}
 
 
-def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None):
+def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
+         max_retry=None):
     """发一次对话请求。
 
     返回 {"content": 模型说的话, "usage": 用量, "model": 实际用的模型名}
 
     cfg 就是清单里的一条（含明文 api_key）。
+
+    timeout 不传吃 TIMEOUT(180)，max_retry 不传吃 MAX_RETRY(3)。
+    **一次要吐几千字的长任务（生成大纲）必须自己传**，理由见上面常量区的注释：
+    默认值是按"短回答"定的，用在大纲上会稳定超时，还会把等待时间乘三倍。
     """
     if not isinstance(cfg, dict):
         raise LlmError("模型配置不对（应该是一条字典）")
@@ -488,7 +510,8 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None):
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     last = None
 
-    for attempt in range(1, MAX_RETRY + 1):
+    tries = max(1, int(max_retry or MAX_RETRY))
+    for attempt in range(1, tries + 1):
         req = urllib.request.Request(url, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + key)
@@ -552,10 +575,17 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None):
             # 吐一半就断，这种也值得再试一次。
             last = LlmError(e.message, retryable=True, status=e.status)
 
-        if attempt < MAX_RETRY:
+        if attempt < tries:
             time.sleep(RETRY_BACKOFF ** attempt)
 
-    raise last or LlmError("「%s」试了 %d 次都没成功。" % (label, MAX_RETRY))
+    if last is None:
+        raise LlmError("「%s」试了 %d 次都没成功。" % (label, tries))
+    if tries > 1:
+        # 她最终只在任务备注里看到最后这一条错误。不写明"试了几轮"，
+        # 她会以为只发了一次请求 —— 而实际上可能已经扣了好几笔钱。
+        raise LlmError("%s（一共试了 %d 次）" % (last.message, tries),
+                       retryable=last.retryable, status=last.status)
+    raise last
 
 
 # ----------------------------------------------------------------------
@@ -581,6 +611,14 @@ def _self_check():
     check("长密钥留头留尾",
           mask_key("sk-1234567890abcdef"), "sk-123****cdef")
     check("刚好 12 位全打码", mask_key("123456789012"), "************")
+
+    # 长任务靠 max_retry 砍掉重试（生成大纲传 1）。这两个是**按关键字传**的，
+    # 名字被改掉会静默失效 —— 所以在这里钉一下。
+    _params = inspect.signature(chat).parameters
+    check("chat 支持 timeout 参数（长任务要自己传）",
+          "timeout" in _params, True)
+    check("chat 支持 max_retry 参数（长任务要能不重试）",
+          "max_retry" in _params, True)
 
     # _scrub 是安全的关键：报错里的密钥必须被抹掉
     k = "sk-secret-abcdefghijklmn"

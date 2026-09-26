@@ -42,7 +42,7 @@
 --------------------------------------------------------
 三、取消到底能取消到什么程度
 --------------------------------------------------------
-不能。模型调用是一次阻塞的 HTTP 请求（最长 180 秒，还可能重试两次），
+不能。模型调用是一次阻塞的 HTTP 请求（大纲最长等 600 秒，而且只发一次），
 Python 线程没法从外面把它掐断。所以"取消"的真实语义是：
 
     · 还在排队、还没发出去的模型  → 不发了
@@ -122,6 +122,30 @@ BIG_INPUT_WARN = 60000
 
 # 单次生成最多挑几个模型（odb.MAX_MODELS_PER_RUN 是同一个数的定义处）。
 MAX_MODELS = odb.MAX_MODELS_PER_RUN
+
+# 生成一次最多等多久（秒）。**必须比 llm.TIMEOUT(180) 大得多。**
+#
+# 为什么：llm 那套默认值是按"短回答"定的（分类、内化一次只吐几百字）。
+# 大纲一次要吐 8000 字，单个模型跑一两分钟是常态 ——
+# 实测通义千问 108 秒才写完，离 180 秒只剩 72 秒；
+# 硅基流动那个 DeepSeek-V3.2（推理模型）稳定超过 180 秒，
+# 结果就是每次生成都白等 9 分钟（180×3 次 + 退避）拿个必然失败。
+#
+# 600 秒 = 10 分钟，给慢模型留够写 8000 字 + 思考头寸。
+# 超时会明确写进任务备注，界面也会显示"已等多久 / 最长等多久"，
+# 不会让她对着一个不知道还要多久的转圈干等。
+OUTLINE_TIMEOUT = 600
+
+# 超时后还重试几次。**大纲设成 1，也就是不重试。**
+#
+# 理由有两层：
+# ① 一个 10 分钟都没回话的请求，再发一次大概率还是 10 分钟没回话 ——
+#    重试等于把等待时间翻倍，而她看到的还只是"在跑"。
+# ② 超时是"我们这边不等了"，不是"服务端没算"。服务端很可能已经
+#    把 8000 字生成完了，我们断线不影响它算完 —— 重试一次就多扣一次钱。
+# 与其白花钱等一个不确定的结果，不如早点告诉她"这个模型这次不行，
+# 换个快的"。
+OUTLINE_MAX_RETRY = 1
 
 _worker_lock = threading.Lock()
 
@@ -1104,13 +1128,17 @@ def _run_one_model(run_id, owner, model_key, ctx):
 
     msgs = build_messages(ctx)
     input_chars = sum(len(m["content"]) for m in msgs)
+    # 超时和重试次数显式给。吃 llm 的默认（180 秒 × 3 次）等于必然白等 9 分钟，
+    # 理由见 OUTLINE_TIMEOUT / OUTLINE_MAX_RETRY 那两段注释。
+    _opts = dict(temperature=0.7, timeout=OUTLINE_TIMEOUT,
+                 max_retry=OUTLINE_MAX_RETRY)
     try:
-        out = cls.llm.chat(cfg, msgs, temperature=0.7, json_mode=True)
+        out = cls.llm.chat(cfg, msgs, json_mode=True, **_opts)
     except Exception as e:
         # json_mode 不被支持时退一次（跟分类、内化同一套兜底）
         if getattr(e, "status", None) == 400:
             try:
-                out = cls.llm.chat(cfg, msgs, temperature=0.7, json_mode=False)
+                out = cls.llm.chat(cfg, msgs, json_mode=False, **_opts)
             except Exception as e2:
                 _fail(str(e2))
                 return
@@ -1491,6 +1519,17 @@ def _self_check():                                          # pragma: no cover
                               "plots": [{}], "hook": "h", "design": "",
                               "user_prompt": "", "blocked": [{"id": 1}]}, 500)
     check("隐私提示会说仅本地的被排除", "仅本地" in _privacy, True)
+
+    # ---- 超时与重试 ---------------------------------------------------
+    # 这两个数错了就退回老毛病：8000 字的大纲必然超时，
+    # 超时还重试 3 次 → 白等 9 分钟拿一个必然失败，还可能多扣几笔钱。
+    check("大纲超时远大于 llm 默认值（不然 8000 字必超时）",
+          OUTLINE_TIMEOUT > cls.llm.TIMEOUT * 2, True)
+    check("大纲只发一次、不重试", OUTLINE_MAX_RETRY, 1)
+    check("大纲最坏等待不超过 15 分钟（超了会被当成卡死）",
+          OUTLINE_TIMEOUT * OUTLINE_MAX_RETRY <= 900, True)
+    check("分类/内化那套默认值仍然会重试（短问答多试一次划算）",
+          cls.llm.MAX_RETRY >= 2, True)
 
     print()
     print("编排层自测：%s" % ("全部通过" if ok else "有失败"))

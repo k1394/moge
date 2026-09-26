@@ -2604,6 +2604,10 @@ def api_outline_meta(user: dict = Depends(auth.current_user)):
             "max_pool": oai.MAX_POOL,
             "max_nodes": odb.MAX_NODES,
             "user_prompt_max": oai.USER_PROMPT_MAX,
+            # 超时和重试次数给前端，是为了让任务卡能写出"已跑多久 / 最长等多久"。
+            # 这两个数在界面上写死的话，我哪天调了后端，界面说的就是假的。
+            "outline_timeout": oai.OUTLINE_TIMEOUT,
+            "outline_max_retry": oai.OUTLINE_MAX_RETRY,
         },
         "learning": odb.learning_stats(user["owner"]),
         "prompt_version": oai.prompt_version(),
