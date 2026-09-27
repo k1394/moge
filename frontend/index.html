@@ -1863,6 +1863,149 @@
   .filldot.has { background: var(--accent-2); color: var(--accent); }
   .charcard .cacts { display: flex; gap: 6px; margin-top: 2px; }
 
+  /* 工具栏上的小图标按钮（素材浮窗、历史正文）。
+     为什么做成图标：参考站这两个位置就是图标，一行按钮不至于太长。 */
+  .btn.iconbtn { display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; }
+  .btn .bic { display: block; flex: 0 0 auto; }
+  .btn .bic svg { width: 15px; height: 15px; display: block; }
+
+  /* ==================== 正文创作：角色卡选择器 ====================
+     从"一排勾选框"改成参考站那种"点开下拉挑"。
+     为什么要改：库里的卡一多，右栏会被撑得很长，而且没法搜 ——
+     她真正要的是"这一章出场的那几个人"。 */
+  .chpick { position: relative; }
+  .chpick-trigger {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; font-size: 13px; color: var(--ink-3); text-align: left;
+  }
+  .chpick-trigger:hover { border-color: var(--ink-3); }
+  .chpick-trigger.has { color: var(--ink); }
+  .chpick-trigger .lbl {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chpick-trigger .car { flex: 0 0 auto; color: var(--ink-3); font-size: 10px; }
+
+  /* 【为什么面板用 fixed 而不是 absolute】
+     .chai 自己就是滚动容器（overflow:auto）。absolute 的面板会被它裁掉，
+     而且跟着内容一起滚。fixed 定位、位置按触发按钮当场算。 */
+  .chpick-panel {
+    position: fixed; z-index: 45; display: flex; flex-direction: column;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .14); overflow: hidden;
+  }
+  .chpick-panel[hidden] { display: none; }
+  .chpick-panel .cpsub {
+    font-size: 11.5px; color: var(--ink-3); line-height: 1.55;
+    padding: 9px 11px 7px;
+  }
+  .chpick-panel .cpsub b { color: var(--ink-2); font-weight: 600; }
+  .chpick-panel input.cpq {
+    flex: 0 0 auto; margin: 0 11px 7px; height: 30px;
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 0 10px; font-size: 12.5px; background: #fff; color: var(--ink);
+  }
+  .chpick-panel input.cpq:focus { outline: none; border-color: var(--ink-3); }
+  .chpick-panel .cpbar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 0 11px 7px; font-size: 11.5px; color: var(--ink-3);
+    border-bottom: 1px solid var(--line-2);
+  }
+  .chpick-panel .cpbar .grow { flex: 1 1 auto; }
+  .chpick-panel .cpbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 5px 6px; }
+  .chpick-panel .cpfoot {
+    flex: 0 0 auto; border-top: 1px solid var(--line-2); padding: 7px 8px;
+  }
+  .chpick-panel .cpfoot .chpickbtn { width: 100%; text-align: center; }
+  .chrow {
+    display: flex; align-items: flex-start; gap: 7px;
+    padding: 5px 7px; border-radius: 7px;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .chrow:hover { background: var(--line-2); }
+  .chrow .cn { color: var(--ink); font-weight: 600; }
+  .chrow .cd { color: var(--ink-3); font-size: 11.5px; }
+  .cpblank {
+    padding: 18px 12px; text-align: center;
+    font-size: 12px; color: var(--ink-3); line-height: 1.7;
+  }
+  .cpblank b { display: block; color: var(--ink-2); margin-bottom: 3px; }
+
+  /* ==================== 正文创作：素材浮窗 ====================
+     她 2026-09-27 圈的那处：「点击出现悬浮窗，可以看剧情内化库和
+     素材分类库，方便使用者一边码字一边看素材」。
+     可拖动 —— 拖标题栏挪位置，位置记在 localStorage 里。 */
+  .chfloat {
+    position: fixed; z-index: 42;
+    width: 400px; height: 540px; max-width: calc(100vw - 24px);
+    display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2);
+    overflow: hidden;
+  }
+  .chfloat[hidden] { display: none; }
+  .cfh {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px 9px 12px; background: var(--line-2);
+    cursor: move; user-select: none;
+  }
+  .cfh .fname { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .cfh .fhint {
+    flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cfh .fx {
+    flex: 0 0 auto; border: none; background: transparent; color: var(--ink-3);
+    font-size: 16px; line-height: 1; padding: 0 3px;
+  }
+  .cfh .fx:hover { color: var(--danger); }
+  .cftabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 9px 11px 0; }
+  .cftab {
+    font-size: 12px; padding: 4px 11px; border-radius: 20px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  }
+  .cftab:hover { border-color: var(--ink-3); }
+  .cftab.on {
+    background: var(--accent-2); border-color: var(--accent-2);
+    color: var(--accent); font-weight: 600;
+  }
+  .cfq { flex: 0 0 auto; margin: 9px 11px 6px; }
+  .cfq input {
+    width: 100%; height: 32px; border: 1px solid var(--line);
+    border-radius: 8px; padding: 0 10px; font-size: 12.5px;
+    background: #fff; color: var(--ink);
+  }
+  .cfq input:focus { outline: none; border-color: var(--ink-3); }
+  .cfbody { flex: 1 1 auto; overflow: auto; padding: 2px 8px 8px; }
+  .cfrow {
+    display: block; width: 100%; text-align: left;
+    padding: 7px 9px; border-radius: 8px;
+    border: 1px solid transparent; background: transparent;
+  }
+  .cfrow:hover { background: var(--line-2); border-color: var(--line); }
+  .cfrow .t {
+    display: block; font-size: 12.5px; color: var(--ink);
+    margin-bottom: 2px; line-height: 1.5;
+  }
+  .cfrow .m { display: block; font-size: 11px; color: var(--ink-3); }
+  .cfdetail { padding: 6px 4px 4px; }
+  .cfdetail .dt {
+    font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 5px;
+  }
+  .cfdetail .dm { font-size: 11.5px; color: var(--ink-3); margin-bottom: 8px; }
+  .cfdetail .dc {
+    font-size: 12.5px; color: var(--ink-2); line-height: 1.85;
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--line-2); border-radius: 8px; padding: 9px 10px;
+  }
+  .cffoot {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 6px 11px; border-top: 1px solid var(--line-2);
+    font-size: 11px; color: var(--ink-3);
+  }
+  .cffoot .grow { flex: 1 1 auto; }
+
   @media (max-width: 1180px) {
     .chwrap { flex-direction: column; align-items: stretch; }
     .chlist, .chai {
@@ -2307,9 +2450,18 @@
       <header class="vhead">
         <h1 class="vtitle">正文创作</h1>
         <div class="vacts">
+          <!-- 素材浮窗入口。参考站就是这个位置 —— 一边码字一边看素材。 -->
+          <button class="btn iconbtn" id="chFloatBtn"
+                  title="打开素材浮窗：不用离开这一页就能看剧情内化库和素材分类库">
+            <span class="bic" id="chFloatIco"></span>素材
+          </button>
           <button class="btn primary" id="chNewBtn">＋ 新建章节</button>
           <button class="btn" id="chSaveBtn">保存本章</button>
-          <button class="btn" id="chHistoryBtn">生成记录</button>
+          <!-- 历史正文：照参考站做成右上角的时钟图标 -->
+          <button class="btn iconbtn" id="chHistoryBtn"
+                  title="看这一章 AI 生成过的历史正文（即之前生成的文本）">
+            <span class="bic" id="chHistIco"></span>
+          </button>
           <button class="btn" id="chReload">刷新</button>
         </div>
       </header>
@@ -2383,7 +2535,31 @@
 
           <div class="chfield">
             <label>角色卡 <span class="chip gray">选填</span></label>
-            <div class="chchars" id="chChars"></div>
+            <!-- 参考站的做法：点开一个带搜索的下拉挑，而不是把库里的卡全铺开。
+                 默认**一张都不选** —— 角色卡是她自己建的，我们绝不预填任何人。 -->
+            <div class="chpick">
+              <button class="chpick-trigger" id="chPickTrigger"
+                      title="点开挑这一章出场的角色">
+                <span class="lbl" id="chPickLabel">请选择角色…</span>
+                <span class="car">▼</span>
+              </button>
+            </div>
+            <div class="chpick-panel" id="chPickPanel" hidden>
+              <div class="cpsub">
+                <b>本章角色卡</b>（本章不出场的角色不要选 —— 带错了人，
+                模型会照着你写的性格去写不该出现的人）
+              </div>
+              <input type="text" class="cpq" id="chCharSearch" placeholder="搜索…">
+              <div class="cpbar">
+                <span id="chCharSelCount">已选 0 项</span>
+                <span class="grow"></span>
+                <button class="chpickbtn" id="chCharSelAll">全选</button>
+              </div>
+              <div class="cpbody" id="chChars"></div>
+              <div class="cpfoot">
+                <button class="chpickbtn" id="chCharMgrBtn">⚙ 角色管理</button>
+              </div>
+            </div>
             <div class="cfoot"><span id="chCharNote"></span></div>
           </div>
 
@@ -2530,6 +2706,53 @@
     <footer>
       <button class="btn" data-close="mkChHist">关闭</button>
     </footer>
+  </div>
+</div>
+
+<!-- ============ 正文创作：角色管理 ============
+     她选了「弹层里直接管，不离开正文页」——
+     写一章写到一半想起要加个人，不用跳去【人设卡】再切回来。 -->
+<div class="mask" id="mkChCharMgr">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>角色管理</h2>
+        <p>这里列的<b>只是你自己账号下</b>的角色卡，别人看不见、也不会跟你共用。
+           建好之后回到上面那个下拉里就能勾上，写这一章时一起发给模型。</p>
+      </div>
+      <button class="x" data-close="mkChCharMgr">&times;</button>
+    </header>
+    <div class="content">
+      <div class="charcards" id="chCmList"></div>
+    </div>
+    <footer>
+      <button class="btn primary" id="chCmNewBtn">＋ 新建角色卡</button>
+      <button class="btn" data-close="mkChCharMgr">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 正文创作：素材浮窗（可拖动） ============
+     参考站那一处红字：「点击出现悬浮窗，可以看剧情内化库和素材分类库，
+     方便使用者一边码字一边看素材」。只看不写 —— 不做"插进正文"。 -->
+<div class="chfloat" id="chFloat" hidden>
+  <div class="cfh" id="chFloatHead">
+    <span class="fname">素材浮窗</span>
+    <span class="fhint">按住这一条可以拖到别处 · 位置会记住</span>
+    <button class="fx" id="chFloatClose" title="收起来">&times;</button>
+  </div>
+  <div class="cftabs">
+    <button class="cftab on" id="chFloatTabPlot" data-cftab="plots">剧情内化库</button>
+    <button class="cftab" id="chFloatTabCard" data-cftab="cards">素材分类库</button>
+  </div>
+  <div class="cfq">
+    <input type="text" id="chFloatQ" placeholder="搜标题和内容…">
+  </div>
+  <div class="cfbody" id="chFloatBody"></div>
+  <div class="cffoot">
+    <span id="chFloatNote"></span>
+    <span class="grow"></span>
+    <span id="chFloatCount"></span>
   </div>
 </div>
 
@@ -3757,7 +3980,12 @@ const ICONS = {
         '<circle cx="4.4" cy="17.5" r="1.05"/>',
   user: '<circle cx="12" cy="8.4" r="3.5"/><path d="M5.2 19.6c0-3.5 3-6 6.8-6s6.8 2.5 6.8 6"/>',
   quill: '<path d="M6 3.6h8.4L19 8.2v12.2H6z"/><path d="M13.8 3.6v5h5.2"/>' +
-         '<path d="M9 12.8h6M9 16.2h4"/>'
+         '<path d="M9 12.8h6M9 16.2h4"/>',
+  // 素材浮窗入口（一沓纸）。照参考站放在工具栏上的那个位置。
+  doc: '<path d="M6.4 3.4h7.2L18.6 8.4v12.2H6.4z"/><path d="M13.4 3.4v5.2h5.2"/>' +
+       '<path d="M9.4 12.4h5.4M9.4 16h4"/>',
+  // 历史正文入口（时钟）。参考站在右上角就是这么个图标。
+  clock: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3 1.8"/>'
 };
 
 function svgIcon(name) {
@@ -4376,6 +4604,13 @@ function goView(id) {
   // 正文页尤其要这样 —— 它要拉章节列表 + 角色卡 + 模型清单三样。
   if (id === "persona") loadPersona(false);
   if (id === "chapter") loadChapters(false);
+  else {
+    // 离开正文页就把浮窗和下拉都收起来。
+    // 不收的话浮窗会跟着跑到别的页面上 —— 它 position:fixed，
+    // 不会随着 .view 的显隐自己消失。
+    chCharClosePick();
+    chFloatHide();
+  }
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -12877,6 +13112,9 @@ async function pcFetch() {
   }
   pcStats();
   pcRender();
+  // 正文页那个「角色管理」弹层用的是同一份清单，跟着一起刷新。
+  // 不刷的话：在这里新建了一张卡，弹层里还是旧的 —— 看着像没存上。
+  if (typeof chRenderCharMgr === "function") chRenderCharMgr();
 }
 
 function pcStats() {
@@ -12915,25 +13153,34 @@ function pcRender() {
     return;
   }
   const fields = ((PC.meta || {}).fields || []).filter(f => f.key !== "name");
-  box.innerHTML = rows.map(c => {
-    const dots = fields.map(f =>
-      '<span class="filldot' + ((c[f.key] || "").trim() ? " has" : "") +
-      '" title="' + esc(f.label) + '">' + esc(f.label) + "</span>").join("");
-    return '<div class="charcard' + (c.status === "停用" ? " off" : "") + '">' +
-      '<div class="ch"><span class="nm">' + esc(c.name) + "</span>" +
-        (c.status === "停用" ? '<span class="chip gray">已停用</span>' : "") +
-      "</div>" +
-      '<div class="idn">' + esc(c.identity || "（还没填身份 —— 大纲和正文里就只能看到名字）") + "</div>" +
-      '<div class="meta">填了 ' + c.filled + " / " + c.field_total +
-        " 项 · 更新于 " + esc(c.updated_at || "") + "</div>" +
-      '<div class="fills">' + dots + "</div>" +
-      '<div class="cacts">' +
-        '<button class="mini" data-pcedit="' + c.id + '">编辑</button>' +
-        '<button class="mini" data-pcstat="' + c.id + '">' +
-          (c.status === "停用" ? "启用" : "停用") + "</button>" +
-        '<button class="mini d" data-pcdel="' + c.id + '">删除</button>' +
-      "</div></div>";
-  }).join("");
+  box.innerHTML = rows.map(c => pcCardHtml(c, fields)).join("");
+  pcBindCards(box);
+}
+
+/* 一张角色卡的卡片长什么样。
+   抽出来是因为有两个地方用同一份：「人设卡」整页，和正文页里的
+   「角色管理」弹层 —— 复制一份的话，以后加个按钮只改一处就静默对不上。 */
+function pcCardHtml(c, fields) {
+  const dots = fields.map(f =>
+    '<span class="filldot' + ((c[f.key] || "").trim() ? " has" : "") +
+    '" title="' + esc(f.label) + '">' + esc(f.label) + "</span>").join("");
+  return '<div class="charcard' + (c.status === "停用" ? " off" : "") + '">' +
+    '<div class="ch"><span class="nm">' + esc(c.name) + "</span>" +
+      (c.status === "停用" ? '<span class="chip gray">已停用</span>' : "") +
+    "</div>" +
+    '<div class="idn">' + esc(c.identity || "（还没填身份 —— 大纲和正文里就只能看到名字）") + "</div>" +
+    '<div class="meta">填了 ' + c.filled + " / " + c.field_total +
+      " 项 · 更新于 " + esc(c.updated_at || "") + "</div>" +
+    '<div class="fills">' + dots + "</div>" +
+    '<div class="cacts">' +
+      '<button class="mini" data-pcedit="' + c.id + '">编辑</button>' +
+      '<button class="mini" data-pcstat="' + c.id + '">' +
+        (c.status === "停用" ? "启用" : "停用") + "</button>" +
+      '<button class="mini d" data-pcdel="' + c.id + '">删除</button>' +
+    "</div></div>";
+}
+
+function pcBindCards(box) {
   box.querySelectorAll("[data-pcedit]").forEach(b => {
     b.onclick = () => pcOpenEdit(Number(b.dataset.pcedit));
   });
@@ -13055,6 +13302,7 @@ const CH = {
   meta: null,
   list: [],        // 章节列表（不带正文）
   chars: [],       // 可关联的角色卡（不含停用的）
+  charsAll: [],    // 全部角色卡（含停用）—— 挑卡面板要认识"已经勾上的停用卡"
   cur: null,       // 当前章节详情（带正文）
   run: null,       // 当前这一次生成（含 prev_content）
   sid: "",
@@ -13105,9 +13353,11 @@ async function chFetchList() {
 async function chFetchChars() {
   try {
     const d = await api("/api/characters");
-    CH.chars = (d.characters || []).filter(c => c.status !== "停用");
-  } catch (e) { CH.chars = []; }
+    CH.charsAll = d.characters || [];
+  } catch (e) { CH.charsAll = []; }
+  CH.chars = CH.charsAll.filter(c => c.status !== "停用");
   chRenderChars();
+  chRenderCharMgr();
 }
 
 function chRenderModel() {
@@ -13186,6 +13436,7 @@ async function chOpen(cid, silent) {
   if (!silent && CH.cur && CH.cur.id !== cid && chUnsaved()) {
     if (!confirm("这一章有改动还没保存。\n\n切走这些改动就没了。要切换吗？")) return;
   }
+  chCharClosePick();      // 换章了，那个下拉里的"已选"就对不上了
   try {
     const d = await api("/api/chapters/" + cid);
     CH.cur = d.chapter;
@@ -13217,21 +13468,55 @@ function chPaintChapter() {
   chRevertBtn();
 }
 
+/* ---------------- 角色卡：下拉选择器 ----------------
+   参考站的做法（她 2026-09-27 圈出来让我照做的）：
+   点一下弹出一个面板，里面有搜索、已选计数、全选、以及底部「角色管理」。
+
+   【为什么不用"把库里的卡全铺成一排勾选框"】
+   库里卡一多右栏就被撑得很长，而且没地方搜。她真正要挑的是
+   "这一章出场的那几个人"，不是"我建过的所有卡"。
+
+   【默认一张都不选】角色卡是她自己建的，我们绝不预填任何人 ——
+   新账号进来看到的是空列表 + 「暂无数据」。 */
 function chRenderChars() {
+  const panel = document.getElementById("chPickPanel");
   const box = document.getElementById("chChars");
   if (!box) return;
-  if (!CH.chars.length) {
-    box.innerHTML = '<span class="cd">还没有角色卡。去左边的【人设卡】建一张 —— ' +
-      "写对话时它会照着你填的性格和说话方式来。</span>";
-    chCharNote();
+  chPickLabel();
+
+  const kw = ((document.getElementById("chCharSearch") || {}).value || "")
+    .trim().toLowerCase();
+  const picked = (CH.cur && CH.cur.char_ids) || [];
+  // 停用的卡不进候选 —— 但**已经勾上的**要留着，否则她没法取消勾选。
+  const pool = CH.charsAll.filter(c =>
+    c.status !== "停用" || picked.indexOf(c.id) >= 0);
+  let rows = pool;
+  if (kw) {
+    rows = rows.filter(c => [c.name, c.identity, c.personality, c.relations,
+                             c.goal, c.speech, c.note, c.fear, c.must_do,
+                             c.never_do]
+      .join(" ").toLowerCase().indexOf(kw) >= 0);
+  }
+
+  chPickBar(pool);
+  if (!rows.length) {
+    box.innerHTML = '<div class="cpblank"><b>' +
+      (pool.length ? "没找到" : "暂无数据") + "</b>" +
+      (pool.length
+        ? "换个词找找；也可以在下面的「角色管理」里新建一张。"
+        : "还没有角色卡。点下面那个「角色管理」就能建 —— " +
+          "建好回来勾上，写这一章时模型才知道他们是什么性格。") +
+      "</div>";
+    if (panel) chPickPlace();
     return;
   }
-  const picked = (CH.cur && CH.cur.char_ids) || [];
-  box.innerHTML = CH.chars.map(c =>
-    '<label><input type="checkbox" data-cc="' + c.id + '"' +
+  box.innerHTML = rows.map(c =>
+    '<label class="chrow"><input type="checkbox" data-cc="' + c.id + '"' +
     (picked.indexOf(c.id) >= 0 ? " checked" : "") + ">" +
     "<span><span class=\"cn\">" + esc(c.name) + "</span> " +
-    '<span class="cd">' + esc(c.identity || "（未填身份）") + "</span></span></label>"
+    '<span class="cd">' + esc(c.identity || "（未填身份）") + "</span>" +
+    (c.status === "停用" ? ' <span class="cd">· 已停用</span>' : "") +
+    "</span></label>"
   ).join("");
   box.querySelectorAll("[data-cc]").forEach(el => {
     el.onchange = () => {
@@ -13247,27 +13532,445 @@ function chRenderChars() {
       if (!el.checked && i >= 0) ids.splice(i, 1);
       CH.cur.char_ids = ids;
       CH.dirtyExtra = true;
+      chPickLabel();
+      /* 【必须重算这一条】只重画列表是不够的 ——
+         「已选 N 项」和「全选 / 清空」这两个是**独立的元素**，
+         不更新的话她勾了半天，上面一直写着"已选 0 项"。 */
+      chPickBar();
       chCharNote();
       chFootNote();
     };
   });
+  if (panel) chPickPlace();
+}
+
+/* 「已选 N 项」+「全选 / 清空」这两个按钮的状态。
+   勾一次要调、全选要调、整表重画也要调 —— 所以单独一个函数。 */
+function chPickBar(pool) {
+  const picked = (CH.cur && CH.cur.char_ids) || [];
+  if (!pool) {
+    pool = CH.charsAll.filter(c =>
+      c.status !== "停用" || picked.indexOf(c.id) >= 0);
+  }
+  const cnt = document.getElementById("chCharSelCount");
+  if (cnt) cnt.textContent = "已选 " + picked.length + " 项";
+  const allBtn = document.getElementById("chCharSelAll");
+  if (allBtn) {
+    const allOn = pool.length > 0 && pool.every(c => picked.indexOf(c.id) >= 0);
+    allBtn.textContent = allOn ? "清空" : "全选";
+    allBtn.disabled = pool.length === 0;
+    allBtn.style.opacity = pool.length === 0 ? .45 : 1;
+  }
+}
+
+/* 触发按钮上那行字。0 张 = 灰的「请选择角色…」，挑了就把名字念出来。 */
+function chPickLabel() {
+  const el = document.getElementById("chPickLabel");
+  const btn = document.getElementById("chPickTrigger");
+  if (!el) return;
+  const picked = (CH.cur && CH.cur.char_ids) || [];
+  const names = picked.map(id => {
+    const c = CH.charsAll.find(x => x.id === id);
+    return c ? c.name : "（已删掉的卡）";
+  });
+  if (!names.length) {
+    el.textContent = CH.charsAll.length ? "请选择角色…" : "还没有角色卡，去「角色管理」建一张";
+    if (btn) btn.classList.remove("has");
+    return;
+  }
+  el.textContent = names.slice(0, 3).join("、") +
+    (names.length > 3 ? " 等 " + names.length + " 张" : "");
+  if (btn) btn.classList.add("has");
+}
+
+/* 面板位置。**必须现算**：右栏 .chai 自己是滚动容器，
+   absolute 会被裁掉、还跟着内容滚，所以面板用 fixed。 */
+function chPickPlace() {
+  const t = document.getElementById("chPickTrigger");
+  const p = document.getElementById("chPickPanel");
+  if (!t || !p || p.hidden) return;
+  const r = t.getBoundingClientRect();
+  const w = Math.max(240, r.width);
+  p.style.maxHeight = Math.max(220, window.innerHeight - 24) + "px";
+  p.style.width = w + "px";
+  p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+  const h = p.offsetHeight || 320;
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) {
+    const up = r.top - 6 - h;
+    top = up >= 8 ? up : Math.max(8, window.innerHeight - h - 8);
+  }
+  p.style.top = top + "px";
+}
+
+/* 【名字别叫 chOpenPick】那个名字已经被上面"提示词快捷选项"占着 ——
+   JS 里同名函数是**后定义的赢、而且不报错**，重名 = 这里静默失效。 */
+function chCharOpenPick() {
+  const p = document.getElementById("chPickPanel");
+  if (!p) return;
+  if (p.hidden) {
+    p.hidden = false;
+    chRenderChars();
+    chPickPlace();
+  } else {
+    p.hidden = true;
+  }
+}
+
+function chCharClosePick() {
+  const p = document.getElementById("chPickPanel");
+  if (p) p.hidden = true;
+}
+
+function chPickAll() {
+  if (!CH.cur) { toast("先在左边新建或选一章，再挑角色卡。", true); return; }
+  const picked = (CH.cur.char_ids || []).slice();
+  const pool = CH.charsAll.filter(c =>
+    c.status !== "停用" || picked.indexOf(c.id) >= 0);
+  const allOn = pool.length > 0 && pool.every(c => picked.indexOf(c.id) >= 0);
+  CH.cur.char_ids = allOn ? [] : pool.map(c => c.id);
+  CH.dirtyExtra = true;
+  chRenderChars();
   chCharNote();
+  chFootNote();
+}
+
+/* 角色管理弹层：她选了"不离开正文页就能建/改"。
+   卡片渲染沿用「人设卡」那套（同一份字段、同一份按钮），
+   编辑走 pcOpenEdit —— 它存完会回来刷新正文页这份清单。 */
+async function chOpenCharMgr() {
+  chCharClosePick();
+  show("mkChCharMgr");
+  const box = document.getElementById("chCmList");
+  if (box) box.innerHTML = '<div class="cpblank">正在读角色卡…</div>';
+  await loadPersona(true);
+  chRenderCharMgr();
+}
+
+function chRenderCharMgr() {
+  const box = document.getElementById("chCmList");
+  if (!box) return;
+  const fields = ((PC.meta || {}).fields || []).filter(f => f.key !== "name");
+  if (!PC.list.length) {
+    box.innerHTML = '<div class="cpblank"><b>还没有角色卡</b>' +
+      "点下面的「＋ 新建角色卡」建第一张：名字必填，其余能填多少填多少 —— " +
+      "填了的项会变成模型写这一章时的硬约束。</div>";
+    return;
+  }
+  box.innerHTML = PC.list.map(c => pcCardHtml(c, fields)).join("");
+  pcBindCards(box);
 }
 
 function chCharNote() {
   const el = document.getElementById("chCharNote");
   if (!el) return;
-  if (!CH.chars.length) { el.textContent = ""; return; }
+  if (!CH.charsAll.length) { el.textContent = ""; return; }
   const picked = (CH.cur && CH.cur.char_ids) || [];
   if (!picked.length) {
     el.textContent = "一张都没挑。模型只能从「本章剧情」里猜人物 —— " +
       "猜出来的性格可能跟你设的不一样。";
     return;
   }
-  const mins = picked.map(id => (CH.chars.find(c => c.id === id) || {}).filled || 0);
+  const mins = picked.map(id => (CH.charsAll.find(c => c.id === id) || {}).filled || 0);
   const thin = mins.filter(n => n <= 2).length;
   el.textContent = "这次会带上 " + picked.length + " 张卡" +
     (thin ? "（其中 " + thin + " 张几乎没填，" + "模型只能照名字猜）" : "") + "。";
+}
+
+/* ============================================================
+   素材浮窗（可拖动）
+   ============================================================
+   她 2026-09-27 圈出来的那处红字：
+   「点击出现悬浮窗，可以看剧情内化库和素材分类库，方便使用者一边
+     码字一边看素材」。
+
+   她拍板的四条：
+     · 形态：可拖动浮窗（照参考站）
+     · 能力：只看不写 —— **不做"插进正文"**，先把"一边码字一边看"解决掉
+     · 位置记在 localStorage：挪到不挡字的地方，下次打开还在那儿
+
+   【为什么位置要记】
+   浮窗的全部意义就是"挪开别挡字"。每次都回默认位置 = 她每开一次白拖一次。
+
+   【为什么列表里的字要截断、还要明说】
+   长文截断在界面上不留痕迹的话，会被当成"素材本身就这么短"。
+   所以列表里只显示开头（带省略号），并且底下一行明说"点一条看全文"。 */
+const CF = {
+  tab: "plots",     // plots = 剧情内化库 / cards = 素材分类库
+  rows: [],
+  kw: "",
+  detail: null,
+  cache: {},
+  meta: null,
+  timer: 0,
+  drag: null,
+};
+const CF_LIMIT = 500;                  // 一次最多拉这么多（后端的硬顶是 1000）
+const CF_POS_KEY = "moge_chfloat_pos";
+
+function chFloatEl() { return document.getElementById("chFloat"); }
+
+function chFloatToggle() {
+  const el = chFloatEl();
+  if (!el) return;
+  if (el.hidden) chFloatOpen(); else chFloatHide();
+}
+
+async function chFloatOpen() {
+  const el = chFloatEl();
+  if (!el) return;
+  el.hidden = false;
+  chFloatPlace();
+  chFloatPaintTabs();
+  await chFloatLoad(false);
+}
+
+function chFloatHide() {
+  const el = chFloatEl();
+  if (el) el.hidden = true;
+}
+
+/* 位置：右上角起手；拖过就记住。
+   每次都夹回可视区 —— 窗口缩小之后浮窗不能留在屏幕外面拿不回来。 */
+function chFloatPlace() {
+  const el = chFloatEl();
+  if (!el) return;
+  const w = el.offsetWidth || 400;
+  const h = el.offsetHeight || 540;
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem(CF_POS_KEY) || "null"); }
+  catch (e) { pos = null; }
+  let x = (pos && typeof pos.x === "number") ? pos.x : window.innerWidth - w - 24;
+  let y = (pos && typeof pos.y === "number") ? pos.y : 84;
+  const maxX = Math.max(8, window.innerWidth - w - 8);
+  const maxY = Math.max(8, window.innerHeight - Math.min(h, 200));
+  x = Math.max(8, Math.min(x, maxX));
+  y = Math.max(8, Math.min(y, maxY));
+  el.style.left = x + "px";
+  el.style.top = y + "px";
+}
+
+function chFloatPaintTabs() {
+  document.querySelectorAll("#chFloat .cftab").forEach(b => {
+    b.classList.toggle("on", b.dataset.cftab === CF.tab);
+  });
+  const q = document.getElementById("chFloatQ");
+  if (q && q.value !== CF.kw) q.value = CF.kw;
+}
+
+/* 拖动：按住标题栏挪。
+   拖动过程中不写 localStorage（每移动一像素写一次太浪费），松手才写。 */
+function chFloatBindDrag() {
+  const head = document.getElementById("chFloatHead");
+  const el = chFloatEl();
+  if (!head || !el) return;
+  head.onmousedown = e => {
+    if (e.target && e.target.closest && e.target.closest(".fx")) return;  // 别把关闭当成拖动
+    const r = el.getBoundingClientRect();
+    CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.preventDefault();
+  };
+  document.addEventListener("mousemove", e => {
+    if (!CF.drag) return;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const x = Math.max(4, Math.min(e.clientX - CF.drag.dx,
+                                   window.innerWidth - w - 4));
+    const y = Math.max(4, Math.min(e.clientY - CF.drag.dy,
+                                   window.innerHeight - 40));
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+  });
+  document.addEventListener("mouseup", () => {
+    if (!CF.drag) return;
+    CF.drag = null;
+    const r = el.getBoundingClientRect();
+    try {
+      localStorage.setItem(CF_POS_KEY,
+        JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
+    } catch (e) { /* 存不了就算了，下次回默认位置，不影响用 */ }
+  });
+}
+
+async function chFloatMeta() {
+  if (CF.meta) return CF.meta;
+  try { CF.meta = await api("/api/plot-meta"); } catch (e) { CF.meta = {}; }
+  return CF.meta;
+}
+
+function chFloatCatName(id) {
+  const cats = ((CF.meta || {}).categories) || [];
+  const c = cats.find(x => x.id === id);
+  return c ? c.name : "未分类";
+}
+
+async function chFloatTab(tab) {
+  if (CF.tab === tab && !CF.detail) return;
+  CF.tab = tab;
+  CF.kw = "";
+  CF.detail = null;
+  chFloatPaintTabs();
+  await chFloatLoad(false);
+}
+
+async function chFloatLoad(force) {
+  const body = document.getElementById("chFloatBody");
+  if (!body) return;
+  await chFloatMeta();
+  if (!force && CF.cache[CF.tab]) {
+    CF.rows = CF.cache[CF.tab];
+    chFloatRender();
+    return;
+  }
+  body.innerHTML = '<div class="cpblank">正在读…</div>';
+  try {
+    if (CF.tab === "plots") {
+      const d = await api("/api/plots?limit=" + CF_LIMIT + "&order=category");
+      CF.rows = d.plots || [];
+    } else {
+      const d = await api("/api/cards?limit=" + CF_LIMIT +
+                          "&order=category&include_excluded=true");
+      CF.rows = d.items || [];
+    }
+    CF.cache[CF.tab] = CF.rows;
+  } catch (e) {
+    CF.rows = [];
+    body.innerHTML = '<div class="cpblank"><b>读不到</b>' + esc(e.message) + "</div>";
+    const n = document.getElementById("chFloatNote");
+    if (n) n.textContent = "";
+    const c0 = document.getElementById("chFloatCount");
+    if (c0) c0.textContent = "";
+    return;
+  }
+  chFloatRender();
+}
+
+function chFloatRender() {
+  const body = document.getElementById("chFloatBody");
+  const note = document.getElementById("chFloatNote");
+  const cnt = document.getElementById("chFloatCount");
+  if (!body) return;
+  if (CF.detail) { chFloatDetail(); return; }
+
+  const kw = CF.kw.trim().toLowerCase();
+  let rows = CF.rows;
+  if (kw) {
+    rows = rows.filter(x => (CF.tab === "plots"
+      ? [x.title, x.summary, x.plot_type, (x.usage_hints || []).join(" ")]
+      : [x.text, x.title, x.summary]
+    ).join(" ").toLowerCase().indexOf(kw) >= 0);
+  }
+
+  if (note) {
+    // 【截断要说出来】拉的是前 N 条，搜索也只在这些里面找 ——
+    // 不说的话她会以为"搜不到 = 没有"。
+    note.textContent = "载入 " + fmtNum(CF.rows.length) + " 条" +
+      (CF.rows.length >= CF_LIMIT ? "（一次最多拉 " + CF_LIMIT + " 条，不是全部）" : "") +
+      "，搜索只在这些里面找。" +
+      (rows.length ? " 点一条看全文（列表里只显示开头）。" : "");
+  }
+  if (cnt) cnt.textContent = rows.length ? fmtNum(rows.length) + " 条" : "";
+
+  if (!rows.length) {
+    body.innerHTML = '<div class="cpblank"><b>' +
+      (CF.rows.length ? "没有匹配的" : (CF.tab === "plots"
+        ? "剧情内化库还是空的" : "素材分类库还是空的")) + "</b>" +
+      (CF.rows.length ? "换个词试试。"
+        : (CF.tab === "plots"
+          ? "先去「剧情内化」把卡片提炼成零件，这里才有东西看。"
+          : "先去「素材分类」切一份文稿，这里才有东西看。")) + "</div>";
+    return;
+  }
+
+  body.innerHTML = rows.map(x => {
+    const key = CF.tab + ":" + x.id;
+    if (CF.tab === "plots") {
+      const m = [chFloatCatName(x.primary_category_id), x.plot_type,
+                 x.source_count ? x.source_count + " 条来源" : "还没挂来源",
+                 (x.status && x.status !== "已确认") ? x.status : ""]
+        .filter(Boolean).join(" · ");
+      return '<button class="cfrow" data-cfrow="' + key + '">' +
+        '<span class="t">' + esc(x.title || "（没标题）") + "</span>" +
+        '<span class="m">' + esc(m) + "</span></button>";
+    }
+    const txt = (x.text || "").replace(/\s+/g, " ").trim();
+    const m = [chFloatCatName(x.primary_category_id),
+               (x.status && x.status !== "正常") ? x.status : ""]
+      .filter(Boolean).join(" · ");
+    return '<button class="cfrow" data-cfrow="' + key + '">' +
+      '<span class="t">' + esc(txt.slice(0, 72)) +
+        (txt.length > 72 ? "…" : "") + "</span>" +
+      '<span class="m">' + esc(m) + "</span></button>";
+  }).join("");
+  body.querySelectorAll("[data-cfrow]").forEach(b => {
+    b.onclick = () => chFloatOpenRow(b.dataset.cfrow);
+  });
+}
+
+function chFloatOpenRow(key) {
+  const i = String(key).indexOf(":");
+  const tab = String(key).slice(0, i);
+  const id = String(key).slice(i + 1);
+  const it = CF.rows.find(x => String(x.id) === id);
+  if (!it) return;
+  CF.detail = { tab: tab, item: it };
+  chFloatRender();
+}
+
+function chFloatDetail() {
+  const body = document.getElementById("chFloatBody");
+  const note = document.getElementById("chFloatNote");
+  const cnt = document.getElementById("chFloatCount");
+  if (!body || !CF.detail) return;
+  const it = CF.detail.item;
+  if (note) note.textContent = "看好了就点左上角返回。这里只是给你看，不会往正文里插东西。";
+  if (cnt) cnt.textContent = "";
+
+  const back = '<button class="chpickbtn" id="chFloatBack">← 回到列表</button>';
+  let head, blocks;
+  if (CF.detail.tab === "plots") {
+    head = '<div class="dt">' + esc(it.title || "（没标题）") + "</div>" +
+      '<div class="dm">' + esc([chFloatCatName(it.primary_category_id),
+        it.plot_type, it.status,
+        it.source_count ? it.source_count + " 条来源" : "还没挂来源"]
+        .filter(Boolean).join(" · ")) + "</div>";
+    blocks = [];
+    if (it.summary) {
+      blocks.push('<div class="dm" style="margin:8px 0 3px">摘要</div>' +
+        '<div class="dc">' + esc(it.summary) + "</div>");
+    }
+    const beats = it.beats || {};
+    const beatRows = (((CF.meta || {}).beats) || [])
+      .filter(b => (beats[b.key] || "").trim())
+      .map(b => '<div class="dm" style="margin:8px 0 3px">' + esc(b.label) + "</div>" +
+        '<div class="dc">' + esc(beats[b.key]) + "</div>").join("");
+    if (beatRows) blocks.push(beatRows);
+    const uh = (it.usage_hints || []).filter(Boolean);
+    if (uh.length) {
+      blocks.push('<div class="dm" style="margin:8px 0 3px">适合放在</div>' +
+        '<div class="dc">' + esc(uh.join("、")) + "</div>");
+    }
+    if (!blocks.length) {
+      blocks.push('<div class="cpblank">这一条只填了标题，还没写摘要和节拍。</div>');
+    }
+  } else {
+    const txt = (it.text || "").trim();
+    head = '<div class="dt">' + esc((it.title || "（没有标题的素材）")) + "</div>" +
+      '<div class="dm">' + esc([chFloatCatName(it.primary_category_id), it.status]
+        .filter(Boolean).join(" · ")) + "</div>";
+    blocks = ['<div class="dc">' +
+      esc(txt || "（这一条没有可显示的正文）") + "</div>"];
+  }
+  body.innerHTML = '<div class="cfdetail">' + back + head + blocks.join("") + "</div>";
+  const b = document.getElementById("chFloatBack");
+  if (b) b.onclick = () => { CF.detail = null; chFloatRender(); };
+}
+
+function chFloatSearch(v) {
+  CF.kw = v || "";
+  if (CF.detail) CF.detail = null;
+  if (CF.timer) clearTimeout(CF.timer);
+  // 本地过滤，但还是要防抖一下：一次敲键重画几百行会卡。
+  CF.timer = setTimeout(() => { CF.timer = 0; chFloatRender(); }, 140);
 }
 
 function chRenderRefs() {
@@ -13939,6 +14642,51 @@ chBind("chReqSave", "onclick",
 ["chBack", "chPlot", "chStyle", "chReq"].forEach(id => {
   chBind(id, "oninput", () => { chCount(); chFootNote(); });
 });
+
+/* 正文创作：角色卡下拉选择器 */
+chBind("chPickTrigger", "onclick", chCharOpenPick);
+chBind("chCharSearch", "oninput", () => { if (!document.getElementById("chPickPanel").hidden) chRenderChars(); });
+chBind("chCharSelAll", "onclick", chPickAll);
+chBind("chCharMgrBtn", "onclick", chOpenCharMgr);
+chBind("chCmNewBtn", "onclick", () => pcOpenEdit(0));
+
+/* 点别处就把下拉收起来。
+   【为什么用 mousedown 而不是 click】
+   click 在"按下→松开"之间如果动了鼠标就不触发，
+   结果就是"点了别处它不关"，很难受。 */
+document.addEventListener("mousedown", e => {
+  const p = document.getElementById("chPickPanel");
+  if (!p || p.hidden) return;
+  if (e.target.closest && (e.target.closest("#chPickPanel") ||
+                           e.target.closest("#chPickTrigger"))) return;
+  chCharClosePick();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") chCharClosePick();
+});
+/* 面板用 fixed 定位，位置是"打开那一刻"算的：
+   页面或右栏一滚、窗口一缩，它就跟触发按钮错位了 —— 直接收起来最干净。 */
+document.addEventListener("scroll", chCharClosePick, true);
+window.addEventListener("resize", () => {
+  chCharClosePick();
+  const el = chFloatEl();
+  if (el && !el.hidden) chFloatPlace();
+});
+
+/* 正文创作：素材浮窗 */
+chBind("chFloatBtn", "onclick", chFloatToggle);
+chBind("chFloatClose", "onclick", chFloatHide);
+chBind("chFloatTabPlot", "onclick", () => chFloatTab("plots"));
+chBind("chFloatTabCard", "onclick", () => chFloatTab("cards"));
+chBind("chFloatQ", "oninput", () => chFloatSearch(document.getElementById("chFloatQ").value));
+chFloatBindDrag();
+
+(function paintChapterIcons() {
+  const a = document.getElementById("chFloatIco");
+  const b = document.getElementById("chHistIco");
+  if (a) a.innerHTML = svgIcon("doc");
+  if (b) b.innerHTML = svgIcon("clock");
+})();
 
 /* ---------------- 启动 ---------------- */
 
