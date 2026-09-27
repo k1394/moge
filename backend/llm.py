@@ -65,7 +65,9 @@
 import inspect
 import json
 import os
+import queue
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -93,6 +95,28 @@ MODELS_FILE = "models.json"
 TIMEOUT = 180          # 单次请求超时（秒）
 MAX_RETRY = 3          # 最多试 3 次（含第一次）
 RETRY_BACKOFF = 2.0    # 退避基数：第 n 次失败后等 2**n 秒
+
+
+# ----------------------------------------------------------------------
+# 请求自报的身份（User-Agent）
+#
+# 【为什么非要有这一行】2026-09-26 实测踩到的坑，她报「CCS 里能用，
+# 填到你这里就报错」。查下来是这样：
+#   有些中转站把接口挂在 Cloudflare 后面，并且开了「防机器人」规则 ——
+#   它**按请求自己报上来的名字**放行或拦截。
+#   Python 默认自报 "Python-urllib/3.13"，正好撞在它的黑名单上，
+#   于是**连网站首页都回 403**（Cloudflare Error 1010: Access denied），
+#   密钥对不对根本没轮到检查。界面上却只能看到一句「密钥不认」，
+#   她就去反复折腾 Key —— 而问题压根不在 Key 上。
+#   实测同一个地址：默认身份 → 403；换成下面这个名字 → 立刻通，
+#   回的是正常的 401「要密钥」。
+#
+# 【为什么不去冒充浏览器】
+# 不需要。实测 Moge/1.0、curl、node 这些**中性名字全都能过**，
+# 只有 "Python-urllib/*" 这一串被点名封。既然自报真名就能进门，
+# 就没有理由去假装自己是 Chrome。
+# ----------------------------------------------------------------------
+USER_AGENT = "Moge/1.0 (+local writing tool)"
 
 
 # ----------------------------------------------------------------------
@@ -179,13 +203,19 @@ class LlmError(Exception):
 
     message 一定已经过 _scrub() 抹过密钥，**可以直接给她看**。
     retryable 告诉上层"这个错再试一次有没有意义"。
+
+    elapsed_ms 是"这一次请求从发出去到出错等了多久"。
+    【为什么挂在错误上带出来】失败也是花过时间的（可能还花了钱），
+    耗时表要连失败一起记 —— 只记成功的那几次，一个"十次里失败八次"
+    的模型在对比表里反而显得又快又稳，结论正好反了。
     """
 
-    def __init__(self, message, retryable=False, status=None):
+    def __init__(self, message, retryable=False, status=None, elapsed_ms=0):
         super().__init__(message)
         self.message = message
         self.retryable = retryable
         self.status = status
+        self.elapsed_ms = elapsed_ms
 
 
 # ----------------------------------------------------------------------
@@ -525,6 +555,11 @@ def upsert_provider(item):
                 continue                   # 没传 = 不改
             if k == "api_key" and not v:
                 continue                   # 传了但是空 = 不改密钥（界面是打码版）
+            # 地址同理：空串 = "我没改"，不是"把地址改成空"。
+            # 接入点没有地址就等于废了，不存在"我要清空"这种意图。
+            # 跟 upsert_model 保持同一条规矩 —— 两处口径不一样，坏的是数据。
+            if k == "base_url" and not str(v or "").strip():
+                continue
             provs[i][k] = v
         save_providers(provs)
         return provs[i]
@@ -586,6 +621,48 @@ def _looks_like_webpage(raw):
             or "<head>" in s[:300] or "<body" in s[:300])
 
 
+def _looks_like_gate_block(err, detail):
+    """这个 401/403 是不是 CDN / 防火墙挡下来的，而不是服务商在说密钥不对？
+
+    【为什么必须单独认这一种】2026-09-26 她报的坑就是它。
+    被 Cloudflare 之类挡下来时回的是 403，跟"密钥不对"同一个号码。
+    如果笼统说成「密钥不认」，她会拿着一个好端端的 Key 反复折腾 ——
+    因为真正的原因（请求被挡在门外）在 Key 上根本查不出来。
+    实测：同一条 Key、同一个地址，CC Switch 里能用、程序里 403，
+    差别只在请求自报的身份（Cloudflare Error 1010 按身份拦人）。
+
+    【判据只能看正文，绝不能看响应头】
+    走 Cloudflare 的站，**每一个**响应都带 `Server: cloudflare` 和
+    `CF-RAY` —— 包括它正常转发的 401。拿响应头当判据的话，会把她
+    一条好密钥也误判成"被拦"，那就从一种误导换成另一种误导。
+    真正的区别在正文：被拦时回来的是 Cloudflare 的错误页
+    （带 developers.cloudflare.com 链接 / Error 1010 / Just a moment），
+    而服务商正常的拒绝是它自己格式的 JSON。
+    """
+    blob = (detail or "").lower()
+    return ("developers.cloudflare.com" in blob
+            or "cloudflare-1xxx-errors" in blob
+            or "error 1010" in blob
+            or "error 1020" in blob
+            or "just a moment" in blob
+            or "attention required" in blob
+            or "<!doctype html" in blob)
+
+
+def _gate_block_error(label, code, base, detail):
+    """被网关拦下来时给她的报错 —— 要点是**先把责任摘清楚**：
+    这不是 Key 的问题，别去折腾密钥。"""
+    return LlmError(
+        "「%s」的请求被它前面的 CDN 或防火墙挡下来了（HTTP %d）——\n"
+        "还没轮到检查密钥，所以这不是 Key 的问题。\n"
+        "多出现在中转站把接口挂在 Cloudflare 后面、又开了「防机器人」"
+        "规则的时候：它会按请求自报的身份拦人。\n"
+        "判断办法：如果同一个 Key 在别的客户端里能用（浏览器插件、"
+        "Claude 客户端之类），那就是这一条 —— 那类客户端自报的身份正常。\n"
+        "当前地址：%s\n上游原话：%s" % (label, code, base, detail),
+        status=code)
+
+
 def _fetch_models_from(base_url, api_key, timeout=30):
     """拿一份「地址 + 密钥」去问它有哪些模型（OpenAI 兼容的 GET /models）。
 
@@ -604,6 +681,9 @@ def _fetch_models_from(base_url, api_key, timeout=30):
     req = urllib.request.Request(base + "/models", headers={
         "Authorization": "Bearer " + api_key,
         "Accept": "application/json",
+        # 见文件上方 USER_AGENT 的说明：不带这一行，挂 Cloudflare
+        # 防机器人规则的中转站会把请求整条拦掉（403），与密钥无关。
+        "User-Agent": USER_AGENT,
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -615,6 +695,11 @@ def _fetch_models_from(base_url, api_key, timeout=30):
         except Exception:                                  # pragma: no cover
             pass
         if e.code in (401, 403):
+            detail = _scrub(detail, api_key)
+            # 先摘清楚：是"被网关挡了"还是"密钥不对"。两者都是 403，
+            # 但给她的下一步完全不同。见 _looks_like_gate_block 的说明。
+            if _looks_like_gate_block(e, detail):
+                raise _gate_block_error("这个地址", e.code, base, detail)
             raise LlmError("这个地址不认这个密钥（HTTP %s）。"
                            "检查一下 Key 有没有复制全。" % e.code)
         raise LlmError("拉模型列表失败（HTTP %s）：%s"
@@ -882,6 +967,22 @@ def upsert_model(item):
             for f in given:
                 if f == "api_key" and not str(c.get("api_key") or "").strip():
                     continue                  # 打码版回传 → 不动密钥
+                # ---- 地址和模型名也一样：空串 = "我没改"，不是"改成空" ----
+                #
+                # 【为什么非拦不可】界面上地址那一栏空着只有一种含义：
+                # "跟着接入点走"（老配置里每条模型自带地址，前端会把它显示成
+                # 跟着接入点，输入框是空的）。这时候请求里带一个空串过来，
+                # 照字面执行就会把库里那条好好的地址**改成空** ——
+                # 而 providers 那一节在老配置里是空的，等于地址彻底丢了，
+                # 表现是"点了一下保存，这条模型就再也发不出去请求了"。
+                # 2026-09-27 实测复现过。
+                #
+                # 反过来说"我要清空地址"这种意图不存在：没有地址的模型
+                # 根本用不了。所以这两栏跟 api_key 同一条规矩。
+                # （merge_model_cfg 早就写着"出现了但是空串的，也当没改处理"，
+                #   只有这里没跟上 —— 两处口径不一致，坏的是数据。）
+                if f in ("base_url", "model") and not str(c.get(f) or "").strip():
+                    continue
                 merged[f] = c.get(f)
             merged["key"] = c["key"]          # 它同时是查找键，永远以这次为准
             items[i] = _clean(merged) or c
@@ -1035,8 +1136,316 @@ def _pick_content(raw, key, label="", base=""):
     return text, d.get("usage") or {}, (choices[0].get("finish_reason") or "").strip()
 
 
+# ----------------------------------------------------------------------
+# 流式收（stream）
+#
+# 【为什么非要用它，不只是为了"打字机效果"】
+# 一次性收的请求，程序只知道"整段到齐了"，**量不出第一个字是第几秒到的**。
+# 而"首字慢"和"总耗时慢"是两种完全不同的毛病：
+#     首字慢   = 这家在"想"，或者上游在排队（推理模型尤其慢）
+#     总耗时慢 = 它写得太长，或者中途卡住了
+# 她想在模型设置页分清这两件事，就只能按流式收。打字机效果是顺带的。
+#
+# 【两种"不支持流式"，本质不同，都要兜住】
+#   ① 服务商直接拒绝（400，正文里写着 stream unsupported）——
+#      认得出，换非流式把这次重发一遍就行，不该把整批任务判成失败。
+#   ② 服务商**假装没看见** stream，照样回一整份 JSON。
+# ②更阴：它不报错，你按 SSE 去解就一个字也解不出来，最后表现成
+# 「模型返回了空内容」—— 那个报错把方向完全指错了，
+# 她会去查模型名、查 Key，而问题只是这家不认这个参数。
+# 所以这里**不靠"要不要"决定怎么解，靠 Content-Type**：
+# 带 event-stream 才逐行按 SSE 解，否则老老实实把整份读完按普通返回解，
+# 并记下"这家忽略了流式"，让界面上能说出来。
+# ----------------------------------------------------------------------
+
+DONE_SENTINEL = "[DONE]"
+_BIG_LINE = 4 * 1024 * 1024      # 一行 4MB 还不见换行，那就不是 SSE
+_DONE = object()                 # 内部哨兵：这一帧是 [DONE]
+_EOF_FRAME = object()            # 内部哨兵：这是一行空行（= 一帧结束）
+_END = object()                  # 内部哨兵：chat_stream 的队列到底了
+
+
+def _sse_data(line):
+    """从 SSE 的一行里读出它的意思。
+
+    返回四种之一：
+        _DONE       这一帧是 [DONE] → 流到此为止
+        _EOF_FRAME  这是一行空行 → 一帧结束
+        None        这行没用（注释心跳、event:、id: …）
+        字符串      一行数据（同一帧里多行要用换行拼起来才是完整内容）
+    """
+    s = (line or "").strip()
+    if not s:
+        return _EOF_FRAME
+    if s.startswith(":"):
+        return None                  # 注释行：有些服务商拿它当心跳
+    if not s.startswith("data:"):
+        return None                  # event: / id: / retry: 这几个我们用不上
+    d = s[5:].strip()
+    if d == DONE_SENTINEL:
+        return _DONE
+    return d or None
+
+
+def _iter_sse(resp):
+    """把一个 SSE 响应**逐帧**读出来：读满一帧就 yield 一帧，不许攒。
+
+    一帧 = 若干行 data:（用换行拼起来）+ 一个空行。
+
+    【为什么不用 resp.read()】
+    read() 不带参数 = 一直读到连接关闭 —— 那正是"攒完整段再给你"的行为，
+    等于把流式又做成了非流式，前面所有的功夫全白费。
+
+    【为什么要按"帧"而不是按"行"】
+    SSE 允许一帧里的数据拆成好几行 data:（合起来才是完整的 JSON）。
+    按行独立解析的话，那几行都解不出 JSON，于是一整块内容被**静默丢掉**：
+    不报错、不报警，就是少了一截。而"少了一截"正是这个项目里最不能忍的事。
+
+    【为什么要检查 resp.length】
+    声明了 Content-Length 却读不满，只有一种可能：连接被掐断在半路。
+    这时候 read(1) 只是安静地返回空字节，**不会**抛异常 ——
+    不检查的话，半截内容会被当成"完整收到了"。查一下这三个字节的代价，
+    换的是"不会拿半截数据当成品"。
+    """
+    buf = b""
+    data_lines = []
+    while True:
+        b = resp.read(1)             # 读 1 个字节就返回，绝不多等
+        if not b:
+            break
+        if b == b"\n":
+            got = _sse_data(buf.decode("utf-8", "replace"))
+            buf = b""
+            if got is None:
+                continue
+            if got is _DONE:
+                return
+            if got is not _EOF_FRAME:      # 空行 = 一帧结束
+                data_lines.append(got)
+                continue
+            if data_lines:
+                joined = "\n".join(data_lines)
+                data_lines = []
+                if joined.strip():
+                    yield joined
+            continue
+        buf += b
+        if len(buf) > _BIG_LINE:
+            raise LlmError("流式返回的样子不像 SSE（一行超过 4MB 还没结束）。")
+
+    if getattr(resp, "length", 0):
+        raise LlmError("流式连接在收完之前断了（还差 %d 字节没收到）。"
+                       % resp.length)
+
+    # 有的服务商最后那帧不发空行，直接关连接 —— 别把最后一块丢了。
+    got = _sse_data(buf.decode("utf-8", "replace")) if buf else None
+    if got is not None and got is not _DONE and got is not _EOF_FRAME:
+        data_lines.append(got)
+    if data_lines:
+        joined = "\n".join(data_lines)
+        if joined.strip():
+            yield joined
+
+
+def _pick_delta(payload):
+    """从一个流式数据块里挑出**这一块新增的字**。
+
+    返回 (新增文本, usage, finish_reason)。
+
+    【注意 finish_reason 常常在"内容为空"的那一块里】
+    只挑有字的块会把它漏掉 —— 而它是"这一篇到底是被正常写完、
+    还是撞到字数上限被掐断"的唯一硬证据（见上面常量区的说明）。
+    """
+    try:
+        d = json.loads(payload)
+    except Exception:
+        return "", {}, ""
+    if not isinstance(d, dict):
+        return "", {}, ""
+    if d.get("error"):
+        # 有的服务商 HTTP 回 200，错却写在流里。不认它的话，
+        # 她会看到"返回了空内容"这种指错方向的报错。
+        raise LlmError("上游在流里回了错：%s"
+                       % json.dumps(d.get("error"), ensure_ascii=False)[:300])
+    choices = d.get("choices") or []
+    text, finish = "", ""
+    if choices and isinstance(choices[0], dict):
+        ch = choices[0]
+        delta = ch.get("delta")
+        if not isinstance(delta, dict):
+            delta = {}
+        text = delta.get("content")
+        if text is None:
+            # 有些实现不填 content 而用 reasoning_content（推理模型的思考过程）
+            text = delta.get("reasoning_content") or ""
+        if not isinstance(text, str):
+            text = ""
+        finish = (ch.get("finish_reason") or "").strip()
+    usage = d.get("usage")
+    return text, (usage if isinstance(usage, dict) else {}), finish
+
+
+# 报错里出现这些词，才认"_stream_not_supported"。
+# 要求同时命中 "stream"，是为了不把别的 400（比如模型名不对）误认成它 ——
+# 误认的代价是多发一次请求，漏认的代价是整批任务失败。两害相权，这里偏向前者。
+_STREAM_MAYBE = (400, 404, 405, 415, 422, 500, 501)
+
+
+def _stream_not_supported(code, detail):
+    """这个报错是不是"这家不认 stream"？
+
+    判据只看**正文**，不看响应头 —— 跟 _looks_like_gate_block 同一条规矩。
+    """
+    if code not in _STREAM_MAYBE:
+        return False
+    return "stream" in (detail or "").lower()
+
+
+def _build_req(url, body, key, use_stream):
+    """拼一次请求。stream 是写在**请求体**里的，不是请求头。"""
+    b = dict(body)
+    if use_stream:
+        b["stream"] = True
+    payload = json.dumps(b, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "Bearer " + key)
+    # 见文件上方 USER_AGENT：不带这一行会被 Cloudflare 防机器人规则拦掉。
+    req.add_header("User-Agent", USER_AGENT)
+    if use_stream:
+        req.add_header("Accept", "text/event-stream")
+    return req
+
+
+def _read_stream(resp, t0, key, on_chunk, model):
+    """逐块读 SSE，**每读到一块就立刻交出去**。"""
+    parts, usage, finish = [], {}, ""
+    ttft = 0
+    broke = None
+    try:
+        for data in _iter_sse(resp):
+            text, u, f = _pick_delta(data)
+            if u:
+                usage = u
+            if f:
+                finish = f
+            if not text:
+                continue             # 只有结束原因、没有字的块，不算"第一个字"
+            if not ttft:
+                # 首字耗时。max(1, ...) 是为了别把"立刻就来了"记成 0 ——
+                # 0 在我们这儿的意思是"这次没量到"，两者不能混。
+                ttft = max(1, int((time.time() - t0) * 1000))
+            parts.append(text)
+            if on_chunk:
+                try:
+                    on_chunk(text)
+                except BaseException:
+                    # 看板出问题，绝不许把这次生成搞挂 —— 字都已经收到了。
+                    pass
+    except LlmError as e:
+        if not "".join(parts).strip():
+            raise                    # 一个字都没有 + 已经是我们自己的干净报错
+        broke = e
+    except Exception as e:
+        broke = e
+
+    content = "".join(parts)
+    elapsed = int((time.time() - t0) * 1000)
+    if broke is not None:
+        if content.strip():
+            # 【为什么收到一半也要算失败】断在半路的内容结构一定不完整
+            # （JSON 缺个括号就是废的），拿它去解析只会得到一句让人摸不着
+            # 头脑的"不是合法 JSON"。不如直说断了，让上层重试。
+            raise LlmError(
+                "流式收到一半断了：已经收到 %d 字，但连接中途断掉，"
+                "这半截没法用（结构不完整）。\n原因：%s"
+                % (len(content), _scrub(broke, key)), retryable=True)
+        raise LlmError("流式连接断了，一个字都没收到：%s"
+                       % _scrub(broke, key), retryable=True)
+    if not content.strip():
+        raise LlmError("模型返回了空内容")
+    return {"content": content, "usage": usage, "model": model,
+            "finish_reason": finish, "ttft_ms": ttft,
+            "elapsed_ms": elapsed, "streamed": True, "fallback": ""}
+
+
+def _send(req, use_stream, key, label, base, model, timeout, on_chunk):
+    """把请求发出去、把返回收下来。**一次请求，不含重试。**
+
+    返回 {content, usage, model, finish_reason, ttft_ms, elapsed_ms,
+          streamed, fallback}。
+
+    失败一律抛出去：urllib 那三种（HTTPError / URLError / TimeoutError）
+    原样往上抛，好让 chat() 里那套报错文案继续管用；
+    LlmError 则已经抹过密钥，可以直接给她看。
+    """
+    t0 = time.time()
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        with resp:
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if use_stream and "event-stream" in ctype:
+                return _read_stream(resp, t0, key, on_chunk, model)
+            # 走到这儿只有两种可能：
+            #   ① 本来就没要流式
+            #   ② 这家**假装没看见** stream，照样回了一整份 JSON（见文件上方说明）
+            raw = resp.read().decode("utf-8", "replace")
+        text, usage, finish = _pick_content(raw, key, label, base)
+        return {"content": text, "usage": usage, "model": model,
+                "finish_reason": finish, "ttft_ms": 0,
+                "elapsed_ms": int((time.time() - t0) * 1000),
+                "streamed": False,
+                "fallback": "server_ignored_stream" if use_stream else ""}
+    except BaseException as e:
+        # 把"这一次等了多少"挂在错误上 —— 失败也要记进耗时表。
+        try:
+            e.elapsed_ms = int((time.time() - t0) * 1000)
+        except BaseException:
+            pass
+        raise
+
+
+def _record_call(cfg, purpose, r=None, err=None, use_stream=False,
+                 fallback=""):
+    """把这一次的耗时记进 llm_calls。**成功和失败都记。**
+
+    记的是"性能数据"，不是"业务数据"：任何异常都不许冒出去
+    （db.record_llm_call 里面已经把异常吃掉了，这里再兜一层，
+    是因为它还要读 cfg 里几个可能不存在的字段）。
+    """
+    try:
+        if r is not None:
+            db.record_llm_call(
+                purpose=purpose,
+                model_key=(cfg.get("key") or ""),
+                model_name=(r.get("model") or cfg.get("model") or ""),
+                provider=(cfg.get("provider") or ""),
+                streamed=r.get("streamed"),
+                ttft_ms=r.get("ttft_ms"),
+                elapsed_ms=r.get("elapsed_ms"),
+                ok=True,
+                usage=r.get("usage"),
+                chars=len(r.get("content") or ""),
+                finish_reason=r.get("finish_reason"),
+                fallback=(r.get("fallback") or fallback))
+            return
+        db.record_llm_call(
+            purpose=purpose,
+            model_key=(cfg.get("key") or ""),
+            model_name=(cfg.get("model") or ""),
+            provider=(cfg.get("provider") or ""),
+            streamed=bool(use_stream),
+            ttft_ms=0,
+            elapsed_ms=getattr(err, "elapsed_ms", 0),
+            ok=False,
+            error=(getattr(err, "message", "") or str(err or "")),
+            fallback=fallback)
+    except BaseException:
+        pass
+
+
 def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
-         max_retry=None):
+         max_retry=None, stream=True, on_chunk=None, purpose=""):
     """发一次对话请求。
 
     返回 {"content": 模型说的话, "usage": 用量, "model": 实际用的模型名,
@@ -1050,6 +1459,18 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
     timeout 不传吃 TIMEOUT(180)，max_retry 不传吃 MAX_RETRY(3)。
     **一次要吐几千字的长任务（生成大纲）必须自己传**，理由见上面常量区的注释：
     默认值是按"短回答"定的，用在大纲上会稳定超时，还会把等待时间乘三倍。
+
+    stream    默认 True（按流式收）。为什么默认就是它：非流式量不出首字耗时，
+              而"首字慢"和"总耗时慢"是两种毛病。这家不认流式时会**自动**
+              换非流式重发（结果里记 fallback），所以默认开着不会有坏处。
+    on_chunk  每收到一块字就回调一次。任务线程靠它把字实时推到页面上。
+              回调里抛异常**不会**影响这次生成（见 _read_stream）。
+    purpose   这次调用是干什么用的（classify / infuse / outline / probe），
+              只用来给耗时表分组，缺省也能跑。
+
+    返回里比原来多三项：ttft_ms（首字耗时）、elapsed_ms（这次等了多久）、
+    streamed（是不是流式收的）。非流式收时 ttft_ms = 0，
+    意思是"这次没量到"，跟"首字 0 毫秒"不是一回事。
     """
     if not isinstance(cfg, dict):
         raise LlmError("模型配置不对（应该是一条字典）")
@@ -1091,20 +1512,45 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
         # 真报 400 就由上层关掉这个开关重试（见 classification.py）。
         body["response_format"] = {"type": "json_object"}
 
-    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     last = None
 
+    # 这次按不按流式收。默认是 —— 非流式量不出首字耗时（见上面流式那一节）。
+    # 这家明确拒绝流式时，下面会把它翻成 False 并把这一次重发一遍。
+    use_stream = bool(stream) if stream is not None else True
+    fallback = ""                    # 退回非流式的原因（'' = 没退）
+
+    def _fatal(err, from_err=None):
+        """非重试类的失败：先记进耗时表，再抛出去。
+
+        【为什么单独留一个出口】400 / 401 / 404 这些是"请求本身不对"，
+        再试一百次也是同样结果，所以立刻抛。但它们同样是"花过时间的一次
+        尝试"，不能因为抛得早就漏记 —— 她拿一条填错的 Key 点「测试」，
+        对比表里要是什么都不显示，她会以为"这里根本没记录"。
+
+        from_err 传那个原始的 urllib 错误，用来把"等了多久"抄过来
+        （等待时长是在 _send 里量好挂在错误上的）。
+        """
+        if not getattr(err, "elapsed_ms", 0):
+            err.elapsed_ms = getattr(from_err, "elapsed_ms", 0)
+        _record_call(cfg, purpose, err=err, use_stream=use_stream,
+                     fallback=fallback)
+        raise err
+
     tries = max(1, int(max_retry or MAX_RETRY))
-    for attempt in range(1, tries + 1):
-        req = urllib.request.Request(url, data=payload, method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer " + key)
+    attempt = 0
+    # 【为什么是 while 不是 for】"这家不认流式"要能把**同一次尝试**重发一遍，
+    # 而重发不该算掉一次重试机会（它不是失败，是这条路走不通）。
+    # while 才能把 attempt 退回去，让"第 N 次尝试"这个说法对得上。
+    while attempt < tries:
+        attempt += 1
+        req = _build_req(url, body, key, use_stream)
         try:
-            with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as resp:
-                raw = resp.read().decode("utf-8", "replace")
-            text, usage, finish = _pick_content(raw, key, label, base)
-            return {"content": text, "usage": usage, "model": model,
-                    "finish_reason": finish}
+            r = _send(req, use_stream=use_stream, key=key, label=label,
+                      base=base, model=model, timeout=timeout or TIMEOUT,
+                      on_chunk=on_chunk)
+            r["fallback"] = r.get("fallback") or fallback
+            _record_call(cfg, purpose, r=r)
+            return r
 
         except urllib.error.HTTPError as e:
             detail = ""
@@ -1114,12 +1560,26 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
                 pass
             detail = _scrub(detail, key)
 
+            # ---- 这家不认 stream？换成非流式把这一次重发一遍 ----
+            # 【为什么单独认这一种】不认流式是**兼容性问题，不是故障**：
+            # 换条路立刻就能成。要是不认它，她会看到整批分类全失败，
+            # 而原因只是"这家不支持一个可选的参数"，报错还指不到这儿。
+            if use_stream and _stream_not_supported(e.code, detail):
+                use_stream = False
+                fallback = "stream_rejected"
+                attempt -= 1         # 抵消循环开头那次 +=1：重发不算重试
+                continue
+
             if e.code in (401, 403):
+                # 先认一下"被网关挡了"这种：它也是 403，但跟"密钥不对"
+                # 完全是两回事，混在一起说会让她抱着好 Key 白折腾。
+                if _looks_like_gate_block(e, detail):
+                    _fatal(_gate_block_error(label, e.code, base, detail), e)
                 # 这条报错是**真会被看到**的一条：填第三方 Key 是最常见的坑。
                 # 她充了硅基流动的额度，却填进"DeepSeek 官方"那一条 ——
                 # 官方当然说这个密钥没注册过（401）。如果只说"密钥不对"，
                 # 她会在 Key 上反复折腾，而问题其实在地址那一栏。
-                raise LlmError(
+                _fatal(LlmError(
                     "「%s」说密钥不认（HTTP %d）。三个常见原因，挨个看一眼：\n"
                     "  ① Key 抄错了（前后有没有多空格、有没有漏字符）\n"
                     "  ② 「Key 不是这家的」 —— 比如充的是第三方（硅基流动之类的）"
@@ -1128,14 +1588,14 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
                     "模型名通常也要改（如 deepseek-ai/DeepSeek-V3.2）\n"
                     "  ③ 这个 Key 没开通当前模型（现在填的是「%s」）\n"
                     "当前地址：%s\n上游原话：%s"
-                    % (label, e.code, model, base, detail), status=e.code)
+                    % (label, e.code, model, base, detail), status=e.code), e)
 
             if e.code == 404:
                 # 中转站特有的大坑，单独写清楚：
                 # 它们后台有一列叫「分组」或「套餐」，写着 GPT PLUS / default
                 # 这种看着很像模型名的东西 —— 那是**计费分组**，不是模型名。
                 # 她照抄过去，上游就回一句"没有这个模型"。
-                raise LlmError(
+                _fatal(LlmError(
                     "「%s」说它没有这个模型（HTTP 404，模型名：%s）。\n"
                     "两个常见原因，对一下：\n"
                     "  ① 填的是「分组 / 套餐」名，不是模型名 —— "
@@ -1145,43 +1605,113 @@ def chat(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
                     "怎么办：点这一行旁边那个「拉模型列表」——"
                     "它会把这家真正认的名字列出来，点一个就填进模型名。\n"
                     "当前地址：%s\n上游原话：%s" % (label, model, base, detail),
-                    status=e.code)
+                    status=e.code), e)
 
-            if e.code == 429 or e.code >= 500:
+            if e.code == 429:
+                # 中转站的 429 原话是"All available accounts are currently
+                # rate-limited" —— 是**服务商自己的账号池**被限流了，
+                # 跟她配的 Key 没关系。不说清这一点，她只会去反复折腾 Key。
                 last = LlmError(
-                    "「%s」暂时不可用（HTTP %d），第 %d 次尝试。\n上游原话：%s"
+                    "「%s」说服务商那边被限流了（HTTP 429），第 %d 次尝试。\n"
+                    "这是服务商账号池的事，不是你配错了 Key。\n"
+                    "下一步：等几分钟再试；或者换一家模型。\n上游原话：%s"
+                    % (label, attempt, detail), retryable=True, status=e.code)
+            elif e.code >= 500:
+                last = LlmError(
+                    "「%s」的上游出错了（HTTP %d），第 %d 次尝试。\n"
+                    "多半是这家服务当前不稳定。\n"
+                    "下一步：等一会儿再试；或者换一家模型。\n上游原话：%s"
                     % (label, e.code, attempt, detail),
                     retryable=True, status=e.code)
             else:
                 # 400 之类：请求本身有问题，再试也是一样的结果，直接抛
-                raise LlmError(
+                _fatal(LlmError(
                     "「%s」拒绝了这次请求（HTTP %d）。\n上游原话：%s"
-                    % (label, e.code, detail), status=e.code)
+                    % (label, e.code, detail), status=e.code), e)
 
         except urllib.error.URLError as e:
             last = LlmError("连不上「%s」（%s）。检查网络，或者地址填错了。"
                             % (label, _scrub(e.reason, key)), retryable=True)
 
         except TimeoutError:
-            last = LlmError("「%s」超过 %d 秒没回话。"
-                            % (label, timeout or TIMEOUT), retryable=True)
+            # 【为什么要把话说这么细】这次是"中转站 600 秒一个字都没回"。
+            # 只说"超过 N 秒没回话"，她不知道是自己的问题还是服务商的问题，
+            # 下一次还会照着原样再跑一遍、再白等十分钟。
+            last = LlmError(
+                "「%s」超过 %d 秒没回话（上游一个字都没返回）。\n"
+                "多半是这家服务当前不稳或被限流（中转站尤其常见），"
+                "也可能是这个模型属于「要想很久」的推理模型，长任务容易等不到。\n"
+                "下一步：换个模型再试一次（直连的服务通常更稳，比如通义千问）；"
+                "这一次一个字都没拿到，等于白等，没有额外花销。"
+                % (label, timeout or TIMEOUT), retryable=True)
 
         except LlmError as e:
             # 已经是干净的错（比如返回不是 JSON）。上游模型服务偶尔会
             # 吐一半就断，这种也值得再试一次。
-            last = LlmError(e.message, retryable=True, status=e.status)
+            last = LlmError(e.message, retryable=True, status=e.status,
+                            elapsed_ms=getattr(e, "elapsed_ms", 0))
 
         if attempt < tries:
             time.sleep(RETRY_BACKOFF ** attempt)
 
     if last is None:
-        raise LlmError("「%s」试了 %d 次都没成功。" % (label, tries))
-    if tries > 1:
+        last = LlmError("「%s」试了 %d 次都没成功。" % (label, tries))
+    elif tries > 1:
         # 她最终只在任务备注里看到最后这一条错误。不写明"试了几轮"，
         # 她会以为只发了一次请求 —— 而实际上可能已经扣了好几笔钱。
-        raise LlmError("%s（一共试了 %d 次）" % (last.message, tries),
-                       retryable=last.retryable, status=last.status)
+        last = LlmError("%s（一共试了 %d 次）" % (last.message, tries),
+                        retryable=last.retryable, status=last.status,
+                        elapsed_ms=getattr(last, "elapsed_ms", 0))
+    # 失败也是花过时间的 —— 记进耗时表，别让对比表里只剩成功那几次。
+    _record_call(cfg, purpose, err=last, use_stream=use_stream,
+                 fallback=fallback)
     raise last
+
+
+def chat_stream(cfg, messages, temperature=0.0, json_mode=False, timeout=None,
+                max_retry=None, purpose=""):
+    """流式版：一边收一边把增量吐出来。
+
+        for ev in llm.chat_stream(cfg, msgs, purpose="probe"):
+            if ev["t"] == "chunk":
+                ...把 ev["text"] 画到页面上...
+
+    事件只有三种：
+        {"t": "chunk", "text": "…"}        模型刚吐出来的一块字
+        {"t": "done",  "result": {...}}    跑完了。result 就是 chat() 的返回
+        {"t": "error", "message": "…"}     没成。message 抹过密钥，可以直接给她看
+
+    【为什么不重新写一遍重试逻辑】
+    重试、退避、各种报错的文案、"不认流式就换一条路"—— 这些 chat() 里
+    已经有一套，而且是调了很久才调准的。所以这里只是**换一种交付方式**：
+    把 chat() 放到一个线程里跑，它每收到一块字就丢进队列，这边取出来往外吐。
+    重新实现一遍等于把那些坑再踩一遍。
+    """
+    q = queue.Queue()
+
+    def _worker():
+        try:
+            r = chat(cfg, messages, temperature=temperature,
+                     json_mode=json_mode, timeout=timeout, max_retry=max_retry,
+                     stream=True, on_chunk=lambda t: q.put({"t": "chunk",
+                                                            "text": t}),
+                     purpose=purpose)
+            q.put({"t": "done", "result": r})
+        except BaseException as e:
+            q.put({"t": "error",
+                   "message": (getattr(e, "message", None) or str(e)),
+                   "retryable": bool(getattr(e, "retryable", False)),
+                   "status": getattr(e, "status", None)})
+        finally:
+            q.put(_END)
+
+    th = threading.Thread(target=_worker, daemon=True)
+    th.start()
+    while True:
+        ev = q.get()
+        if ev is _END:
+            break
+        yield ev
 
 
 # ----------------------------------------------------------------------

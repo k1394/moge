@@ -58,10 +58,12 @@ import os
 import re
 import threading
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from backend import db
+from backend import livestream
 from backend import classification as cls
 from backend import outline_db as odb
 from backend import plots_db as pdb
@@ -81,6 +83,19 @@ PROMPT_VERSION_GENERIC = "v1-generic"
 # 绝不静默丢内容（跟分类/内化同一条规矩）。
 REQUIRED_SLOTS = ("worldview", "characters", "plots", "constraints",
                   "target_words", "learning_examples", "user_prompt")
+
+# 可选槽位：认它、会填它，但模板里**没有它不算错**。
+#
+# 【为什么 reference_cards 是可选】
+# 真实模板（prompts/outline.txt）是她调过的版本，里面多半还没有这个占位符。
+# 要是把它放进必填清单，老模板立刻"缺占位符"而退回通用版 ——
+# 她调的那一版被整个顶掉，只为加一个新功能，得不偿失。
+# 老模板照样能吃到素材：_system_block 会检测模板里有没有这个槽位，
+# 没有就把素材块追加到 system 末尾（见那边的注释）。
+OPTIONAL_SLOTS = ("reference_cards",)
+
+_SLOT_RE = re.compile(
+    r"\{(" + "|".join(REQUIRED_SLOTS + OPTIONAL_SLOTS) + r")\}")
 
 # 补充提示词也归提示词库管，用自己的一档。
 USER_PROMPT_KIND_OUTLINE = "outline"
@@ -216,6 +231,12 @@ source_plot_ids 里写上它的 plot_id。没用就别挂 ——
 跳过它，并且在 logic_risks 里说明你为什么跳过。
 
 ============================================================
+二点五、分类素材怎么用（有才给，都是摘要）
+============================================================
+
+{reference_cards}
+
+============================================================
 三、结构规模必须跟预期字数匹配
 ============================================================
 
@@ -272,6 +293,8 @@ source_plot_ids 里写上它的 plot_id。没用就别挂 ——
       "information_revealed": "透露出什么信息",
       "connection_to_next": "怎么接到下一段",
       "source_plot_ids": [12],
+      "reference_card_ids": [],
+      "reference_use": "参考了哪条素材的什么写作功能（没用素材就写空串）",
       "writing_notes": "写的时候要注意什么"
     }
   ],
@@ -285,6 +308,7 @@ source_plot_ids 里写上它的 plot_id。没用就别挂 ——
 · title_candidates 给 1～3 个。
 · nodes 的顺序就是正文顺序。
 · source_plot_ids 里只能出现本次给你的零件编号。
+· reference_card_ids 里只能出现本次给你的分类素材编号（素材块里写的 ref_card_id）。
 · logic_risks 里写：你自己觉得可能有问题的地方、跳过某条零件的原因、
   她的要求和世界观/角色卡打架的地方。没有就写空数组。
 
@@ -359,9 +383,6 @@ def prompt_version():
     """这次会用哪一版提示词（任务记录里要存它，重跑两次要能对得上）。"""
     _, src, _ = prompt_template()
     return PROMPT_VERSION if src == "file" else PROMPT_VERSION_GENERIC
-
-
-_SLOT_RE = re.compile(r"\{(" + "|".join(REQUIRED_SLOTS) + r")\}")
 
 
 def _fill_slots(tpl, **slots):
@@ -545,6 +566,54 @@ def _plots_block(items):
     return "\n\n".join(parts)
 
 
+def _reference_block(items):
+    """「分类素材参考」那一节的正文。
+
+    【这些是摘要，不是原文】检索层只发摘要 —— 任务书补充二.4：
+    第一轮只给编号、短摘要和标签；只有模型明确要哪条细节时才给原文
+    （那个"要原文"的通道这一版还没做，先让摘要够具体）。
+
+    【防抄袭说明必须跟着素材走】素材块发到哪儿，防抄袭规矩就跟到哪儿，
+    不依赖她记得改提示词。这是任务书补充三写死的。
+    """
+    items = [x for x in (items or []) if isinstance(x, dict)]
+    if not items:
+        return ("（这次没有参考分类素材。节点里 reference_card_ids 一律空数组、"
+                "reference_use 写空串。）")
+    parts = [
+        "下面是从她素材库里筛出来的几条「分类素材摘要」。它们只是写作功能"
+        "和结构的参考，不是待改写的正文：",
+        "· 只能借它的触发方式、人物反应模式、互动机制、氛围构成、"
+        "对白功能、情绪路径、信息揭示节奏。",
+        "· 禁止照抄连续原句、独特比喻、人名地名、专有名词、组织名、"
+        "独特道具组合、原文特有连续动作和可识别句式。",
+        "· 必须用当前世界观和角色重新设计事件，用全新的表达和因果链。",
+        "· 用了哪条，就在那个节点的 reference_card_ids 里写它的 ref_card_id，"
+        "并在 reference_use 里用一句话说清借的是它的什么功能。没用的别挂。",
+        "",
+    ]
+    for x in items:
+        meta = x.get("summary_meta") or {}
+        lines = ["--- 分类素材（ref_card_id=%s）---" % x.get("ref_card_id")]
+        if x.get("category_name"):
+            lines.append("归类：%s" % x["category_name"])
+        if x.get("tags"):
+            lines.append("标签：%s" % "、".join(x["tags"]))
+        if x.get("summary"):
+            lines.append("摘要：%s" % x["summary"])
+        for key, label in (("use", "适合写"), ("character_action", "人物动作"),
+                           ("emotion_path", "情绪路径"),
+                           ("scene_function", "场景作用")):
+            v = (meta.get(key) or "").strip()
+            if v:
+                lines.append("%s：%s" % (label, v))
+        safe = (meta.get("safe_note") or "").strip()
+        if safe:
+            lines.append("要避开：%s" % safe)
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
 def _target_words_block(target_words, tier):
     """「结构规模」那一段：这一档多少字、几个节点、每段多长。
 
@@ -621,17 +690,31 @@ def _system_block(ctx):
             "-----------\n%s\n-----------" % extra)
     else:
         user_block = "（她这次没有额外交代。）"
-    return _fill_slots(
-        ctx.get("template") or GENERIC_OUTLINE_PROMPT,
+    tpl = ctx.get("template") or GENERIC_OUTLINE_PROMPT
+    ref_block = _reference_block(ctx.get("reference_cards") or [])
+    out = _fill_slots(
+        tpl,
         worldview=_worldview_block(ctx.get("worldview")),
         characters=_characters_block(ctx.get("characters") or []),
         plots=_plots_block(ctx.get("plots") or []),
+        reference_cards=ref_block,
         constraints=_constraints_block(ctx.get("hook"), ctx.get("design")),
         target_words=_target_words_block(ctx.get("target_words"),
                                          ctx.get("tier") or odb.word_tier(0)),
         learning_examples=_learning_block(ctx.get("learning") or []),
         user_prompt=user_block,
     )
+    # 老模板里没有 {reference_cards} 槽位时，素材块在上面那一步根本没被
+    # 填进去（_fill_slots 只认自己认识的槽位名，模板里没有就无处可填）。
+    # 这种时候把素材块追加到 system 末尾 —— 素材要发就一定发到，
+    # 不能因为她还没改模板就静默丢掉。有槽位的模板这里什么也不干。
+    if "{reference_cards}" not in tpl:
+        out = out + "\n\n==================================================" \
+              "=================\n" \
+              "二点五、分类素材怎么用（有才给，都是摘要）\n" \
+              "==================================================" \
+              "=================\n\n" + ref_block
+    return out
 
 
 def build_messages(ctx):
@@ -663,7 +746,11 @@ def _staged_messages(ctx, kind, extra_user=""):
             "  character_functions（每个角色的目标/阻碍/变化）\n"
             "  node_plan（数组，每个元素是你要写的每一个节点的骨架：\n"
             "     node_id、purpose、estimated_words、required_event（这一段必须发生什么）、\n"
-            "     source_plot_ids（拟用哪几条零件）、causal_link（这段怎么触发下一段））\n"
+            "     source_plot_ids（拟用哪几条零件）、causal_link（这段怎么触发下一段）、\n"
+            "     reference_needs（这段需要什么细节才写得具体，用几个词概括，\n"
+            "       比如对峙的对白、雨夜的氛围、动作打斗的节奏；\n"
+            "       如果上面给了分类素材摘要，就从里面挑你会参考的，写它的 ref_card_id；\n"
+            "       没有合适素材就写空串））\n"
             "  expected_node_count（一共几个节点）\n"
             "node_plan 里的节点数必须符合上面「结构规模」那一节给的范围。\n"
             "只输出一个合法 JSON 对象，不要别的。"
@@ -729,7 +816,31 @@ def build_ctx(owner, data):
 
     user_prompt = (data.get("user_prompt") or "").strip()
 
+    # ---- 分类素材参考的开关和上限 ----
+    # 默认关（她拍板的）：不开就一个字的素材都不发、不检索。
+    ref_enabled = bool(data.get("reference_enabled"))
+    try:
+        ref_limit = int(data.get("reference_limit") or odb.REFERENCE_DEFAULT)
+    except (TypeError, ValueError):
+        ref_limit = odb.REFERENCE_DEFAULT
+    ref_limit = max(0, min(ref_limit, odb.REFERENCE_MAX))
+
+    # 预览时的粗筛：此刻还没有节点的 reference_needs（那要等规划跑完），
+    # 拿一句话梗 + 情节设计当需求来估"大概会带哪些素材"。
+    # 真正生成时按每个节点的 needs 精确检索 —— 集合可能不一样，
+    # 但数量级和字数是对的，预览页会写明这是预计。
+    ref_items = []
+    if ref_enabled and ref_limit > 0:
+        probe_needs = [p for p in (user_prompt, (data.get("one_sentence_hook") or ""),
+                                   (data.get("plot_design") or "")) if p.strip()]
+        try:
+            found = odb.search_reference_cards(owner, probe_needs, limit=ref_limit)
+            ref_items = odb.render_reference_items(found)
+        except Exception:                                    # pragma: no cover
+            ref_items = []
+
     return {
+        "owner": owner,     # 检索分类素材要用（A 规划后按需求检索）
         "outline_type": odb.OUTLINE_TYPE_TW,
         "worldview": world,
         "world_name": (data.get("world_name") or "").strip(),
@@ -752,6 +863,9 @@ def build_ctx(owner, data):
         "plot_status_counts": plan.get("status_counts") or {},
         "learning": learning,
         "user_prompt": user_prompt,
+        "reference_enabled": ref_enabled,
+        "reference_limit": ref_limit,
+        "reference_cards": ref_items,
     }
 
 
@@ -878,6 +992,21 @@ def preview_input(owner, data):
         "pool_want": int(data.get("pool_size") or DEFAULT_POOL),
         "pool_max": MAX_POOL,
         "learning_cases": len(ctx["learning"]),
+        # ---- 分类素材参考（预览要让她看见会带哪些素材、多多少字）----
+        # 这里的素材集是按"一句话梗+情节设计"粗筛的（真正的精确检索
+        # 要等规划跑完、拿到每个节点的 reference_needs 才做），
+        # 所以写明是预计。开着的时候 send_chars 已经把素材块算进去了。
+        "reference_enabled": ctx["reference_enabled"],
+        "reference_limit": ctx["reference_limit"],
+        "reference_max": odb.REFERENCE_MAX,
+        "reference_cards": [
+            {"group_id": x.get("group_id"),
+             "ref_card_id": x.get("ref_card_id"),
+             "category_name": x.get("category_name") or "",
+             "tags": x.get("tags") or [],
+             "summary": x.get("summary") or "",
+             "node_needs": x.get("node_needs") or []}
+            for x in (ctx.get("reference_cards") or [])],
         "models": models,
         "send_chars": chars,
         "prompt_version": PROMPT_VERSION if src == "file" else PROMPT_VERSION_GENERIC,
@@ -903,6 +1032,9 @@ def _privacy_note(ctx, chars):
         parts.append("· 情节设计")
     if ctx["user_prompt"]:
         parts.append("· 你写的补充提示词")
+    refs = ctx.get("reference_cards") or []
+    if refs:
+        parts.append("· 分类素材摘要 %d 条（只发摘要，不发原文）" % len(refs))
     parts.append("合计约 %d 字。" % chars)
     if ctx["blocked"]:
         parts.append(
@@ -915,6 +1047,64 @@ def _privacy_note(ctx, chars):
 # ----------------------------------------------------------------------
 # 发起任务
 # ----------------------------------------------------------------------
+
+
+def _input_hash(snapshot, model_keys, prompt_version):
+    """算这次生成的输入指纹（任务书补充二.5）。
+
+    世界观 + 角色卡快照 + 一句话梗 + 情节设计 + 字数 + 零件池 +
+    素材参考开关/上限 + 模型 + 提示词版本，全部喂进一个 hash。
+    两个输入完全相同 = 同一个 hash = 能命中缓存、不重复收费。
+
+    【为什么不直接用 input_json 字符串】input_json 里有些字段带时间戳
+    或排序不稳定的数组，直接 hash 会误判成"不同输入"。这里只挑
+    "内容真正变了才会变"的字段，排序后再序列化，保证幂等。
+    """
+    def norm(v):
+        if isinstance(v, dict):
+            return {k: norm(x) for k, x in sorted(v.items())}
+        if isinstance(v, list):
+            return [norm(x) for x in v]
+        return v
+
+    payload = {
+        "worldview": snapshot.get("worldview") or "",
+        "world_name": snapshot.get("world_name") or "",
+        "worldview_id": snapshot.get("worldview_id") or None,
+        "character_ids": snapshot.get("character_ids") or [],
+        "character_snapshot": snapshot.get("character_snapshot") or [],
+        "one_sentence_hook": snapshot.get("one_sentence_hook") or "",
+        "plot_design": snapshot.get("plot_design") or "",
+        "target_words": snapshot.get("target_words") or 0,
+        "pool_source": snapshot.get("pool_source") or "",
+        "blocked_plot_ids": snapshot.get("blocked_plot_ids") or [],
+        "reference_enabled": bool(snapshot.get("reference_enabled")),
+        "reference_limit": snapshot.get("reference_limit") or 0,
+        "model_keys": list(model_keys or []),
+        "prompt_version": prompt_version or "",
+    }
+    raw = json.dumps(norm(payload), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _find_cached_run(conn, owner, input_hash):
+    """找"输入完全一样、而且已经成功跑完"的历史任务（缓存命中）。
+
+    补充二.5 的语义：相同输入直接读草稿、不重复收费。
+    【为什么要求 status 是完成】排队中/跑着的任务结果还没出来，
+    读它等于拿半成品骗她；失败的更不能复用。只认跑完的。
+    【为什么排除 retry】重试的任务本身就是"同一份输入再来一次"，
+    拿它当缓存源会把自己绕进去。
+    """
+    if not input_hash:
+        return None
+    row = conn.execute(
+        "SELECT id FROM outline_runs WHERE owner_id=? AND input_hash=?"
+        " AND status=? AND (retry_of_run_id IS NULL OR retry_of_run_id=0)"
+        " ORDER BY id DESC LIMIT 1",
+        (owner, input_hash, RUN_COMPLETED)).fetchone()
+    return row["id"] if row else None
+
 
 def create_run(owner, data, background=True, retry_of_run_id=None,
                model_keys=None, ctx=None):
@@ -1008,11 +1198,31 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
         "target_words": ctx["target_words"],
         "pool_source": ctx["pool_source"],
         "blocked_plot_ids": [p["id"] for p in ctx["blocked"]],
+        # 分类素材参考的开关和上限（跑的过程中不再读界面）
+        "reference_enabled": ctx.get("reference_enabled", False),
+        "reference_limit": ctx.get("reference_limit", odb.REFERENCE_DEFAULT),
     }
+    input_hash = _input_hash(input_snapshot, ok_keys, ctx["prompt_version"])
 
     ts = now_str()
     with _worker_lock:
         with db.connect() as conn:
+            # 【缓存命中（补充二.5）】输入一模一样、且已经成功跑完过一次。
+            # 这里**不偷偷吞掉她的重新生成** —— 只把上次那个 run 报回去，
+            # 让前端问一句"要不要直接看上次的结果"，她点头才省这笔钱。
+            # 她要是想重摇一遍（模型输出本来就不确定），点"重新生成"就行。
+            cached_run_id = None
+            if not retry_of_run_id and not data.get("cache_bypass"):
+                cached_run_id = _find_cached_run(conn, owner, input_hash)
+            if cached_run_id:
+                return {"ok": True, "reason": "cache_hit",
+                        "cached_run_id": cached_run_id,
+                        "run_id": cached_run_id,
+                        "status": RUN_COMPLETED,
+                        "message": "这份输入你之前跑过一模一样的（任务 #%d）。"
+                                   "可以直接看上次的结果，不用再花一次钱。"
+                                   % cached_run_id}, cached_run_id
+
             # 【一个账号同时只能有一个大纲任务在跑】
             # 跟内化那边同一个判断：她连点两下、或者两个页面同时提交，
             # 两份任务各自并发打模型，钱是双份的，而且她自己都不知道。
@@ -1030,13 +1240,14 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
                     model_keys_json, prompt_version, prompt_ref_id, prompt_name,
                     user_prompt, user_prompt_len, cand_plot_ids_json, status,
                     total_models, total_input_chars, retry_of_run_id,
-                    created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    input_hash, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (owner, ctx["outline_type"], odb._dumps(input_snapshot),
                  ctx["target_words"], odb._dumps(ok_keys),
                  ctx["prompt_version"], ctx["prompt_ref_id"], ctx["prompt_name"],
                  ctx["user_prompt"], len(ctx["user_prompt"]),
                  odb._dumps(ctx["pool_ids"]), RUN_QUEUED, len(ok_keys),
-                 send_chars, retry_of_run_id, ts))
+                 send_chars, retry_of_run_id, input_hash, ts))
             run_id = cur.lastrowid
 
     if background:
@@ -1044,6 +1255,7 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
                              name="outline-run-%d" % run_id, daemon=True)
         t.start()
         return {"ok": True, "run_id": run_id, "status": RUN_QUEUED,
+                "stream_id": stream_id_for(run_id),
                 "model_count": len(ok_keys), "models": ok_keys,
                 "send_chars": send_chars,
                 "skipped_models": bad,
@@ -1053,8 +1265,26 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
     return {"ok": True, "run_id": run_id, "status": RUN_COMPLETED}, run_id
 
 
+def stream_id_for(run_id):
+    """这次大纲任务在实时通道里的名字。
+
+    【为什么单独一个函数】前端订阅、后端推送都得用同一个名字。
+    两边各拼一个字符串的话，改前缀时就会变成"一切正常，就是没有字"——
+    不报错的那种坏法最难查。所以只留这一个出口。
+    """
+    return "ol-%s" % (run_id,)
+
+
 def _run_worker(run_id, owner):
-    """后台线程的入口。什么都兜住 —— 线程里冒出来的异常没人接。"""
+    """后台线程的入口。什么都兜住 —— 线程里冒出来的异常没人接。
+
+    【实时通道也在这里开和关】
+    开一条流让页面能看"四个模型各自正在吐什么"。关必须放 finally：
+    漏关的话那条连接会一直挂着等一个永远不来的结尾，
+    页面上就是"字停住了但还在转圈" —— 比看不到流更让人不安。
+    """
+    sid = stream_id_for(run_id)
+    livestream.open_stream(sid, {"kind": "outline", "run_id": run_id})
     try:
         _execute(run_id, owner)
     except Exception as e:                                   # pragma: no cover
@@ -1068,6 +1298,9 @@ def _run_worker(run_id, owner):
                          finished_at=now_str())
         except Exception:
             pass
+        livestream.note(sid, "任务中途出错：%s" % e, level="bad")
+    finally:
+        livestream.close(sid)
 
 
 def _set_run(conn, run_id, **fields):
@@ -1110,6 +1343,7 @@ def _execute(run_id, owner):
     tpl, src, warn = prompt_template()
 
     ctx = {
+        "owner": owner,     # A 规划后按节点需求检索分类素材要用
         "template": tpl,
         "prompt_src": src,
         "worldview": input_snapshot.get("worldview") or "",
@@ -1123,6 +1357,15 @@ def _execute(run_id, owner):
         "learning": odb.learning_examples(owner, limit=3),
         "model_keys": model_keys,
         "prompt_version": prompt_version,
+        # input_hash 跟着任务走（补充二.5）：写进候选行，方便对账
+        # "这份候选是用哪一版输入跑出来的、有没有缓存命中"。
+        "input_hash": run["input_hash"] or "",
+        # 分类素材参考：开关和上限在发起任务那一刻就定死（存进快照），
+        # 跑的过程中她改界面不影响已经跑着的任务 —— 跟世界观快照同一个道理。
+        "reference_enabled": bool(input_snapshot.get("reference_enabled")),
+        "reference_limit": int(input_snapshot.get("reference_limit")
+                               or odb.REFERENCE_DEFAULT),
+        "reference_cards": [],
     }
     # 零件块要把参考次数带上（模型要按"用过几次"权衡新鲜度）
     counts = odb.plot_ref_counts(owner, pool_ids) if pool_ids else {}
@@ -1254,7 +1497,9 @@ def _generate_staged(ctx, cfg, opts):
     payload_dict 与 clean_outline_payload 的输出完全兼容，下游
     （候选卡渲染、diff、学习、落库）一个字都不用改。
 
-    meta 记：每个阶段几批、token 累加、每批的 finish_reason、给她的警告。
+    meta 记：每个阶段几批、token 累加、每批的 finish_reason、给她的警告、
+    以及 A2 检索到的素材（reference_items —— 调用方要用它清洗节点上的
+    reference 编号，函数内部改的 ctx 出不去，必须从 meta 带回来）。
     """
     known = {p["id"] for p in ctx["plots"]}
     target = int(ctx.get("target_words") or 0)
@@ -1283,6 +1528,41 @@ def _generate_staged(ctx, cfg, opts):
         x["node_id"] = "n%d" % i
     expected = len(node_plan)
     stage_notes.append("规划 1 次，%d 个节点" % expected)
+
+    # ============ A2 按节点需求检索分类素材 ============
+    # 规划阶段不带任何分类素材（任务书补充二.2：素材不参与第一轮全局规划），
+    # 规划吐出来的 reference_needs 才是真正的需求清单 ——
+    # 拿它去本地检索，检索结果喂给 B（节点）阶段。
+    ref_items = []
+    ref_meta = {"needs": 0, "candidates": 0, "injected": 0}
+    if ctx.get("reference_enabled") and (ctx.get("reference_limit") or 0) > 0:
+        needs = []
+        for x in node_plan:
+            rn = x.get("reference_needs")
+            if isinstance(rn, list):
+                needs.extend(str(v) for v in rn)
+            elif isinstance(rn, str) and rn.strip():
+                needs.append(rn.strip())
+        ref_meta["needs"] = len(needs)
+        try:
+            found = odb.search_reference_cards(
+                owner=ctx.get("owner") or "", needs=needs,
+                limit=ctx.get("reference_limit"))
+            ref_items = odb.render_reference_items(found)
+        except Exception as e:                               # pragma: no cover
+            warns.append("分类素材检索出错（不拦住生成）：%s" % str(e)[:120])
+        ref_meta["injected"] = len(ref_items)
+        if ref_items:
+            # 换上检索结果 —— B 阶段的 _system_block 会把这块摘要发给模型。
+            ctx = dict(ctx)
+            ctx["reference_cards"] = ref_items
+            stage_notes.append("参考素材 %d 条" % len(ref_items))
+        else:
+            # 有需求但一条没命中：把素材块换成"没有"，别让上一轮残留的
+            # 候选摘要混进 B 阶段的提示词。
+            ctx = dict(ctx)
+            ctx["reference_cards"] = []
+    ref_meta["candidates"] = ref_meta["injected"]
 
     # ============ B 节点分批写细 ============
     nodes = []              # 已写好的完整节点（按顺序）
@@ -1415,6 +1695,9 @@ def _generate_staged(ctx, cfg, opts):
         "stage_notes": stage_notes,
         "warns": warns,
         "known": known,
+        # A2 检索到的素材（ref_card_id 列表给清洗用，完整条目给记录用）
+        "reference_items": ref_items,
+        "reference_meta": ref_meta,
     }
     return payload, meta
 
@@ -1448,8 +1731,16 @@ def _run_one_model(run_id, owner, model_key, ctx):
     input_chars = sum(len(m["content"]) for m in msgs)
     # 超时和重试次数显式给。吃 llm 的默认（180 秒 × 3 次）等于必然白等 9 分钟，
     # 理由见 OUTLINE_TIMEOUT / OUTLINE_MAX_RETRY 那两段注释。
+    #
+    # purpose / on_chunk 是"顺带记录"用的，不影响生成：
+    #   purpose  让耗时表能分出"这是大纲的调用"，跟分类的别混在一起算
+    #   on_chunk 每收到一块字就推到实时通道上，并**标上是哪个模型吐的** ——
+    #            大纲是四五个模型同时跑，不标的话她看到的就是一堆
+    #            交错在一起的乱码，反而更糊涂
+    _sid = stream_id_for(run_id)
     _opts = dict(temperature=0.7, timeout=OUTLINE_TIMEOUT,
-                 max_retry=OUTLINE_MAX_RETRY)
+                 max_retry=OUTLINE_MAX_RETRY, purpose="outline",
+                 on_chunk=lambda t: livestream.chunk(_sid, t, model=label))
 
     # ---- 分阶段生成：A 规划 → B 节点分批 → C 检查 → D 只补缺失 ----
     # 替代过去"一次 chat 出整篇"。理由见 _generate_staged 顶部注释。
@@ -1464,11 +1755,17 @@ def _run_one_model(run_id, owner, model_key, ctx):
 
     # ---- 解析 + 校验（跟老路径同一套清洗，下游全不动）----
     known = meta["known"]
+    # 本次实际发出去的素材编号：以 A2 检索结果为准（meta 里的 reference_items），
+    # 函数内部改的 ctx 传不出来，所以不能读 ctx。没开开关就是空集 ——
+    # 空集会把节点上所有 reference 编号抹掉，这是对的（没发的素材谈不上参考）。
+    ref_items = meta.get("reference_items") or []
+    known_refs = {x.get("ref_card_id") for x in ref_items
+                  if isinstance(x, dict) and x.get("ref_card_id")}
     input_chars = meta["input_chars"] or input_chars
     usage_total = meta["usage_total"]
     stage_notes = meta.get("stage_notes") or []
     try:
-        obj, warns = odb.clean_outline_payload(payload, known)
+        obj, warns = odb.clean_outline_payload(payload, known, known_refs)
     except ValueError as e:
         _fail("模型的返回没法当成大纲用：%s" % e)
         return
@@ -1498,13 +1795,18 @@ def _run_one_model(run_id, owner, model_key, ctx):
     finish = cls.llm.FINISH_STOP
     output_chars = meta.get("output_chars") or len(text)
 
+    # 节省效果记录（任务书补充二.10）：需求几条、候选几条、实际注入几条，
+    # 连 input_hash 一起写进候选行，方便以后对账和调阈值。
+    ref_meta = meta.get("reference_meta") or {}
+
     with db.connect() as conn:
         conn.execute(
             """UPDATE outline_candidates SET status=?, content_json=?,
                content_text=?, used_plot_ids_json=?, used_plot_names_json=?,
                warnings_json=?, raw_response=?, input_chars=?, output_chars=?,
                input_tokens=?, output_tokens=?, finish_reason=?, gaps_json=?,
-               elapsed_ms=?, model_name=?, prompt_version=?
+               elapsed_ms=?, model_name=?, prompt_version=?,
+               reference_meta_json=?, input_hash=?
                WHERE run_id=? AND model_key=?""",
             (CAND_DONE, odb._dumps(obj), text,
              odb._dumps(obj.get("used_plot_ids") or []),
@@ -1514,7 +1816,8 @@ def _run_one_model(run_id, owner, model_key, ctx):
              int(usage.get("prompt_tokens") or 0),
              int(usage.get("completion_tokens") or 0), finish, odb._dumps(gaps),
              int((time.time() - t0) * 1000), label,
-             ctx.get("prompt_version") or "", run_id, model_key))
+             ctx.get("prompt_version") or "", odb._dumps(ref_meta),
+             ctx.get("input_hash") or "", run_id, model_key))
         _set_run(conn, run_id, heartbeat_at=now_str())
 
 
@@ -1587,6 +1890,9 @@ def _run_dict(row, with_input=False):
         "id": row["id"],
         "outline_type": row["outline_type"],
         "status": row["status"],
+        # 界面靠这个名字订阅"模型正在吐什么"。后端推、前端订共用这一个出口，
+        # 免得两边各拼一个字符串、改前缀时静默对不上（那种坏法不报错）。
+        "stream_id": stream_id_for(row["id"]),
         "target_words": row["target_words"],
         "model_keys": odb._loads(row["model_keys_json"], []),
         "prompt_version": row["prompt_version"],
@@ -1637,7 +1943,8 @@ def get_run(run_id, owner):
         cands = conn.execute(
             "SELECT id, model_key, model_name, status, error, used_plot_ids_json,"
             " used_plot_names_json, warnings_json, output_chars, elapsed_ms,"
-            " finish_reason, gaps_json, adopted, outline_id FROM outline_candidates"
+            " finish_reason, gaps_json, adopted, outline_id, reference_meta_json,"
+            " input_hash FROM outline_candidates"
             " WHERE run_id=? ORDER BY id", (rid,)).fetchall()
     d["candidates"] = []
     for c in cands:
@@ -1664,6 +1971,8 @@ def get_run(run_id, owner):
             "gaps": odb._loads(c["gaps_json"], []),
             "adopted": bool(c["adopted"]),
             "outline_id": c["outline_id"],
+            # 分类素材参考的节省效果（补充二.10）：需求/候选/注入三个数。
+            "reference_meta": odb._loads(c["reference_meta_json"], {}),
         })
     return d
 
@@ -1696,6 +2005,7 @@ def get_candidate(candidate_id, owner):
         d["warnings"] = odb._loads(row["warnings_json"], [])
         d["gaps"] = odb._loads(row["gaps_json"], [])
         d["finish_label"] = cls.llm.finish_label(row["finish_reason"])
+        d["reference_meta"] = odb._loads(row["reference_meta_json"], {})
         return d
 
 
@@ -1749,16 +2059,21 @@ def retry_run(run_id, owner, background=True):
             raise ValueError("这次几个模型都跑成了，没有要补的。")
 
         # 沿用原任务那份输入和那句补充提示词 —— 不取"她现在写着什么"。
+        snap = odb._loads(run["input_json"], {})
         data = {
-            "worldview": odb._loads(run["input_json"], {}).get("worldview") or "",
-            "world_name": odb._loads(run["input_json"], {}).get("world_name") or "",
-            "worldview_id": odb._loads(run["input_json"], {}).get("worldview_id"),
-            "character_ids": odb._loads(run["input_json"], {}).get("character_ids") or [],
-            "one_sentence_hook": odb._loads(run["input_json"], {}).get("one_sentence_hook") or "",
-            "plot_design": odb._loads(run["input_json"], {}).get("plot_design") or "",
+            "worldview": snap.get("worldview") or "",
+            "world_name": snap.get("world_name") or "",
+            "worldview_id": snap.get("worldview_id"),
+            "character_ids": snap.get("character_ids") or [],
+            "one_sentence_hook": snap.get("one_sentence_hook") or "",
+            "plot_design": snap.get("plot_design") or "",
             "target_words": run["target_words"],
             "plot_ids": odb._loads(run["cand_plot_ids_json"], []),
             "user_prompt": run["user_prompt"] or "",
+            # 分类素材参考的开关/上限也要跟着原任务走 —— 漏了它，
+            # 重试就悄悄退回"不开素材参考"，而她以为补跑的是同一份活。
+            "reference_enabled": snap.get("reference_enabled", False),
+            "reference_limit": snap.get("reference_limit", odb.REFERENCE_DEFAULT),
         }
 
     res, new_id = create_run(owner, data, background=background,
@@ -1768,6 +2083,52 @@ def retry_run(run_id, owner, background=True):
     res["retried_models"] = failed
     res["source_run_id"] = rid
     return res, new_id
+
+
+def delete_run(run_id, owner):
+    """删掉一条任务记录（连它自己的候选行一起）。
+
+    【边界一：正在跑的不给删】她一点删除，眼前就什么都没了 ——
+    不知道跑没跑完、也不知道那笔钱花没花。要删，先「取消」。
+    【边界二：已经推入大纲库的，大纲一个字都不动】大纲是独立的一份
+    （outlines 表），零件参考次数挂在大纲上（outline_plot_refs）。
+    这里只清任务和它的候选，不碰她的大纲。
+    """
+    try:
+        rid = int(run_id)
+    except (TypeError, ValueError):
+        raise ValueError("没说是哪个任务。")
+    with db.connect() as conn:
+        row = conn.execute("SELECT status FROM outline_runs WHERE id=?"
+                           " AND owner_id=?", (rid, owner)).fetchone()
+        if not row:
+            raise ValueError("没有这个大纲任务")
+        if row["status"] in RUN_ACTIVE:
+            raise ValueError("这个任务还在跑，先点「取消」，等它停下来再删。")
+        conn.execute("DELETE FROM outline_candidates WHERE run_id=?", (rid,))
+        conn.execute("DELETE FROM outline_runs WHERE id=? AND owner_id=?",
+                     (rid, owner))
+    return True
+
+
+def delete_finished_runs(owner):
+    """一键清掉所有**已经结束**的任务（完成 / 部分失败 / 失败 / 已取消）。
+
+    正在跑的留着 —— 她嫌"堆在一起"的是历史记录，不是手头这次活。
+    返回清掉几个。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM outline_runs WHERE owner_id=? AND status NOT IN (%s)"
+            % ",".join("?" * len(RUN_ACTIVE)),
+            [owner] + list(RUN_ACTIVE)).fetchall()
+        ids = [int(r["id"]) for r in rows]
+        if ids:
+            q = ",".join("?" * len(ids))
+            conn.execute("DELETE FROM outline_candidates WHERE run_id IN (%s)" % q,
+                         ids)
+            conn.execute("DELETE FROM outline_runs WHERE id IN (%s)" % q, ids)
+    return len(ids)
 
 
 def reap_orphan_runs(reason="服务重启了"):

@@ -13,6 +13,8 @@
 #      {worldview}        世界观正文（硬约束，必填）
 #      {characters}       关联的角色卡（身份 / 性格 / 目标 / 禁忌 …）
 #      {plots}            本次可用的剧情零件（带编号和"用过几次"）
+#      {reference_cards}  分类素材摘要（可选槽位：不写也能跑，
+#                         素材块会自动追加到提示词末尾）
 #      {constraints}      一句话梗 + 情节设计
 #      {target_words}     预期字数 + 这一档建议几个节点
 #      {learning_examples} 作者以前标过"不可用"的地方
@@ -37,6 +39,9 @@
 
 【本次可用的剧情零件】（结构参考，不许照搬里面的原句和人名）
 {plots}
+
+【分类素材参考】（有才给，都是摘要 —— 只借写作功能，禁止照抄原句、比喻、人名）
+{reference_cards}
 
 【结构规模】
 {target_words}
@@ -91,6 +96,8 @@ next_action、last_node_id、has_ending、continuation_cursor。
       "information_revealed": "透露出什么信息",
       "connection_to_next": "怎么接到下一段",
       "source_plot_ids": [12],
+      "reference_card_ids": [],
+      "reference_use": "参考了哪条素材的什么写作功能（没用素材就写空串）",
       "writing_notes": "写的时候要注意什么"
     }
   ],

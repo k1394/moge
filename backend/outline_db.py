@@ -178,6 +178,10 @@ NODE_TEXT_MAX = 2000
 NODE_SHORT_MAX = 400
 NODE_LIST_MAX = 12            # 一个节点最多挂几个角色
 NODE_SOURCE_MAX = 20          # 一个节点最多挂几条来源零件
+# 一个节点最多挂几条分类素材引用。整篇的上限在 REFERENCE_MAX（30），
+# 单节点不需要单独的旋钮 —— 但清洗时仍要一个防炸形状的数
+# （模型发疯给一个节点挂 500 个编号时先截掉，截掉的会进警告）。
+NODE_REF_MAX = 10
 MAX_NODES = 40
 FEEDBACK_NOTE_MAX = 1000
 ROLE_FUNCTION_MAX = 12        # 角色功能表最多几行
@@ -352,6 +356,10 @@ CREATE TABLE IF NOT EXISTS outline_runs (
     note                TEXT    NOT NULL DEFAULT '',
     error               TEXT    NOT NULL DEFAULT '',
     heartbeat_at        TEXT    NOT NULL DEFAULT '',
+    -- 输入快照指纹（任务书补充二.5）：世界观 + 角色卡 + 约束 + 零件 +
+    -- 素材参考 + 模型 + 提示词版本，算一个 hash。相同 hash 的已跑任务
+    -- 能直接读结果、不重复收费。
+    input_hash          TEXT    NOT NULL DEFAULT '',
     created_at          TEXT    NOT NULL,
     started_at          TEXT    NOT NULL DEFAULT '',
     finished_at         TEXT    NOT NULL DEFAULT ''
@@ -504,6 +512,12 @@ def migrate(verbose=False):
 _ADDED_COLUMNS = (
     ("outline_candidates", "finish_reason", "TEXT NOT NULL DEFAULT ''"),
     ("outline_candidates", "gaps_json", "TEXT NOT NULL DEFAULT '[]'"),
+    # 分类素材参考的节省效果记录（任务书补充二.10）：
+    # reference_meta_json 记 {needs,candidates,injected} 三个数，
+    # input_hash 记这次生成用到的输入快照指纹（补充二.5，缓存命中靠它）。
+    ("outline_candidates", "reference_meta_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("outline_candidates", "input_hash", "TEXT NOT NULL DEFAULT ''"),
+    ("outline_runs", "input_hash", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -615,59 +629,115 @@ def _loads(s, fallback):
     return v if isinstance(v, type(fallback)) else fallback
 
 
-def _txt(v, limit, name, allow_empty=True):
-    """一段纯文本：去两端空白、卡长度。超了直接报错，不静默截断。"""
+def _txt(v, limit, name, allow_empty=True, warns=None):
+    """一段纯文本：去两端空白、卡长度。
+
+    【warns 的两种模式 —— 这是 2026-09-27 补的，血的教训】
+    模型返回的东西和她手填的东西，处理方式必须相反：
+
+      · warns 传进来了 = 「这是模型的返回，能救就救」。
+        超长就**切到上限**，同时记一条警告挂到候选卡上，不整份作废 ——
+        她为此已经付过钱了。宁可给她一份带瑕疵的大纲，也别让她看到
+        "失败"两个字然后重跑一遍再花一次钱。
+      · warns 没传 = 「这是她自己在界面上填的」。
+        直接报错，让她当场去改 —— 背着她偷偷切掉她写的一段，
+        比报错恶劣得多（她会以为系统把它存下了）。
+
+    为什么以前不这么分：以前一律"超了就抛错"，于是模型多写了几个字，
+    整份大纲连同 171 秒、2.6 万字的输入一起作废。
+    """
     s = (v if isinstance(v, str) else ("" if v is None else str(v))).strip()
     if len(s) > limit:
-        raise ValueError("%s最长 %d 个字，现在有 %d 个。" % (name, limit, len(s)))
+        if warns is None:
+            raise ValueError("%s最长 %d 个字，现在有 %d 个。" % (name, limit, len(s)))
+        warns.append("%s太长（%d 字，上限 %d 字），超出那截先切掉了。"
+                     % (name, len(s), limit))
+        s = s[:limit]
     if not s and not allow_empty:
         raise ValueError("%s不能空着。" % name)
     return s
 
 
-def _str_list(v, limit, item_max, name):
-    """一组字符串：去空白、去重、保序、逐个卡长度。"""
+def _str_list(v, limit, item_max, name, warns=None):
+    """一组字符串：去空白、去重、保序、逐个卡长度。
+
+    warns 的两种模式见 _txt 的说明（传 = 模型返回，宽容并记警告）。
+    """
     if v is None:
         return []
     if isinstance(v, str):
         v = [v]
     if not isinstance(v, (list, tuple)):
-        raise ValueError("%s得是一组文字。" % name)
+        if warns is None:
+            raise ValueError("%s得是一组文字。" % name)
+        warns.append("%s不是一组文字（收到的是 %s），这一项先当空的。"
+                     % (name, type(v).__name__))
+        return []
     out = []
+    cut_long = 0
     for x in v:
         s = str(x or "").strip()
         if not s:
             continue
         if len(s) > item_max:
-            raise ValueError("%s里的「%s…」太长了（最长 %d 字）。"
-                             % (name, s[:12], item_max))
+            if warns is None:
+                raise ValueError("%s里的「%s…」太长了（最长 %d 字）。"
+                                 % (name, s[:12], item_max))
+            s = s[:item_max]
+            cut_long += 1
         if s not in out:
             out.append(s)
+    if cut_long:
+        warns.append("%s里有 %d 条太长，超出那截先切掉了。" % (name, cut_long))
     if len(out) > limit:
-        raise ValueError("%s最多 %d 条，现在给了 %d 条。" % (name, limit, len(out)))
+        if warns is None:
+            raise ValueError("%s最多 %d 条，现在给了 %d 条。"
+                             % (name, limit, len(out)))
+        warns.append("%s给了 %d 条，超过上限 %d 条，多出来的先没算。"
+                     % (name, len(out), limit))
+        out = out[:limit]
     return out
 
 
-def _int_list(v, limit, name):
-    """一组整数 id（来源零件、角色 id 之类）。非法值直接报错。"""
+def _int_list(v, limit, name, warns=None):
+    """一组整数 id（来源零件、角色 id 之类）。
+
+    warns 的两种模式见 _txt 的说明（传 = 模型返回，宽容并记警告）。
+    """
     if v is None:
         return []
     if isinstance(v, (str, int)):
         v = [v]
     if not isinstance(v, (list, tuple)):
-        raise ValueError("%s得是一组编号。" % name)
+        if warns is None:
+            raise ValueError("%s得是一组编号。" % name)
+        warns.append("%s不是一组编号（收到的是 %s），这一项先当空的。"
+                     % (name, type(v).__name__))
+        return []
     out = []
+    bad = []
     for x in v:
         if x in (None, ""):
             continue
         try:
             n = int(x)
         except (TypeError, ValueError):
-            raise ValueError("%s里有不是编号的东西：「%s」" % (name, x))
+            if warns is None:
+                raise ValueError("%s里有不是编号的东西：「%s」" % (name, x))
+            bad.append(str(x))
+            continue
         if n and n not in out:
             out.append(n)
+    if bad:
+        warns.append("%s里有 %d 个不是编号的东西（比如「%s」），先跳过了。"
+                     % (name, len(bad), bad[0][:12]))
     if len(out) > limit:
-        raise ValueError("%s最多 %d 个，现在给了 %d 个。" % (name, limit, len(out)))
+        if warns is None:
+            raise ValueError("%s最多 %d 个，现在给了 %d 个。"
+                             % (name, limit, len(out)))
+        warns.append("%s给了 %d 个，超过上限 %d 个，多出来的先没算。"
+                     % (name, len(out), limit))
+        out = out[:limit]
     return out
 
 
@@ -1173,6 +1243,191 @@ def render_plot_block(items):
 
 
 # ----------------------------------------------------------------------
+# 分类素材检索（"分类素材参考"那条线，2026-09-26）
+# ----------------------------------------------------------------------
+
+# 整篇大纲最多带多少条分类素材摘要。
+#
+# 【为什么有硬顶，而且顶在 30】
+# 她要求上限用户可填、填多少用多少；但"多少"也得有个保险丝 ——
+# 每条摘要一两百字，300 组全带就是几万字，token 钱和上下文都会爆。
+# 界面上填超过 30 时按 30 算，并告诉一声"这次最多带 30 条"。
+REFERENCE_MAX = 30
+REFERENCE_DEFAULT = 15
+
+# 打分权重：needs 命中「摘要正文」最重（那是模型按节点需求写的查询词），
+# 命中「主类名/标签」再次 —— 标签太宽，靠标签命中的多半只是"碰巧同类"，
+# 不是"真能给细节"。meta 里的用途/情绪/动作/场景四样单独列（见 _score_group），
+# 它们存在 summary_meta_json 里，不在行顶层。
+_REF_WEIGHTS = (
+    ("summary", 4),
+    ("category_name", 1),
+    ("tags", 1),
+)
+
+# summary_meta 里参与打分的字段和权重。
+_META_WEIGHTS = (
+    ("use", 3),
+    ("emotion_path", 3),
+    ("character_action", 2),
+    ("scene_function", 2),
+)
+
+
+def _group_search_rows(owner):
+    """这个账号所有「已合并且已生成摘要」的逻辑素材组，拍平成检索用的行。
+
+    【为什么直接查 card_groups 而不 import classify_db】
+    这里只需要**只读**几张固定表，读的是同一份 SQLite。真 import 的话，
+    outline_db ← classify_db 的依赖一建立，以后 classify_db 想引用大纲这边的
+    任何东西都会变成循环 import。数据层之间跨表只读查询，注释写清表名即可。
+
+    【merged_card_id 可能为空吗】
+    「已合并」状态下它一定有值（confirm_group 写回去的）；但撤销会把它清成
+    NULL 同时状态摆回待确认 —— 所以 WHERE 里卡死 status=已合并 就够。
+    稳妥起见 ref_card_id 优先取 merged_card_id，取不到才退 group id，
+    且两者都没有的行直接丢掉（没有编号的素材没法被引用）。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT g.id AS group_id, g.merged_card_id, g.material_id,
+                      g.tags, g.primary_category_id, g.summary,
+                      g.summary_meta_json,
+                      c.name AS category_name
+               FROM card_groups g
+               LEFT JOIN categories c ON c.id = g.primary_category_id
+               WHERE g.owner_id=? AND g.status='已合并'
+                 AND g.summary<>''""", (owner,)).fetchall()
+    out = []
+    for r in rows:
+        if not r["merged_card_id"]:
+            continue
+        try:
+            meta = json.loads(r["summary_meta_json"] or "{}") or {}
+        except Exception:
+            meta = {}
+        try:
+            tags = json.loads(r["tags"] or "[]") or []
+        except Exception:
+            tags = []
+        out.append({
+            "group_id": r["group_id"],
+            "ref_card_id": r["merged_card_id"],
+            "material_id": r["material_id"],
+            "category_name": r["category_name"] or "",
+            "tags": [str(t) for t in tags if str(t)],
+            "summary": r["summary"] or "",
+            "summary_meta": meta,
+        })
+    return out
+
+
+def _score_group(g, need):
+    """一条素材对一个 need 的得分。need 是一句短话（如「雨夜对峙」）。
+
+    【为什么按"子串命中"打分而不是关键词分词】
+    第一版不做分词和向量（任务书写明）。子串匹配的弱处是"雨夜"匹配不上
+    "下雨的夜里"，但摘要本来就是模型为检索写的——提示词里已经要求它
+    用可检索的具体措辞。这一版先把链路跑通，检索质量等她用过再调。
+    """
+    text_need = (need or "").strip()
+    if not text_need:
+        return 0
+    pieces = [p for p in re.split(r"[，,。；;、\s（）()]+", text_need)
+              if len(p) >= 2]
+    score = 0
+
+    # 顶层字段：摘要正文 / 主类名 / 标签
+    for field, w in _REF_WEIGHTS:
+        if field == "tags":
+            hay = " ".join(g.get("tags") or [])
+        else:
+            hay = str(g.get(field) or "")
+        if not hay:
+            continue
+        if text_need in hay or hay in text_need:
+            score += w
+        elif any(p in hay for p in pieces):
+            score += w - 1   # 一个字段对一个 need 最多记一次片段命中
+
+    # meta 字段：用途 / 情绪路径 / 人物动作 / 场景作用
+    meta = g.get("summary_meta") or {}
+    for key, w in _META_WEIGHTS:
+        hay = str(meta.get(key) or "")
+        if not hay:
+            continue
+        if text_need in hay or hay in text_need:
+            score += w
+        elif any(p in hay for p in pieces):
+            score += w - 1
+    return score
+
+
+def search_reference_cards(owner, needs, limit=None):
+    """按节点需求检索分类素材摘要。返回按得分排好序的列表。
+
+    needs：一组短话（每个节点骨架里的 reference_needs，可合并去重）。
+    limit：整篇总上限。None = 默认；超过 REFERENCE_MAX 按 REFERENCE_MAX 算。
+
+    【为什么返回里带 node_needs】
+    节点阶段注入时，模型要知道"这条素材是被哪个需求捞进来的"，
+    reference_use 才有的写。同一条素材命中多个需求时都记下。
+    """
+    limit = REFERENCE_DEFAULT if limit is None else max(0, int(limit))
+    limit = min(limit, REFERENCE_MAX)
+    needs = [str(n or "").strip() for n in (needs or [])]
+    needs = [n for n in needs if n]
+    if not needs or limit <= 0:
+        return []
+
+    rows = _group_search_rows(owner)
+    if not rows:
+        return []
+
+    # 每条素材 × 每个 need 打分，命中过的 need 记下来
+    scored = []
+    for g in rows:
+        total, hit_needs = 0, []
+        for n in needs:
+            s = _score_group(g, n)
+            if s > 0:
+                total += s
+                hit_needs.append(n)
+        if total > 0:
+            gg = dict(g)
+            gg["score"] = total
+            gg["node_needs"] = hit_needs
+            scored.append(gg)
+
+    scored.sort(key=lambda x: (-x["score"], x["ref_card_id"]))
+    # 同一素材组只出现一次（天然满足 —— rows 本来就是一行一组），
+    # 截到上限。
+    return scored[:limit]
+
+
+def render_reference_items(items):
+    """检索结果里抽出「给 _reference_block 用」的最小字段集。
+
+    【为什么多这一步】search_reference_cards 返回的行里有 score /
+    node_needs 这些编排层的内部字段，不该原样塞进 ctx（ctx 会被
+    预览接口整个返回给前端）。这里只挑展示和注入要用的。
+    """
+    out = []
+    for x in items or []:
+        out.append({
+            "group_id": x.get("group_id"),
+            "ref_card_id": x.get("ref_card_id"),
+            "material_id": x.get("material_id"),
+            "category_name": x.get("category_name") or "",
+            "tags": x.get("tags") or [],
+            "summary": x.get("summary") or "",
+            "summary_meta": x.get("summary_meta") or {},
+            "node_needs": x.get("node_needs") or [],
+        })
+    return out
+
+
+# ----------------------------------------------------------------------
 # 大纲 JSON 的清洗与渲染
 # ----------------------------------------------------------------------
 
@@ -1213,14 +1468,21 @@ _NODE_RENDER_ORDER = (
 )
 
 
-def _clean_node(v, idx, known_plots):
+def _clean_node(v, idx, known_plots, known_refs=None, warns=None):
     """清洗一个节点。
 
     node_id 只在**同一份大纲内**唯一，所以由我们兜底生成 ——
     模型给的编号要是不小心重了，后面的 diff 和"标记不可用"会全错位。
+
+    warns 传进来 = 这是模型的返回，超长/超量一律截断 + 记警告，
+    不作废（见 _txt 的说明）。警告里带「第 N 段」，她一眼能找到是哪儿。
     """
     if not isinstance(v, dict):
         return None
+    known_refs = known_refs if known_refs is not None else set()
+    if warns is None:
+        warns = []
+    pos = "第 %d 段" % idx
     out = {}
     nid = str(v.get("node_id") or "").strip()
     if not nid or len(nid) > 24 or not re.match(r"^[A-Za-z0-9_\-]+$", nid):
@@ -1228,12 +1490,14 @@ def _clean_node(v, idx, known_plots):
     out["node_id"] = nid
     for f in NODE_FIELDS:
         if f == "node_title":
-            out[f] = _txt(v.get(f), NODE_TITLE_MAX, "节点标题")
+            out[f] = _txt(v.get(f), NODE_TITLE_MAX, pos + "标题", warns=warns)
         elif f in ("purpose", "conflict", "emotional_change",
                    "information_revealed", "connection_to_next", "location_time"):
-            out[f] = _txt(v.get(f), NODE_SHORT_MAX, NODE_FIELD_LABELS[f])
+            out[f] = _txt(v.get(f), NODE_SHORT_MAX, pos + NODE_FIELD_LABELS[f],
+                          warns=warns)
         else:
-            out[f] = _txt(v.get(f), NODE_TEXT_MAX, NODE_FIELD_LABELS[f])
+            out[f] = _txt(v.get(f), NODE_TEXT_MAX, pos + NODE_FIELD_LABELS[f],
+                          warns=warns)
     if not out["node_title"]:
         out["node_title"] = "第 %d 段" % idx
 
@@ -1244,49 +1508,83 @@ def _clean_node(v, idx, known_plots):
     out["estimated_words"] = max(0, min(w, 200000))
 
     roles = _str_list(v.get("participating_roles"), NODE_LIST_MAX, 30,
-                      "参与角色")
+                      pos + "的参与角色", warns=warns)
     out["participating_roles"] = roles
 
-    src = _int_list(v.get("source_plot_ids"), NODE_SOURCE_MAX, "来源零件")
+    src = _int_list(v.get("source_plot_ids"), NODE_SOURCE_MAX,
+                    pos + "的来源零件", warns=warns)
     # 【为什么在这里过滤】模型的编号跑偏是最危险的一类错。
     # 一个不存在的 plot_id 混进来，会让大纲"看起来有来源"，
     # 点进去却是空的 —— 来源错了比没有来源更糟。
     out["source_plot_ids"] = [i for i in src if i in known_plots]
+
+    # ---- 分类素材引用（reference_card_ids / reference_use）----
+    # 跟 source_plot_ids 同一条规矩：只准用本次实际发给它的编号，
+    # 编号跑偏的直接抹掉。reference_use 是一句"借了它的什么功能"，
+    # 没有编号却写了 use、或有编号没写 use，都不拦 —— 那是内容质量问题，
+    # 不是形状问题（形状问题才值得丢数据）。
+    refs = _int_list(v.get("reference_card_ids"), NODE_REF_MAX,
+                     pos + "的参考素材", warns=warns)
+    out["reference_card_ids"] = [i for i in refs if i in known_refs]
+    out["reference_use"] = _txt(v.get("reference_use"), NODE_SHORT_MAX,
+                                pos + "的素材参考说明", warns=warns)
     return out
 
 
-def clean_outline_payload(payload, known_plots=None):
+def clean_outline_payload(payload, known_plots=None, known_refs=None):
     """把模型返回（或她编辑后回传）的大纲 JSON 洗一遍。
 
     设计原则跟内化那边一样：**硬伤抛错，软伤降级 + 警告**。
-    硬伤只留一条 —— nodes 不是数组（没有节点就没有大纲，没什么好降级的）。
-    其余（缺标题、字数离谱、字段超长）都降级成警告，不整份作废：
-    她已经花了钱，能救回来的就救。
+    硬伤只留一条 —— nodes 不是数组 / 一个节点都救不回来
+    （没有节点就没有大纲，没什么好降级的）。
+    其余一律降级成警告，不整份作废：**她已经花了钱，能救回来的就救**。
+
+    【2026-09-27 修】以前"降级"只写在文档里，代码没做到 ——
+    标题多给一条、某个字段超几个字，都会 ValueError 把整份作废。
+    她那次就是被这个坑掉：171.9 秒、2.6 万字输入算完，模型多写了
+    一条标题候选（要 3 给 4），界面上只剩一个"失败"。
+    现在超长/超量一律截断 + 记警告（见 _txt / _str_list / _int_list
+    的 warns 参数），候选卡上会写明哪一段的哪个字段被截了。
+    注意区分：**她自己手填**的地方仍然严格报错（不传 warns），
+    因为背着她切掉她写的内容比报错恶劣得多。
+
+    known_refs：本次实际发给模型的分类素材编号集合（合并卡的 id）。
+    不传 = 这次没有参考素材，节点里所有 reference 编号都会被抹掉 ——
+    这是对的：没发过的素材不可能被"参考"，写上去就是编造来源。
     """
     if not isinstance(payload, dict):
         raise ValueError("大纲的顶层得是一个对象。")
     known = set(known_plots or [])
+    known_ref_set = set(known_refs or [])
     warns = []
 
     titles = _str_list(payload.get("title_candidates"), 3, OUTLINE_TITLE_MAX,
-                       "标题候选")
-    story_core = _txt(payload.get("story_core"), NODE_TEXT_MAX, "故事核心")
-    theme_tone = _txt(payload.get("theme_tone"), NODE_SHORT_MAX, "主题与基调")
-    overview = _txt(payload.get("overview"), NODE_TEXT_MAX * 2, "故事总览")
+                       "标题候选", warns=warns)
+    story_core = _txt(payload.get("story_core"), NODE_TEXT_MAX, "故事核心",
+                      warns=warns)
+    theme_tone = _txt(payload.get("theme_tone"), NODE_SHORT_MAX, "主题与基调",
+                      warns=warns)
+    overview = _txt(payload.get("overview"), NODE_TEXT_MAX * 2, "故事总览",
+                    warns=warns)
 
     fns = []
     raw_fns = payload.get("character_functions")
     if isinstance(raw_fns, list):
         for it in raw_fns[:ROLE_FUNCTION_MAX]:
             if isinstance(it, dict):
+                who = _txt(it.get("role"), 40, "角色名", warns=warns)
+                tag = "「%s」的" % who if who else "角色功能表里的"
                 fns.append({
-                    "role": _txt(it.get("role"), 40, "角色名"),
-                    "goal": _txt(it.get("goal"), NODE_SHORT_MAX, "目标"),
-                    "obstacle": _txt(it.get("obstacle"), NODE_SHORT_MAX, "阻碍"),
-                    "change": _txt(it.get("change"), NODE_SHORT_MAX, "变化"),
+                    "role": who,
+                    "goal": _txt(it.get("goal"), NODE_SHORT_MAX, tag + "目标",
+                                 warns=warns),
+                    "obstacle": _txt(it.get("obstacle"), NODE_SHORT_MAX,
+                                     tag + "阻碍", warns=warns),
+                    "change": _txt(it.get("change"), NODE_SHORT_MAX,
+                                   tag + "变化", warns=warns),
                 })
             else:
-                s = _txt(it, NODE_SHORT_MAX, "角色功能")
+                s = _txt(it, NODE_SHORT_MAX, "角色功能", warns=warns)
                 if s:
                     fns.append({"role": s, "goal": "", "obstacle": "", "change": ""})
     if not fns:
@@ -1303,7 +1601,7 @@ def clean_outline_payload(payload, known_plots=None):
     nodes = []
     used_ids = set()
     for i, nv in enumerate(raw_nodes[:MAX_NODES], 1):
-        n = _clean_node(nv, i, known)
+        n = _clean_node(nv, i, known, known_ref_set, warns=warns)
         if n is None:
             continue
         # 编号去重（模型偶尔会把两段都叫 n3）
@@ -1314,23 +1612,41 @@ def clean_outline_payload(payload, known_plots=None):
     if not nodes:
         raise ValueError("nodes 里一个能用的节点都没有。")
 
+    # 下面两处只是**数一数**丢了多少（同样的警告 _clean_node 已经记过了），
+    # 所以给一个一次性的列表把重复的警告扔掉 —— 否则同一个毛病会说两遍。
+    _quiet = []
+
     # 丢来源零件的要说出来，别让她以为"AI 用了很多零件"
     dropped = 0
     for nv in raw_nodes[:MAX_NODES]:
         if isinstance(nv, dict):
-            raw_src = _int_list(nv.get("source_plot_ids"), NODE_SOURCE_MAX, "来源零件")
+            raw_src = _int_list(nv.get("source_plot_ids"), NODE_SOURCE_MAX,
+                                "来源零件", warns=_quiet)
             dropped += len([x for x in raw_src if x not in known])
     if dropped:
         warns.append("模型引用了 %d 处不在本次候选里的零件编号，已经抹掉 ——"
                      "来源不明的零件比没有来源更危险。" % dropped)
 
-    climax = _txt(payload.get("climax"), NODE_SHORT_MAX * 2, "高潮与转折")
+    # 素材引用编号跑偏的也要说（同一条规矩：编造的来源比没有来源更糟）
+    dropped_ref = 0
+    for nv in raw_nodes[:MAX_NODES]:
+        if isinstance(nv, dict):
+            raw_ref = _int_list(nv.get("reference_card_ids"), NODE_REF_MAX,
+                                "参考素材", warns=_quiet)
+            dropped_ref += len([x for x in raw_ref if x not in known_ref_set])
+    if dropped_ref:
+        warns.append("模型引用了 %d 处没发给它的分类素材编号，已经抹掉。"
+                     % dropped_ref)
+
+    climax = _txt(payload.get("climax"), NODE_SHORT_MAX * 2, "高潮与转折",
+                  warns=warns)
     if isinstance(payload.get("climax"), dict):
         climax = _txt(payload["climax"].get("description"), NODE_SHORT_MAX * 2,
-                      "高潮与转折")
-    ending = _txt(payload.get("ending"), NODE_TEXT_MAX, "结局")
+                      "高潮与转折", warns=warns)
+    ending = _txt(payload.get("ending"), NODE_TEXT_MAX, "结局", warns=warns)
 
-    risks = _str_list(payload.get("logic_risks"), 8, NODE_SHORT_MAX, "逻辑风险")
+    risks = _str_list(payload.get("logic_risks"), 8, NODE_SHORT_MAX, "逻辑风险",
+                      warns=warns)
 
     out = {
         "title_candidates": titles,
@@ -1353,6 +1669,14 @@ def clean_outline_payload(payload, known_plots=None):
             if pid not in used:
                 used.append(pid)
     out["used_plot_ids"] = used
+
+    # 分类素材引用同样按节点实际挂的汇总（保持顺序、去重）
+    used_refs = []
+    for n in nodes:
+        for cid in n.get("reference_card_ids") or []:
+            if cid not in used_refs:
+                used_refs.append(cid)
+    out["used_reference_card_ids"] = used_refs
 
     total = sum(n["estimated_words"] for n in nodes)
     out["word_budget"] = {
@@ -1473,6 +1797,13 @@ def render_outline_text(obj):
         src = n.get("source_plot_ids") or []
         if src:
             L.append("    用了零件：%s" % "、".join("#%d" % s for s in src))
+        refs = n.get("reference_card_ids") or []
+        if refs:
+            line = "    参考素材：%s" % "、".join("#%d" % r for r in refs)
+            use = (n.get("reference_use") or "").strip()
+            if use:
+                line += "（%s）" % use
+            L.append(line)
         L.append("")
     L.append("高潮和转折")
     L.append("  %s" % (o.get("climax") or "（没有）"))
@@ -1505,6 +1836,7 @@ def empty_outline_json():
         "climax": "",
         "ending": "",
         "used_plot_ids": [],
+        "used_reference_card_ids": [],
         "logic_risks": [],
         "word_budget": {"total": 0},
     }

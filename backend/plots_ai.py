@@ -76,7 +76,7 @@ import traceback
 from datetime import datetime
 
 try:
-    from backend import db, segmentation as sg
+    from backend import db, livestream, segmentation as sg
     from backend import plots_db as plots
     from backend import classification as cls
     from backend import classify_db as cdb
@@ -84,7 +84,7 @@ try:
 except ImportError:                                   # pragma: no cover
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from backend import db, segmentation as sg
+    from backend import db, livestream, segmentation as sg
     from backend import plots_db as plots
     from backend import classification as cls
     from backend import classify_db as cdb
@@ -864,13 +864,16 @@ def _validate_payload(payload, batch_ids, cat_names):
     return out, warns
 
 
-def _ask(cfg, messages):
+def _ask(cfg, messages, ctx=None):
     """问一次模型。json_mode 先开着试，报 400 就关掉再来一次。
 
     直接用分类那边那份实现 —— 它踩过的坑（部分兼容实现不认
     response_format）这边一模一样，没必要再踩一遍。
+
+    ctx 带过来是为了**实时看板**：有 stream_id 的话，模型吐的字
+    会一路推到页面上（见 classification._ask）。
     """
-    return cls._ask(cfg, messages)
+    return cls._ask(cfg, messages, ctx, purpose="infuse")
 
 
 def call_model(cfg, ctx, items):
@@ -879,7 +882,7 @@ def call_model(cfg, ctx, items):
     payload 是校验过的结构化结果（还没有落库）。
     """
     messages = build_messages(ctx, items)
-    raw = _ask(cfg, messages)
+    raw = _ask(cfg, messages, ctx)
     if not (raw or "").strip():
         raise InfuseFormatError("模型返回了空内容（可能是被截断或触发了内容策略）")
     payload = _extract_json_object(raw)
@@ -1153,6 +1156,7 @@ def create_run(owner, material_id, model_key=None, user_prompt=None,
             name="plot-infuse-%d" % run_id, daemon=True)
         th.start()
         return {"ok": True, "run_id": run_id, "queued": len(todo),
+                "stream_id": stream_id_for(run_id),
                 "model_name": model_name, "reason": "",
                 "prompt_version": prompt_version()}, run_id
 
@@ -1228,12 +1232,27 @@ def reap_orphan_runs(reason="服务重启了"):
     return len(rows)
 
 
+def stream_id_for(run_id):
+    """这次内化任务在实时通道里的名字。
+
+    前端订阅、后端推送都从这一个出口拿 —— 两边各拼一个字符串的话，
+    改前缀时会变成"一切正常、就是没有字出来"，而那种坏法不报错。
+    """
+    return "inf-%s" % (run_id,)
+
+
 def _run_worker(run_id, owner):
     """后台线程真正干活的地方。
 
     这个函数里**不允许**抛异常出去 —— 抛出去线程就死了，
     任务会永远停在「进行中」。所有异常都在这里接住、写进任务里。
+
+    【实时通道也在这里开和关】关必须放 finally：
+    漏关的话那条连接会一直挂着等一个永远不来的结尾，
+    页面上就是"字停住了但还在转圈" —— 比看不到流更让人不安。
     """
+    sid = stream_id_for(run_id)
+    livestream.open_stream(sid, {"kind": "infuse", "run_id": run_id})
     try:
         _execute(run_id, owner)
     except Exception as e:                                # pragma: no cover
@@ -1244,7 +1263,10 @@ def _run_worker(run_id, owner):
                          error="任务异常：%s" % e, finished_at=now_str())
         except Exception:
             pass
+        livestream.note(sid, "任务异常：%s" % e, level="bad")
         print("[内化任务] 任务 #%s 崩了：%s\n%s" % (run_id, e, tb))
+    finally:
+        livestream.close(sid)
 
 
 def _batches(ids):
@@ -1312,6 +1334,9 @@ def _execute(run_id, owner):
         "model_key": model_key,
         "model_name": run["model_name"] or model_key,
         "prompt_version": run["prompt_version"] or prompt_version(),
+        # 实时通道的名字。有它，模型每吐一块字就顺手推到页面上 ——
+        # 她就能看见"它正在往外写"，而不是对着不动的进度条猜是不是卡死了。
+        "stream_id": stream_id_for(run_id),
     }
     # 补充提示词：**读任务上的快照**，不读"她现在写着什么"。
     # 她跑完一轮会去改这句再跑第二轮，回头必须还能答出"第一轮到底怎么问的"。
@@ -1661,6 +1686,8 @@ def _run_dict(row):
 
     d["status_label"] = d.get("status") or ""
     d["active"] = d.get("status") in RUN_ACTIVE
+    # 界面靠这个名字订阅"模型正在吐什么"。后端推、前端订共用这一个出口。
+    d["stream_id"] = stream_id_for(d.get("id"))
 
     total = d.get("total_items") or 0
     d["progress"] = 0.0 if not total else round(

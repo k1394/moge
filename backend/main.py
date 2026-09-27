@@ -33,14 +33,16 @@ FastAPI 里三个最基本的概念
 或者直接双击「启动墨阁.bat」。
 """
 
+import json
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
 from fastapi import (Depends, FastAPI, File, HTTPException, Query, Request,
                      UploadFile)
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import (FileResponse, HTMLResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -53,6 +55,7 @@ try:
     from backend import plots_db as plots
     from backend import plots_ai as pai
     from backend import segmentation as sg
+    from backend import livestream
     from backend import llm
 except ImportError:                                   # pragma: no cover
     import sys
@@ -65,6 +68,7 @@ except ImportError:                                   # pragma: no cover
     from backend import plots_db as plots
     from backend import plots_ai as pai
     from backend import segmentation as sg
+    from backend import livestream
     from backend import llm
 
 
@@ -648,6 +652,12 @@ class MergeIn(BaseModel):
     card_ids: List[int] = []
 
 
+class GroupSummarizeIn(BaseModel):
+    """手动给逻辑素材组生成摘要。ids 不给 = 所有没摘要的已合并组。"""
+    ids: Optional[List[int]] = None
+    model_key: Optional[str] = None
+
+
 class SourceMapIn(BaseModel):
     """改来源映射表的一行"""
     source_collection: str = ""
@@ -995,7 +1005,23 @@ def api_list_groups(user: dict = Depends(auth.current_user),
     """
     return {"groups": cls.list_groups(user["owner"], material_id=material_id,
                                       status=status or None, limit=limit),
-            "counts": cls.count_groups(user["owner"], material_id)}
+            "counts": cls.count_groups(user["owner"], material_id),
+            "summary": cls.card_group_summary_status(user["owner"])}
+
+
+@app.post("/api/groups/summarize")
+def api_summarize_groups(req: GroupSummarizeIn,
+                         user: dict = Depends(auth.current_user)):
+    """给「已合并」的逻辑素材组生成摘要（手动触发）。
+
+    她点一下，就把还没有摘要的已合并组跑一遍 —— 摘要缓存到组和合并卡两边，
+    以后大纲生成检索细节时只发摘要、不发原文。
+
+    为什么是手动触发不是自动：摘要要花一次模型的钱，节奏得由她控制。
+    """
+    res = cls.generate_group_summaries(
+        user["owner"], ids=req.ids or None, model_key=req.model_key or None)
+    return res
 
 
 @app.post("/api/groups/{gid}/confirm")
@@ -1773,6 +1799,156 @@ def api_delete_model(req: ModelIn, user: dict = Depends(auth.current_user)):
 
 
 # ----------------------------------------------------------------------
+# 试跑（流式）+ 实时通道 + 耗时对比表
+#
+# 【这一块解决什么】
+# 她要判断"这个模型行不行"，现在只能拿整批素材去跑 —— 又慢又花钱，
+# 而且跑完只看得到结果，看不到过程。于是：
+#   · 试跑：带上自己的提示词，点一下，字一个一个往外蹦，
+#           旁边实时跳首字耗时 / 已等多久 / 已收多少字
+#   · 实时通道：真跑分类、跑大纲的时候，也能看到模型正在吐什么
+#   · 对比表：每次响应的首字和总耗时都记下来，按模型汇总
+#
+# 【为什么试跑一次只发一次请求（max_retry=1）】
+# 试跑是为了量"这家快不快、稳不稳"。默认那条路会重试 3 次、
+# 每次退避几秒 —— 她会看到"首字耗时 12 秒"，其实那是三次失败叠加出来的，
+# 结论就完全错了。试跑就该一次就是一次。
+# ----------------------------------------------------------------------
+
+DEFAULT_PROBE_PROMPT = "用一句话说说你自己是什么模型。"
+PROBE_TIMEOUT = 180          # 跟别处的默认一致，不做特例 —— 免得她以为这里更宽松
+
+
+def _sse_frame(obj):
+    """把一条事件打成 SSE 帧。
+
+    【末尾那两个换行不能省】SSE 用空行表示"这一帧结束了"。
+    只给一个换行的话，浏览器会一直等下一行，于是她看到的是
+    "卡住不动，最后一次性全冒出来" —— 正好是这次要治的毛病。
+    """
+    return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+
+SSE_HEADERS = {
+    # 【这三样都是为了"不许中间层攒着"】
+    #   no-cache           别缓存这个响应
+    #   no-transform       别压缩、别改写
+    #   X-Accel-Buffering  明确告诉反代"不要缓冲"
+    # 本地直连时第三行用不上；但墨阁将来要是挂到 nginx 后面，
+    # 少了它就是"卡半天、然后一次性全冒出来"，而且极难查到是反代干的。
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+}
+
+
+class ProbeIn(BaseModel):
+    """试跑一次：拿这条配置真发一句，把模型的回答**逐字**送回去。
+
+    跟 /api/models/test 的分工：
+        test   连通性检查。发死一句「在吗」，跑完弹个提示。一秒钟的事。
+        probe  试跑。可以带自己的提示词（比如直接贴分类要求），
+               把过程、首字耗时、总耗时、字数全摊开。
+    两个都留着 —— 她填完 Key 的第一反应是「测试」，
+    而"这个模型到底适不适合干这个活"要靠「试跑」。
+    """
+    key: str = ""
+    label: str = ""
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    prompt: str = ""
+    json_mode: bool = False
+
+
+@app.post("/api/models/probe")
+def api_probe_model(req: ProbeIn, user: dict = Depends(auth.current_user)):
+    """试跑。**返回 SSE**，一条一条地推：
+
+        {"t":"start", "label":…, "model":…}      开始了
+        {"t":"chunk", "text":"…"}                模型吐出来的一块字
+        {"t":"done",  "ttft_ms":…, "elapsed_ms":…, "chars":…,
+                      "usage":{…}, "finish_reason":…, "fallback":"…"}
+        {"t":"error", "message":"…"}             出错（抹过密钥，可以直接给她看）
+    """
+    want = _body_dict(req)
+    prompt = (want.get("prompt") or "").strip() or DEFAULT_PROBE_PROMPT
+    json_mode = bool(want.get("json_mode"))
+    cfg = llm.merge_model_cfg(want)
+
+    def gen():
+        yield _sse_frame({"t": "start",
+                          "label": cfg.get("label") or cfg.get("key") or "",
+                          "model": cfg.get("model") or "",
+                          "prompt": prompt})
+        try:
+            for ev in llm.chat_stream(
+                    cfg, [{"role": "user", "content": prompt}],
+                    temperature=0.0, json_mode=json_mode,
+                    timeout=PROBE_TIMEOUT, max_retry=1, purpose="probe"):
+                if ev["t"] == "chunk":
+                    yield _sse_frame({"t": "chunk", "text": ev["text"]})
+                elif ev["t"] == "error":
+                    yield _sse_frame({"t": "error", "message": ev["message"]})
+                    return
+                elif ev["t"] == "done":
+                    r = ev["result"]
+                    yield _sse_frame({
+                        "t": "done",
+                        "ttft_ms": r.get("ttft_ms") or 0,
+                        "elapsed_ms": r.get("elapsed_ms") or 0,
+                        "chars": len(r.get("content") or ""),
+                        "usage": r.get("usage") or {},
+                        "finish_reason": r.get("finish_reason") or "",
+                        "finish_label": llm.finish_label(r.get("finish_reason")),
+                        "streamed": bool(r.get("streamed")),
+                        "fallback": r.get("fallback") or "",
+                        "model": r.get("model") or "",
+                    })
+                    return
+        except BaseException as e:                        # pragma: no cover
+            yield _sse_frame({"t": "error", "message": str(e)})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers=SSE_HEADERS)
+
+
+@app.get("/api/live/{sid}")
+def api_live(sid: str, user: dict = Depends(auth.current_user)):
+    """订阅一条实时流 —— 看任务跑的时候模型正在吐什么。
+
+    【为什么是 GET，还是带路径参数】
+    这条连接是"常驻"的：任务在后台线程里跑，页面挂在这里看。
+    拿 fetch / EventSource 都得上 GET，POST 做不了常驻订阅。
+
+    【看一眼而已，丢了不影响任务】
+    这条通道只负责"看"。任务的结果照旧落库、照旧靠原有的轮询取。
+    所以它断了她只是看不到过程，不会有任何数据损失 ——
+    这也是为什么 livestream 里"流不存在"只是安静地丢事件，不抛异常。
+    """
+    def gen():
+        for ev in livestream.subscribe(sid):
+            yield _sse_frame(ev)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers=SSE_HEADERS)
+
+
+@app.get("/api/models/stats")
+def api_model_stats(days: int = 30, user: dict = Depends(auth.current_user)):
+    """按模型汇总每次响应的耗时。
+
+    界面上是模型设置页里那张对比表 —— 回答"哪个模型快、哪个稳"。
+    """
+    try:
+        d = int(days)
+    except (TypeError, ValueError):
+        d = 30
+    st = db.llm_call_stats(days=max(1, min(365, d)))
+    return {"ok": True, "days": st["days"], "rows": st["rows"],
+            "scanned": st["scanned"]}
+
+
+# ----------------------------------------------------------------------
 # 接入点：一个「地址 + 密钥」对，底下可以挂很多模型
 #
 # 【为什么单独拆出这一层】
@@ -2531,6 +2707,13 @@ class OutlineGenIn(BaseModel):
     user_prompt: Optional[str] = None
     prompt_id: Optional[int] = None
     use_learning: Optional[bool] = None
+    # 分类素材参考（默认关）。reference_limit 用户填多少用多少，
+    # 后端夹在 [0, 30]（REFERENCE_MAX），超过不报错、按 30 算。
+    reference_enabled: Optional[bool] = None
+    reference_limit: Optional[int] = None
+    # 缓存旁路（补充二.5）：她看到"上次跑过一样的"弹窗、选了"重新生成"时，
+    # 前端带这个 true，跳过缓存判断、老老实实再跑一遍。
+    cache_bypass: Optional[bool] = None
 
 
 class OutlineSaveIn(BaseModel):
@@ -2824,6 +3007,9 @@ def api_outline_meta(user: dict = Depends(auth.current_user)):
             "max_pool": oai.MAX_POOL,
             "max_nodes": odb.MAX_NODES,
             "user_prompt_max": oai.USER_PROMPT_MAX,
+            # 分类素材参考：默认条数和硬顶（界面输入框按这个夹）
+            "reference_default": odb.REFERENCE_DEFAULT,
+            "reference_max": odb.REFERENCE_MAX,
             # 超时和重试次数给前端，是为了让任务卡能写出"已跑多久 / 最长等多久"。
             # 这两个数在界面上写死的话，我哪天调了后端，界面说的就是假的。
             "outline_timeout": oai.OUTLINE_TIMEOUT,
@@ -2932,6 +3118,26 @@ def api_outline_retry(rid: int, user: dict = Depends(auth.current_user)):
         raise HTTPException(status_code=400,
                             detail=res.get("message") or "重试失败")
     return res
+
+
+@app.post("/api/outline-runs/clear-finished")
+def api_outline_clear_finished(user: dict = Depends(auth.current_user)):
+    """一键清掉所有已经结束的任务记录（正在跑的留着）。
+
+    她嫌任务"堆在一起"要的正是这个 —— 清的是历史，不是手头这次活。
+    """
+    n = _odb_call(oai.delete_finished_runs, user["owner"])
+    return {"ok": True, "removed": n,
+            "message": ("清掉了 %d 个已结束的任务。" % n) if n
+                       else "没有已结束的任务要清。"}
+
+
+@app.delete("/api/outline-runs/{rid}")
+def api_outline_delete(rid: int, user: dict = Depends(auth.current_user)):
+    """删掉一条任务记录（连它的候选）。**正在跑的不给删**，先取消。"""
+    _odb_call(oai.delete_run, rid, user["owner"])
+    return {"ok": True,
+            "message": "任务记录删了。已经推进大纲库的那份大纲没受影响。"}
 
 
 # ----------------------------------------------------------------------

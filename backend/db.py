@@ -136,6 +136,45 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_materials_owner ON materials(owner_id);
 CREATE INDEX IF NOT EXISTS idx_material_tags_tag ON material_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- llm_calls：每一次「跟模型说话」都记一行 —— 什么时候、用的哪个模型、
+--   等了多久才吐出第一个字（首字耗时）、整段回来花了多久（总耗时）、
+--   成功还是失败、烧了多少 token。
+--
+-- 【为什么首字耗时值得单独记】
+--   它和总耗时的含义完全不同：
+--     首字慢   = 这家在"想"，或者上游在排队（推理模型尤其慢）
+--     总耗时慢 = 它写得太长，或者中途卡住了
+--   只看总耗时区分不出这两种。她问"哪个模型快"时，答案多半在首字那一栏。
+--
+-- 【为什么失败也要记】
+--   失败那次也是花了时间（可能还花了钱）的。只记成功的话，
+--   一个"十次里失败八次"的模型在对比表里会显得又少又快，结论正好反了。
+--
+-- 【为什么单独一张表，而不是塞进各个任务表】
+--   分类、内化、大纲三边的记录结构完全一样，而且"哪个模型快"这个问题
+--   必须跨任务看才有意义 —— 记在任务表里就得 union 三张表，越写越乱。
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    purpose       TEXT    NOT NULL DEFAULT '',
+    model_key     TEXT    NOT NULL DEFAULT '',
+    model_name    TEXT    NOT NULL DEFAULT '',
+    provider      TEXT    NOT NULL DEFAULT '',
+    streamed      INTEGER NOT NULL DEFAULT 0,
+    ttft_ms       INTEGER NOT NULL DEFAULT 0,
+    elapsed_ms    INTEGER NOT NULL DEFAULT 0,
+    ok            INTEGER NOT NULL DEFAULT 0,
+    error         TEXT    NOT NULL DEFAULT '',
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens      INTEGER NOT NULL DEFAULT 0,
+    chars         INTEGER NOT NULL DEFAULT 0,
+    finish_reason TEXT    NOT NULL DEFAULT '',
+    fallback      TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model_key);
 """
 
 
@@ -649,6 +688,169 @@ def purge_expired_sessions():
     with connect() as conn:
         cur = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now_str(),))
         return cur.rowcount
+
+
+# ----------------------------------------------------------------------
+# 每次响应的耗时（llm_calls）
+#
+# 用途只有一个：回答"哪个模型快、哪个模型稳"。
+# 界面上那是模型设置页里的一张对比表，所以这里的取舍都围着那张表转。
+# ----------------------------------------------------------------------
+
+# 保留多久。这不是素材，是性能数据 —— 半年前的网络状况对今天的判断没有帮助，
+# 而表一直不清理的话，每次启动都要扫一遍全表。180 天足够她比出结论。
+LLM_CALL_KEEP_DAYS = 180
+
+
+def _ms(v):
+    """把拿到的耗时折成一个安全的整数毫秒。
+
+    为什么要过这一道：耗时是从 time.time() 差值算出来的浮点数，
+    上游偶尔会给出负数或 None（时钟回拨、或者调用方没量），
+    直接塞进库会变成奇怪的值，界面上显示成 -0.00 秒。"""
+    try:
+        n = int(round(float(v or 0)))
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def _tok(usage, name):
+    """从 usage 里取一个 token 数。取不到就是 0 —— 有些服务商不返回。"""
+    try:
+        return max(0, int((usage or {}).get(name) or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def record_llm_call(purpose="", model_key="", model_name="", provider="",
+                    streamed=False, ttft_ms=0, elapsed_ms=0, ok=True, error="",
+                    usage=None, chars=0, finish_reason="", fallback=""):
+    """记一行"这次跟模型说话花了多久"。
+
+    【为什么整个函数包在 try 里】
+    它是在任务线程里被调用的，而它记的只是"性能数据"——
+    为了让对比表多一行，把一整批分类搞失败，是彻底不划算的。
+    所以这里出错就**安静地放弃这一行**，绝不让异常冒到调用方。
+
+    参数都是"能少给就少给"，缺的一方按默认值走：
+      purpose       用途（classify / infuse / outline / probe），界面上分组用
+      model_key     内部短名字（认历史记录的那个）
+      model_name    真发给服务商的名字
+      provider      接入点名字（可能为空，老配置没有这一层）
+      streamed      这次是不是按流式收的
+      ttft_ms       首字耗时。**非流式收的时候量不出来，记 0** ——
+                    记 0 表示"这次没量到"，跟"首字 0 毫秒"不是一回事，
+                    所以下面求平均时会把它排除在外。
+      fallback      退回非流式的原因（'' = 没退）
+    """
+    try:
+        with connect() as conn:
+            conn.execute(
+                """INSERT INTO llm_calls
+                   (created_at, purpose, model_key, model_name, provider,
+                    streamed, ttft_ms, elapsed_ms, ok, error,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    chars, finish_reason, fallback)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (now_str(), str(purpose or ""), str(model_key or ""),
+                 str(model_name or ""), str(provider or ""),
+                 1 if streamed else 0, _ms(ttft_ms), _ms(elapsed_ms),
+                 1 if ok else 0, str(error or "")[:500],
+                 _tok(usage, "prompt_tokens"), _tok(usage, "completion_tokens"),
+                 _tok(usage, "total_tokens"), max(0, int(chars or 0)),
+                 str(finish_reason or ""), str(fallback or "")))
+    except BaseException:
+        return False
+    return True
+
+
+def purge_llm_calls(days=None):
+    """丢掉太老的耗时记录。启动时顺手做一次。"""
+    n = int(days or LLM_CALL_KEEP_DAYS)
+    with connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM llm_calls WHERE created_at <= datetime('now', 'localtime', ?)",
+            ("-%d days" % n,))
+        return cur.rowcount
+
+
+def llm_call_stats(days=30, limit=50000):
+    """按模型汇总：调用几次、成功几次、首字多快、整段多久、烧了多少 token。
+
+    【为什么在 Python 里汇总，不写成一条 SQL】
+    这条汇总要把"成功"和"失败"分开算（失败那次的首字耗时是量不到的，
+    混进去会把平均首字拉低，得出"这个模型很快"的错误结论）。
+    SQL 里写一堆 CASE WHEN 是能写出来，但以后谁改都会改错；
+    这点数据量（本机自用、几千行）在 Python 里算，一眼能看懂。
+
+    days     只看最近多少天
+    limit    最多扫多少行，防止表被养到几十万行时把界面拖住
+    """
+    d = max(1, int(days or 30))
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT model_key, model_name, purpose, ok, ttft_ms, elapsed_ms,
+                      total_tokens, chars, streamed, fallback, created_at
+               FROM llm_calls
+               WHERE created_at > datetime('now','localtime', ?)
+               ORDER BY id DESC LIMIT ?""",
+            ("-%d days" % d, max(1, int(limit or 50000)))).fetchall()
+
+    agg = {}
+    for r in rows:
+        k = r["model_key"] or r["model_name"] or "（没记模型）"
+        a = agg.get(k)
+        if a is None:
+            a = agg[k] = {"model_key": k, "model_name": r["model_name"] or "",
+                          "calls": 0, "ok": 0, "bad": 0,
+                          "ttft_n": 0, "ttft_sum": 0, "ttft_min": 0,
+                          "el_sum": 0, "tokens": 0, "chars": 0,
+                          "streamed": 0, "fallback": 0, "last": ""}
+        a["calls"] += 1
+        a["el_sum"] += r["elapsed_ms"] or 0       # 总耗时连失败的算进去
+        a["tokens"] += r["total_tokens"] or 0
+        if not a["last"] or r["created_at"] > a["last"]:
+            a["last"] = r["created_at"]
+        if r["streamed"]:
+            a["streamed"] += 1
+        if r["fallback"]:
+            a["fallback"] += 1
+        if r["ok"]:
+            a["ok"] += 1
+            a["chars"] += r["chars"] or 0
+            t = r["ttft_ms"] or 0
+            if t > 0:                             # 0 = 这次没量到，不算进平均
+                a["ttft_n"] += 1
+                a["ttft_sum"] += t
+                if not a["ttft_min"] or t < a["ttft_min"]:
+                    a["ttft_min"] = t
+        else:
+            a["bad"] += 1
+
+    out = []
+    for a in agg.values():
+        n = a["ttft_n"]
+        out.append({
+            "model_key": a["model_key"],
+            "model_name": a["model_name"],
+            "calls": a["calls"],
+            "ok": a["ok"],
+            "bad": a["bad"],
+            "ttft_n": n,
+            "ttft_avg": int(round(a["ttft_sum"] / n)) if n else 0,
+            "ttft_min": a["ttft_min"],
+            "elapsed_avg": int(round(a["el_sum"] / a["calls"])) if a["calls"] else 0,
+            "tokens": a["tokens"],
+            "chars": a["chars"],
+            "streamed": a["streamed"],
+            "fallback": a["fallback"],
+            "last": a["last"],
+        })
+    # 默认按"调用次数多的排前面"—— 样本太少的那几行排在后面，
+    # 免得她拿一次调用的平均值当结论。
+    out.sort(key=lambda x: (-x["calls"], x["model_key"]))
+    return {"days": d, "rows": out, "scanned": len(rows)}
 
 
 # ----------------------------------------------------------------------

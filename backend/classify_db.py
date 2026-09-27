@@ -333,6 +333,14 @@ CREATE TABLE IF NOT EXISTS cards (
     note                TEXT    NOT NULL DEFAULT '',
     parent_card_id      INTEGER DEFAULT NULL,
     operation_group_id  TEXT    NOT NULL DEFAULT '',
+    -- ---- 摘要（2026-09-26 加，"分类素材参考"那条线）----
+    -- 合并出来的那张卡（逻辑素材卡）也存一份摘要，两边都能看。
+    -- 生成时从 card_groups 写回，别单独生成（同一份摘要，两个出口）。
+    summary             TEXT    NOT NULL DEFAULT '',
+    summary_meta_json   TEXT    NOT NULL DEFAULT '{}',
+    summary_version     TEXT    NOT NULL DEFAULT '',
+    summary_status      TEXT    NOT NULL DEFAULT '',
+    summary_at          TEXT    NOT NULL DEFAULT '',
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
 );
@@ -472,6 +480,14 @@ CREATE TABLE IF NOT EXISTS card_groups (
     status              TEXT    NOT NULL DEFAULT '待确认',
     merged_card_id      INTEGER DEFAULT NULL,
     merged_change_id    INTEGER DEFAULT NULL,
+    -- ---- 摘要（2026-09-26 加，"分类素材参考"那条线）----
+    -- 一组逻辑素材生成一次本地摘要，检索时只发摘要不发全文。
+    -- 只处理「已合并」的组（合并后的那条卡就是正文来源）。
+    summary             TEXT    NOT NULL DEFAULT '',
+    summary_meta_json   TEXT    NOT NULL DEFAULT '{}',
+    summary_version     TEXT    NOT NULL DEFAULT '',
+    summary_status      TEXT    NOT NULL DEFAULT '',
+    summary_at          TEXT    NOT NULL DEFAULT '',
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
 );
@@ -619,6 +635,24 @@ def migrate(verbose=False):
             conn.execute("ALTER TABLE categories "
                          "ADD COLUMN suggested_tags TEXT NOT NULL DEFAULT '[]'")
             report["added_columns"].append("categories.suggested_tags")
+
+        # ---- 摘要列（2026-09-26，"分类素材参考"那条线）----
+        # card_groups（逻辑素材组）和 cards（含合并出来的逻辑素材卡）都加。
+        # 摘要两边都存：组是逻辑单位，卡是合并后她真正看的东西。
+        _SUMMARY_COLS = (
+            ("summary", "TEXT NOT NULL DEFAULT ''"),
+            ("summary_meta_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("summary_version", "TEXT NOT NULL DEFAULT ''"),
+            ("summary_status", "TEXT NOT NULL DEFAULT ''"),
+            ("summary_at", "TEXT NOT NULL DEFAULT ''"),
+        )
+        for table in ("card_groups", "cards"):
+            cols = _columns(conn, table)
+            for col, decl in _SUMMARY_COLS:
+                if col not in cols:
+                    conn.execute("ALTER TABLE %s ADD COLUMN %s %s"
+                                 % (table, col, decl))
+                    report["added_columns"].append("%s.%s" % (table, col))
 
         # ---- 播种主类（当前版本 = v2）----
         # 已有同名的不覆盖 description？不，要覆盖 ——
@@ -2212,6 +2246,12 @@ def _group_dict(row, members=None, cat_names=None):
         "merged_card_id": row["merged_card_id"],
         "merged_change_id": row["merged_change_id"],
         "chars": max(0, int(row["end_offset"]) - int(row["start_offset"])),
+        "summary": row["summary"] if "summary" in row.keys() else "",
+        "summary_meta": (json.loads(row["summary_meta_json"] or "{}")
+                         if "summary_meta_json" in row.keys() else {}),
+        "summary_status": row["summary_status"] if "summary_status" in row.keys() else "",
+        "summary_version": row["summary_version"] if "summary_version" in row.keys() else "",
+        "summary_at": row["summary_at"] if "summary_at" in row.keys() else "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "members": members or [],
@@ -2673,6 +2713,140 @@ def material_map(owner):
         return {r["id"]: {"title": r["title"],
                           "source_collection": r["source_collection"] or r["title"],
                           "chars": r["chars"]} for r in rows}
+
+
+# ----------------------------------------------------------------------
+# 逻辑素材组的摘要（分类素材参考那条线）
+# ----------------------------------------------------------------------
+
+SUMMARY_STATUS_DONE = "已生成"
+SUMMARY_STATUS_FAILED = "失败"
+
+
+def card_group_summary_status(owner):
+    """各摘要状态的组数，界面上那几个数字用它。
+
+    只统计「已合并」的组 —— 待确认/已忽略的组还没定形，不参与参考，
+    也不该催她生成摘要。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT summary_status, COUNT(*) AS n FROM card_groups"
+            " WHERE owner_id=? AND status=? GROUP BY summary_status",
+            (owner, GROUP_MERGED)).fetchall()
+    by = {r["summary_status"]: r["n"] for r in rows}
+    return {
+        "total": sum(by.values()),
+        "done": by.get(SUMMARY_STATUS_DONE, 0),
+        "empty": by.get("", 0),
+        "failed": by.get(SUMMARY_STATUS_FAILED, 0),
+    }
+
+
+def generate_group_summaries(owner, ids=None, model_key=None):
+    """给「已合并」的逻辑素材组生成摘要，同时写回组和合并卡。
+
+    这是她点「生成摘要」按钮触发的动作。ids 给的话只处理这几个组，
+    不给就处理所有「已合并且还没有摘要」的组。
+
+    幂等：已经有摘要、且版本跟当前提示词版本一致的组跳过（不重复扣费）。
+    版本变了才重新生成（她调过摘要提示词之后）。
+
+    返回 {ok, done, skipped, failed, message, items}，
+    items 里每条带 group_id / card_id / error。
+    """
+    try:
+        from backend import classification as cls
+    except ImportError:                                   # pragma: no cover
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from backend import classification as cls
+
+    # 当前摘要提示词版本（由 classification 那边定，别在两边各写一个号）
+    tpl, src, _w = cls.summary_prompt_template()
+    version = (cls.SUMMARY_PROMPT_VERSION if src == "file"
+               else cls.SUMMARY_PROMPT_VERSION_GENERIC)
+
+    with db.connect() as conn:
+        where = ["owner_id=?", "status=?"]
+        params = [owner, GROUP_MERGED]
+        if ids:
+            ids = [int(i) for i in ids]
+            where.append("id IN (%s)" % ",".join("?" * len(ids)))
+            params.extend(ids)
+        # 幂等：无论指不指定 ids，都跳过「已有摘要且版本一致」的组。
+        # 指定 ids 只是想"补这几个"，不是"把这几个强行重跑一遍" ——
+        # 重跑是白花钱，她要重跑得先自己清掉摘要（那是一个她还没要求的动作）。
+        where.append("(summary='' OR summary_version<>?)")
+        params.append(version)
+        rows = conn.execute(
+            "SELECT * FROM card_groups WHERE " + " AND ".join(where)
+            + " ORDER BY id", params).fetchall()
+
+        if not rows:
+            return {"ok": True, "done": 0, "skipped": 0, "failed": 0,
+                    "message": "没有需要生成摘要的已合并组。", "items": []}
+
+        # 组 → 正文（content[start:end]），merged_card_id 要写回合并卡
+        to_sum = []
+        for g in rows:
+            content = _content(conn, g["material_id"])
+            piece = content[g["start_offset"]:g["end_offset"]]
+            to_sum.append({"id": g["id"],
+                           "material_id": g["material_id"],
+                           "merged_card_id": g["merged_card_id"],
+                           "content": piece})
+
+    # 调模型（不放事务里 —— 模型可能几十秒，占着连接会锁库）
+    results = cls.summarize_batch(owner, to_sum, model_key=model_key)
+
+    done = skipped = failed = 0
+    items = []
+    ts = now_str()
+    by_id = {g["id"]: g for g in rows}
+
+    with db.connect() as conn:
+        for r in results:
+            gid = r["group_id"]
+            g = by_id.get(gid)
+            if r["ok"]:
+                conn.execute(
+                    "UPDATE card_groups SET summary=?, summary_meta_json=?,"
+                    " summary_version=?, summary_status=?, summary_at=?,"
+                    " updated_at=? WHERE id=? AND owner_id=?",
+                    (r["summary"], r["meta_json"], version,
+                     SUMMARY_STATUS_DONE, ts, ts, gid, owner))
+                # 写回合并卡（两边都能看）
+                if g and g["merged_card_id"]:
+                    conn.execute(
+                        "UPDATE cards SET summary=?, summary_meta_json=?,"
+                        " summary_version=?, summary_status=?, summary_at=?,"
+                        " updated_at=? WHERE id=? AND owner_id=?",
+                        (r["summary"], r["meta_json"], version,
+                         SUMMARY_STATUS_DONE, ts, ts,
+                         g["merged_card_id"], owner))
+                done += 1
+                items.append({"group_id": gid, "card_id": g["merged_card_id"]
+                              if g else None, "ok": True})
+            else:
+                # 失败也标记一下，别让她每次点都重跑同一批坏组
+                conn.execute(
+                    "UPDATE card_groups SET summary_status=?, updated_at=?"
+                    " WHERE id=? AND owner_id=?",
+                    (SUMMARY_STATUS_FAILED, ts, gid, owner))
+                failed += 1
+                items.append({"group_id": gid, "card_id": g["merged_card_id"]
+                              if g else None, "ok": False,
+                              "error": r.get("error") or ""})
+
+    msg = "生成了 %d 条摘要" % done
+    if skipped:
+        msg += "，跳过 %d 条（已是最新）" % skipped
+    if failed:
+        msg += "，失败 %d 条" % failed
+    return {"ok": True, "done": done, "skipped": skipped, "failed": failed,
+            "message": msg, "items": items,
+            "version": version}
 
 
 # ----------------------------------------------------------------------

@@ -69,16 +69,27 @@ import traceback
 from datetime import datetime
 
 try:
-    from backend import db, segmentation as sg
+    from backend import db, livestream, segmentation as sg
     from backend import classify_db as cls
     from backend import llm
 except ImportError:                                   # pragma: no cover
     import os
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from backend import db, segmentation as sg
+    from backend import db, livestream, segmentation as sg
     from backend import classify_db as cls
     from backend import llm
+
+
+def stream_id_for(run_id):
+    """这次任务在实时通道里的名字。
+
+    【为什么要有个统一函数，而不是各处拼字符串】
+    前端要靠这个名字订阅，后端要靠它推送。两边各写各的，
+    改一次前缀就会变成"看着一切正常、就是没有字出来"——
+    这种错最难查（不报错）。所以只留这一个出口。
+    """
+    return "cls-%s" % (run_id,)
 
 
 def now_str():
@@ -756,6 +767,83 @@ groups 里每个元素（没有该合的组就填空数组 []）：
 - reason：一句话理由
 - confidence：0 到 1 的小数，你觉得有多大把握
 - action：merge（该合）或者 review（拿不准，交作者自己看）
+"""
+
+
+# ----------------------------------------------------------------------
+# 逻辑素材组的「摘要」（分类素材参考那条线）
+#
+# 【为什么摘要是单独一套提示词，不塞进分类提示词】
+# 分类回答"这段是哪类"，摘要回答"这段我能拿它干嘛"—— 是两件事，
+# 而且发生在两个时间点：分类是切完马上跑，摘要是组**合并之后**她手动触发。
+# 混在一套提示词里，改一个就得动另一个的判据，测试也互相污染。
+# ----------------------------------------------------------------------
+
+SUMMARY_PROMPT_FILE = "summarize.txt"
+SUMMARY_PROMPT_VERSION = "v1"
+SUMMARY_PROMPT_VERSION_GENERIC = "v1-generic"
+
+# 摘要要求模型吐的字段。meta 里这几样是任务书补充二.1 明列的：
+# 用途、人物动作、情绪路径、场景功能、安全参考说明。
+SUMMARY_REQUIRED_SLOTS = ("{content}",)
+
+
+def summary_prompt_template():
+    """取摘要模板。跟 prompt_template() 同一个三层设计：
+    file = prompts/summarize.txt（她自己调的那版）
+    builtin = 代码里的 GENERIC_SUMMARY_PROMPT。
+    返回 (模板, 来源, 警告语)。"""
+    path = os.path.join(ROOT_DIR, "prompts", SUMMARY_PROMPT_FILE)
+    if not os.path.isfile(path):
+        return GENERIC_SUMMARY_PROMPT, "builtin", ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            txt = f.read().strip()
+    except Exception as e:                               # pragma: no cover
+        return (GENERIC_SUMMARY_PROMPT, "builtin",
+                "prompts/%s 读不了（%s），这次用通用模板"
+                % (SUMMARY_PROMPT_FILE, e))
+    if not txt:
+        return (GENERIC_SUMMARY_PROMPT, "builtin",
+                "prompts/%s 是空的，这次用通用模板" % SUMMARY_PROMPT_FILE)
+    lost = [s for s in SUMMARY_REQUIRED_SLOTS if s not in txt]
+    if lost:
+        return (GENERIC_SUMMARY_PROMPT, "builtin",
+                "prompts/%s 少了占位符 %s（那段内容会被丢掉），"
+                "这次改用通用模板" % (SUMMARY_PROMPT_FILE, "、".join(lost)))
+    return txt, "file", ""
+
+
+GENERIC_SUMMARY_PROMPT = """\
+你是一位中文小说作者的素材助手。作者手里有一段从她自己素材库里合并出来的\
+「逻辑素材」（几段相邻原文合成的一条完整片段）。你要为它写一份摘要，\
+供她以后写新文时检索和参考细节用 —— 不是替她改写，也不是复述原文。
+
+【你要做的】
+把这段素材里"能迁移的写作功能"提炼出来。所谓能迁移，就是换掉人名、\
+换掉场景之后仍然有用的那部分：人物怎么反应、动作怎么推进、对白怎么搭、\
+情绪怎么走、氛围怎么铺、信息怎么一点点露出来。
+
+【硬规矩 —— 防抄袭】
+你只能描述「写作功能和结构」，绝对不能：
+- 照抄连续原句、独特比喻
+- 照搬人名、地名、专有名词、组织名、独特道具组合
+- 照搬原文特有的连续动作、可识别的句式
+摘要本身也要用全新的话写，不得把原文改几个字拼出来。
+
+【正文】
+{content}
+
+【输出格式】
+只输出一个合法 JSON 对象，不要任何别的话，不要 markdown 代码块。字段如下：
+{
+  "摘要": "两到三句话，说清这段素材在写什么、能提供什么写作功能",
+  "用途": "这段素材最适合拿来写什么（一句短语）",
+  "人物动作": "里面的人怎么动、做了什么（提炼成可迁移的动作模式）",
+  "情绪路径": "情绪从头到尾怎么变的（提炼成情绪曲线，不写具体人名）",
+  "场景功能": "这段场景在叙事里起什么作用（铺垫/冲突/落点/揭示…）",
+  "安全参考说明": "一句提醒：哪些东西是这段特有的、换用时要避开"
+}
 """
 
 
@@ -1521,7 +1609,7 @@ class LlmClassifier(object):
         if warn:
             ctx["prompt_warn"] = warn     # 收尾时写进任务备注给她看
 
-        text = _ask(cfg, messages)
+        text = _ask(cfg, messages, ctx)
 
         # 返回 {"cards": [...], "groups": [...]}。
         # 老版提示词只回一个数组，_extract_result 也能认（groups 就是空的）——
@@ -1531,20 +1619,34 @@ class LlmClassifier(object):
                 "groups": _norm_group_rows(raw_groups)}
 
 
-def _ask(cfg, messages):
+def _ask(cfg, messages, ctx=None, purpose="classify"):
     """问一次模型，返回它说的话（原始文本）。
 
     json_mode 先开着试：它让服务端保证返回合法 JSON。
     但不是所有兼容实现都支持这个参数，报 400 就关掉再来一次 ——
     提示词里已经写死了「只输出一个 JSON 数组」，关掉也能解析，
     只是少一道保险，所以在这里补一次重试，而不是直接失败。
+
+    【ctx 是干什么的】它身上带着这次任务的实时通道名字。
+    有的话，模型每吐一块字就顺手推到页面上 —— 她就能看见
+    "它正在往外写"，而不是对着一个不动的进度条猜是不是卡死了。
+    没有的话（比如同步调用的摘要），就只是老老实实等结果。
     """
+    sid = (ctx or {}).get("stream_id") or ""
+    on_chunk = None
+    if sid:
+        on_chunk = lambda t: livestream.chunk(sid, t)
+
+    def _one(json_mode):
+        return llm.chat(cfg, messages, temperature=0.0, json_mode=json_mode,
+                        purpose=purpose, on_chunk=on_chunk)["content"]
+
     try:
-        return llm.chat(cfg, messages, temperature=0.0, json_mode=True)["content"]
+        return _one(True)
     except llm.LlmError as e:
         if e.status != 400:
             raise
-        return llm.chat(cfg, messages, temperature=0.0, json_mode=False)["content"]
+        return _one(False)
 
 
 CLASSIFIERS = {
@@ -1860,6 +1962,126 @@ def _validate_groups(raw, judge_ids, allowed_ids, category_names=None):
 
 
 # ----------------------------------------------------------------------
+# 四点五、逻辑素材组的摘要（分类素材参考那条线）
+# ----------------------------------------------------------------------
+
+def _summarize_content(cfg, content, template=None, src="builtin"):
+    """给一段素材正文生成摘要。返回 (摘要 dict, 来源, 警告语)。
+
+    摘要 dict 的字段：摘要 / 用途 / 人物动作 / 情绪路径 / 场景功能 /
+    安全参考说明。这些是任务书补充二.1 明列的 —— 缺了它们，
+    大纲生成那边"按节点检索细节"就没有可匹配的维度。
+    """
+    template, src, warn = summary_prompt_template() if template is None \
+        else (template, src, "")
+    system = _fill_slots(template, content=(content or "").strip())
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "请为上面这段素材生成摘要，"
+                                     "只输出一个合法 JSON 对象。"},
+    ]
+    text = _ask(cfg, messages, purpose="summary")
+    data = _parse_summary(text)
+    return data, src, warn
+
+
+def _parse_summary(text):
+    """把模型吐的摘要解析成 dict。字段不认识的照样收，缺的补空。
+
+    摘要不像逐卡分类那样"形状错了要整批拒收" —— 摘要是给检索用的软信息，
+    字段少了只是检索维度少一点，不值得为它把已经花钱生成的东西丢掉。
+    但「摘要」这个主字段不能空，空了这条等于没生成。
+    """
+    s = (text or "").strip()
+    if s.startswith("```"):
+        nl = s.find("\n")
+        if nl >= 0:
+            s = s[nl + 1:]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3].rstrip()
+    data = None
+    try:
+        data = json.loads(s)
+    except Exception:
+        for a, b in (("{", "}"),):
+            i, j = s.find(a), s.rfind(b)
+            if i >= 0 and j > i:
+                try:
+                    data = json.loads(s[i:j + 1])
+                    break
+                except Exception:
+                    continue
+    if not isinstance(data, dict):
+        raise ValueError("摘要模型没返回 JSON：%s" % s[:200])
+
+    out = {
+        "summary": str(data.get("摘要") or data.get("summary") or "").strip(),
+        "use": str(data.get("用途") or data.get("use") or "").strip(),
+        "character_action": str(data.get("人物动作")
+                                or data.get("character_action") or "").strip(),
+        "emotion_path": str(data.get("情绪路径")
+                            or data.get("emotion_path") or "").strip(),
+        "scene_function": str(data.get("场景功能")
+                              or data.get("scene_function") or "").strip(),
+        "safe_note": str(data.get("安全参考说明")
+                         or data.get("safe_note") or "").strip(),
+    }
+    if not out["summary"]:
+        raise ValueError("摘要模型返回的「摘要」字段是空的：%s" % s[:200])
+    return out
+
+
+def summarize_batch(owner, group_rows, model_key=None):
+    """给一批已合并的逻辑素材组生成摘要，**不写库**，返回结果列表。
+
+    为什么「调模型」和「写库」分开：
+    调模型这一段属于 classification（跟 _ask 同一层），写库那段属于
+    classify_db（跟别的组操作同一层）。合在一起会让 classify_db 反向依赖
+    这边的 _ask，而那边本来只被 classification 调。
+
+    group_rows 每条要带：id / material_id / start_offset / end_offset /
+    merged_card_id，以及正文 content（调用方先取好，这里不再查库）。
+
+    返回 [{"group_id", "card_id", "ok", "summary", "meta_json",
+           "version", "error"}]，一条组一个元素，失败不炸整批。
+    """
+    cfg = pick_model(model_key)
+    tpl, src, _w = summary_prompt_template()
+    version = (SUMMARY_PROMPT_VERSION if src == "file"
+               else SUMMARY_PROMPT_VERSION_GENERIC)
+    results = []
+    for g in group_rows or []:
+        content = (g.get("content") or "").strip()
+        if not content:
+            results.append({"group_id": g.get("id"),
+                            "card_id": g.get("merged_card_id"),
+                            "ok": False,
+                            "error": "这条组没有正文，没法摘要"})
+            continue
+        try:
+            data, _s, _warn = _summarize_content(cfg, content, tpl, src)
+            meta = {
+                "use": data["use"],
+                "character_action": data["character_action"],
+                "emotion_path": data["emotion_path"],
+                "scene_function": data["scene_function"],
+                "safe_note": data["safe_note"],
+            }
+            results.append({"group_id": g.get("id"),
+                            "card_id": g.get("merged_card_id"),
+                            "ok": True,
+                            "summary": data["summary"],
+                            "meta_json": json.dumps(meta, ensure_ascii=False),
+                            "version": version})
+        except (ValueError, llm.LlmError) as e:
+            results.append({"group_id": g.get("id"),
+                            "card_id": g.get("merged_card_id"),
+                            "ok": False,
+                            "error": str(e)[:500]})
+    return results
+
+
+# ----------------------------------------------------------------------
 # 五、任务的读写
 # ----------------------------------------------------------------------
 
@@ -1877,6 +2099,9 @@ def _run_dict(row):
     d = dict(row)
     d["status_text"] = RUN_STATUS_TEXT.get(d["status"], d["status"])
     d["active"] = d["status"] in RUN_ACTIVE
+    # 界面靠这个名字订阅"模型正在吐什么"。后端推、前端订，
+    # 两边都从这一个函数拿，免得各拼一个字符串、改前缀时静默对不上。
+    d["stream_id"] = stream_id_for(d.get("id"))
 
     # ---- 「公开但私密」的脱敏点 ----
     # 这次用的提示词要是**别人**库里的那条，就把 user_prompt 抹掉。
@@ -2209,6 +2434,10 @@ def create_run(owner, material_id, classifier_name=None, model_key=None,
                               daemon=True)
         th.start()
         return {"ok": True, "run_id": run_id, "total_items": len(card_ids),
+                # 实时通道的名字由后端给（stream_id_for 是唯一出口）——
+                # 前端自己拼 "cls-"+run_id 的话，哪天前缀改了就会静默对不上，
+                # 表现是"点了开始、实时区一直空着"，而且谁也不报错。
+                "stream_id": stream_id_for(run_id),
                 "status": RUN_QUEUED, "status_text": RUN_STATUS_TEXT[RUN_QUEUED],
                 "will_split_first": will_split,
                 "classifier": clf.name, "classifier_label": clf.label,
@@ -2301,7 +2530,14 @@ def _run_worker(run_id, owner, classifier_name, card_ids):
 
     这个函数里**不允许**抛异常出去 —— 抛出去线程就死了，
     任务会永远停在 running。所有异常都在这里被接住、写进任务里。
+
+    【实时通道也在这里开和关】
+    开一条流让页面能看"模型正在吐什么"。关**必须**放在 finally 里：
+    漏关的话，那条连接会一直挂着等一个永远不来的结尾 ——
+    页面上就是"字停住了，但还在转圈"，比看不到流更让人不安。
     """
+    sid = stream_id_for(run_id)
+    livestream.open_stream(sid, {"kind": "classify", "run_id": run_id})
     try:
         _execute(run_id, owner, classifier_name, card_ids)
     except Exception as e:                                # pragma: no cover
@@ -2312,7 +2548,10 @@ def _run_worker(run_id, owner, classifier_name, card_ids):
                          error="任务异常：%s" % e, finished_at=now_str())
         except Exception:
             pass
+        livestream.note(sid, "任务异常：%s" % e, level="bad")
         print("[分类任务] 任务 #%s 崩了：%s\n%s" % (run_id, e, tb))
+    finally:
+        livestream.close(sid)
 
 
 def _execute(run_id, owner, classifier_name, card_ids):
@@ -2412,6 +2651,8 @@ def _execute(run_id, owner, classifier_name, card_ids):
         # 她写的补充提示词。从**任务记录**里读，不是现读她存的那份 ——
         # 任务跑到一半她去改提示词，不该影响这个已经在跑的任务。
         "user_prompt": "",
+        # 实时通道的名字。有它，模型每吐一块字就顺手推到页面上。
+        "stream_id": stream_id_for(run_id),
     }
 
     # 提示词模板在这里解析一次，整批任务共用这一份。
@@ -2937,9 +3178,13 @@ def material_state(owner, material_id):
         never    从没分类过      → 按钮「自动分类」
         running  正在跑          → 按钮「分类中」+ 进度，禁用
         done     跑完了          → 按钮「重新分类」（点了要二次确认）
-        partial  部分完成        → 按钮「重试分类」
+        partial  部分完成        → 按钮「重试失败项」+「手动归类」
         failed   失败            → 按钮「重试分类」+ 失败原因
         cancelled 被取消         → 按钮「继续分类」
+
+    partial / failed 会在**一张失败卡片都不剩**时降级成 done ——
+    她已经手动把那些卡归好类了，界面就不该再摆「重试」入口催她。
+    见下面那段注释。
     """
     with db.connect() as conn:
         m = conn.execute(
@@ -2999,7 +3244,11 @@ def material_state(owner, material_id):
                        "created_at", "finished_at", "error", "note",
                        "retry_of_run_id", "classifier", "model_key",
                        "heartbeat_at", "stale_seconds", "prompt_version",
-                       "prompt_source", "prompt_ref_id", "prompt_name")}
+                       "prompt_source", "prompt_ref_id", "prompt_name",
+                       # stream_id 必须带上：页面刷新之后再回来，
+                       # 前端只能靠它重新挂上实时通道（不然她刷新一下
+                       # 就再也看不到过程了 —— 而刷新是她的常用动作）。
+                       "stream_id")}
         out["progress"] = d["progress"]
         out["status_text"] = d["status_text"]
         mapping = {RUN_QUEUED: "running", RUN_RUNNING: "running",
@@ -3007,6 +3256,26 @@ def material_state(owner, material_id):
                    RUN_FAILED: "failed", RUN_CANCELLED: "cancelled"}
         out["state"] = mapping.get(run["status"], "never")
         out["last_run_at"] = run["finished_at"] or run["started_at"] or run["created_at"]
+
+        # 【失败项都被她手动归类完了 → 不该再挂着"部分完成/失败"】
+        # 2026-09-27 她报的：自己一张张手动归完类之后，文件行上还挂着
+        # 「失败 N 张 · 手动归类」和「重试失败项」，她怕漏了什么就反复点，
+        # 每次都要再花一笔钱。
+        #
+        # 病根在于这两个状态记的是**任务的历史**（上次跑到第几张时炸了），
+        # 而界面上那两个入口指的是**现在的卡片**状态。她的手动归类只改
+        # 卡片、不改历史任务，于是历史永远停在"部分完成"。
+        #
+        # 判据就用 failed_cards 同一个数（STATUS_FAILED 的卡片数），
+        # 不另立口径 —— 两张嘴说同一件事，迟早对不上。
+        #
+        # 还留一道闸：必须真分出过东西（AI 建议或人工确认至少有一条）。
+        # 否则"任务刚起步就炸、一张卡都没判"也会被算成完成 ——
+        # 那种情况报错和重试入口都得留着，她才知道发生了什么。
+        if (out["state"] in ("partial", "failed") and n_failed == 0
+                and (n_ai or n_confirmed)):
+            out["state"] = "done"
+            out["status_text"] = "分类完成"
     return out
 
 

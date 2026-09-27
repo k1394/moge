@@ -673,6 +673,18 @@
   .grp .gacts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .grp .gacts .sp { margin-left: auto; font-size: 12px; color: var(--ink-3); }
 
+  /* 逻辑素材组的摘要（分类素材参考那条线） */
+  .grp .gsum {
+    font-size: 12.5px; line-height: 1.7; color: var(--ink-2);
+    background: var(--bg); border: 1px dashed var(--line);
+    border-radius: 7px; padding: 8px 10px; margin: 2px 0 9px;
+  }
+  .grp .gsum.off { color: var(--ink-3); border-style: solid; }
+  .grp .gsum.bad { color: var(--danger); border-style: solid; }
+  .grp .gsum-body { white-space: pre-wrap; word-break: break-word; }
+  .grp .gsum-meta { color: var(--ink-2); margin-top: 5px; font-size: 12px; }
+  .grp .gsum-safe { color: var(--ink-3); margin-top: 4px; font-size: 11.5px; }
+
   .clcard {
     display: flex; gap: 11px; align-items: flex-start;
     background: var(--card); border: 1px solid var(--line);
@@ -1515,6 +1527,95 @@
     gap: 11px;
   }
   .olnodeform textarea { min-height: 58px; }
+
+  /* ============================================================
+     实时输出：模型正在吐的字，来多少画多少
+     ============================================================
+     这一块的样式没什么花头，关键在两条：
+       ① 文字区必须**会自己长高、能滚、能选中**，且新字永远贴在底下 ——
+          不然她的观感就是"卡住了，最后一下全冒出来"，
+          而那正好是这一版要治的毛病。
+       ② 想停/想关的按钮要一直在视野里，任务跑几分钟是常事。
+     ============================================================ */
+  #liveBox { margin: 0 var(--pad) 10px; }
+  .livewrap {
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card); padding: 10px 12px; margin: 0 0 10px;
+  }
+  .livehead {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .livehead .lt { font-weight: 600; color: var(--ink); flex: 0 0 auto; }
+  .livehead .lwho {
+    flex: 1 1 auto; min-width: 0; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .livehead .lstats {
+    flex: 0 0 auto; color: var(--ink-3); font-variant-numeric: tabular-nums;
+  }
+  .livedot {
+    flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .livedot.on { animation: livepulse 1s ease-in-out infinite; }
+  .livedot.done { background: #2c7a4e; }
+  .livedot.bad { background: var(--danger); }
+  @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .livetext {
+    margin: 8px 0 0; padding: 8px 10px; border-radius: 8px;
+    background: var(--line-2); color: var(--ink);
+    font: 12.5px/1.85 "Consolas", "Microsoft YaHei", monospace;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 240px; overflow: auto;
+  }
+  .livetext:empty::before { content: "等模型吐第一个字…"; color: var(--ink-3); }
+  .lvpane { margin-top: 8px; }
+  .lvpane .pn { font-size: 11.5px; color: var(--ink-3); margin-bottom: 3px; }
+  .livenote { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.75; }
+  .lvnotes { margin-top: 5px; }
+  .livenote.bad { color: var(--danger); }
+  .livenote.warn { color: #a06a2c; }
+  .lvx {
+    flex: 0 0 auto; border: none; background: transparent; color: var(--ink-3);
+    font-size: 13px; line-height: 1; padding: 3px 6px; border-radius: 5px;
+  }
+  .lvx:hover { background: var(--line-2); color: var(--ink); }
+
+  /* ---- 试跑：就地展开在那条模型下面 ----
+     为什么不是弹层：她要拿试跑的结果去比几条模型谁快、谁吐得顺，
+     弹层一次只能看一条，来回开关就比不出来了。 */
+  .pbwrap {
+    margin-top: 9px; padding: 9px 10px; border-radius: 9px;
+    background: var(--line-2); border: 1px dashed var(--line);
+  }
+  .pbtool { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .pbtool input[type=text] { flex: 1 1 240px; min-width: 0; font-size: 12.5px; }
+  .pbstats {
+    font-size: 11.5px; color: var(--ink-3); margin-top: 7px;
+    line-height: 1.8; font-variant-numeric: tabular-nums;
+  }
+  .pbstats b { color: var(--ink); font-weight: 600; }
+  .pbstats .fast { color: #2c7a4e; }
+  .pbstats .slow { color: #a06a2c; }
+
+  /* ---- 耗时对比表 ---- */
+  .mstdays {
+    font-size: 12px; height: 26px; border: 1px solid var(--line);
+    border-radius: 7px; background: #fff; padding: 0 5px; color: var(--ink-2);
+  }
+  .mstwrap { overflow-x: auto; }
+  table.mst { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.mst th, table.mst td {
+    padding: 6px 8px; border-bottom: 1px solid var(--line-2);
+    text-align: right; white-space: nowrap;
+  }
+  table.mst th:first-child, table.mst td:first-child { text-align: left; }
+  table.mst th { color: var(--ink-3); font-weight: 500; font-size: 11.5px; }
+  table.mst td { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  table.mst td.mname { color: var(--ink); white-space: normal; }
+  table.mst td.mname .mm { color: var(--ink-3); font-size: 11.5px; }
+  table.mst td.mbad { color: var(--danger); }
 </style>
 
 </head>
@@ -1564,6 +1665,12 @@
       <!-- 这行文案由 paintClsHint() 按"有没有配模型"填。
            这里只放个占位，免得加载的一瞬间闪一遍过时的说法 -->
       <div class="clshint" id="clsHint">正在读模型配置…</div>
+
+      <!-- 实时输出：任务在跑的时候，模型正在吐的字就近显示在这里。
+           为什么不放进每份文件的按钮排里：那一条每 1.5 秒被轮询整个重画一次
+           （clsBarInner / infBarInner），实时文字放进去了会被反复擦掉，
+           表现是"闪着闪着就没了"。所以它必须待在轮询摸不到的地方。 -->
+      <div id="liveBox"></div>
 
       <div class="vbody">
         <aside class="tagside">
@@ -1795,6 +1902,30 @@
               </div>
 
               <div class="field">
+                <!-- 分类素材参考：开关默认关（折腰拍板）。
+                     开了才露条数框。上限她填多少用多少，硬顶 30（后端夹）。 -->
+                <label>分类素材参考 <span class="chip gray">治细节不足</span></label>
+                <div class="olrow">
+                  <label class="switch">
+                    <input type="checkbox" id="olUseRef">
+                    <span>参考分类素材（只发摘要，不发原文）</span>
+                  </label>
+                  <label class="mdhint olpoolsize" id="olRefSizeWrap" hidden>
+                    整篇最多带
+                    <input type="number" id="olRefSize" min="1" max="30" step="1">
+                    条
+                  </label>
+                  <span class="grow"></span>
+                  <span class="mdhint" id="olRefNote"></span>
+                </div>
+                <div class="mdhint">
+                  从「素材分类」里已经合并、已经生成摘要的逻辑素材组里挑。
+                  AI 只借它们的写作功能（反应、对白、情绪、氛围），禁止照抄原句；
+                  每个节点会记下参考了哪条、借了什么。
+                </div>
+              </div>
+
+              <div class="field">
                 <label>补充提示词 <span class="chip gray">选填</span></label>
                 <div class="clprompt">
                   <div class="clpbody">
@@ -1839,6 +1970,9 @@
           <div id="olPreview"></div>
 
           <!-- ============ 任务与候选 ============ -->
+          <!-- 实时输出：大纲任务在跑的时候，各个模型正在吐的字显示在这里。
+               放在任务卡上面，是因为"正在发生的事"该比"发生过的事"先看到。 -->
+          <div id="olLive"></div>
           <div id="olRuns"></div>
 
           <!-- ============ 大纲库 ============ -->
@@ -2256,6 +2390,26 @@
         <span class="mdsechint">地址和密钥跟着上面的接入点走，这里只需要模型名。</span>
       </div>
       <div id="mdBody"></div>
+
+      <!-- 耗时对比。为什么放在模型设置页而不是单独一页：
+           她问的是"哪个模型快、哪个稳"，那是**配置层面**的判断 ——
+           跟"用哪家、用哪个模型名"是同一个决定，摆在一起才看得见因果。
+           数据来自后端每次响应都记的那一笔（试跑和真实任务都记）。 -->
+      <div class="mdsec">
+        耗时对比（最近
+        <select id="mstDays" class="mstdays">
+          <option value="7">7 天</option>
+          <option value="30" selected>30 天</option>
+          <option value="90">90 天</option>
+          <option value="365">一年</option>
+        </select>
+        的记录）
+        <span class="mdsechint">每发一次请求就记一笔 —— 试跑和真实任务都算。
+          「首字」是模型吐出第一个字等了多久，「总耗时」是整段收完用了多久。
+          没量到首字的那几次不参与平均：把它们当成 0 算进去会把平均拉低，
+          得出「这个模型很快」的错误结论。</span>
+      </div>
+      <div id="mstBody"></div>
       <div class="why" style="margin-top:14px">
         Key 只写在你本机的 <b>data/models.json</b>，界面上永远只显示打码后的样子。
         data/ 整个目录都在忽略名单里，不会进公开仓库。<br>
@@ -2327,8 +2481,11 @@
       <!-- 补充提示词。原来在「素材分类」页顶上，她要求挪到这里 ——
            理由很顺：写提示词的唯一目的就是这一刻的分类，那就该跟
            "用哪个模型"并排站着，而不是隔着一个页面。
-           三个平级入口（不是下拉）：从库里挑一条 / 现写一段 / 当场新建一条。 -->
-      <div class="field">
+           三个平级入口（不是下拉）：从库里挑一条 / 现写一段 / 当场新建一条。
+
+           【id 是给"重试"用的】重试接口只认方法和模型，提示词一律沿用
+           上次那份快照，所以重试时这一整块要藏起来（见 openClsRun）。 -->
+      <div class="field" id="crPromptField">
         <label>补充提示词 <span class="chip gray">选填</span></label>
         <div class="clprompt" id="clPrompt">
           <div class="clpbody" id="clPBody">
@@ -3246,6 +3403,366 @@ function fmtNum(n) {
   return (n || 0).toLocaleString("zh-CN");
 }
 
+/* ============================================================
+   流式读取（SSE）：来多少字，就画多少字
+   ============================================================
+   她 2026-09-27 的原话：
+     「让模型的输出以流式方式实时同步到页面，来多少字就显示多少字，
+       不要做任何拦截、缓冲或分块后统一输出，确保用户能即时看到
+       逐步生成的内容。」
+
+   这一段里有四条硬规矩，以后谁改都不能松：
+
+   ① 用 fetch + response.body.getReader()，拿到一块**立刻**回调一块。
+      不许 debounce、不许把相邻的块合并、不许"攒够 N 个字再画"。
+   ② 每拿到一块就解码、就写进 DOM。中间不插 requestAnimationFrame
+      之类的缓冲 —— 那又会变成"一次冒一大段"。
+   ③ 按**空行**切帧，不是按行。SSE 允许一帧里的同一段 JSON 拆成好几行
+      data: —— 按行各自解析的话，每一行都解不出合法 JSON，然后被静默丢掉。
+      症状是"模型的回答总是缺一截"，而且不报错、测试也不失败。
+   ④ 中间层不许攒：后端已经带了 Cache-Control / X-Accel-Buffering，
+      前端这边也不能自己再加一层。
+
+   另外一条救命的：HTTP 200、但流里出现 {"t":"error"} 是常态
+   （上游限流、内容被拦、额度用完）。必须把这句话原样说出来 ——
+   不然她看到的是"什么都没有"，然后跑去怀疑自己 Key 填错了。
+   ============================================================ */
+
+async function readSSE(url, opt, onEvent) {
+  const r = await fetch(url, opt);
+  if (r.status === 401) {
+    if (url.indexOf("/api/auth/") !== 0) showAuth("登录已过期，请重新登录");
+    throw new Error("还没登录（或者登录过期了）");
+  }
+  if (!r.ok) {
+    let msg = "请求失败 " + r.status;
+    try {
+      const d = await r.json();
+      msg = (d && (d.detail || d.message)) || msg;
+    } catch (e) { /* 不是 JSON 就用状态码 */ }
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  const body = r.body;
+  if (!body || !body.getReader) {
+    /* 浏览器太老，或者 body 被什么中间层吃掉了。
+       退化成"整份读完再解" —— 不是我们要的效果，但总比一片空白强。
+       调用处会把这件事写进说明，不假装它是流式。 */
+    const txt = await r.text();
+    txt.split("\n\n").forEach(f => emitSSEFrame(f, onEvent));
+    return;
+  }
+  const reader = body.getReader();
+  const dec = new TextDecoder("utf-8");
+  let buf = "";
+  while (true) {
+    const step = await reader.read();
+    if (step.done) break;
+    let piece = dec.decode(step.value, { stream: true });
+    /* 反代偶尔会把换行改写成 CRLF，而那一对 \r\n 可能正好被切在两个
+       数据块中间 —— 先补上，再统一成 \n。 */
+    if (buf.slice(-1) === "\r" && piece.charAt(0) === "\n") {
+      buf = buf.slice(0, -1) + "\n";
+      piece = piece.slice(1);
+    }
+    buf += piece.replace(/\r\n/g, "\n");
+    let i = buf.indexOf("\n\n");
+    while (i >= 0) {
+      const raw = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      emitSSEFrame(raw, onEvent);
+      i = buf.indexOf("\n\n");
+    }
+  }
+  buf += dec.decode();
+  if (buf.trim()) emitSSEFrame(buf, onEvent);
+}
+
+/* 把一帧原始文本解成一条事件。
+   一帧里可以有好几行 data: —— 合起来才是完整的 JSON（见上面第 ③ 条）。 */
+function emitSSEFrame(raw, onEvent) {
+  if (!raw) return;
+  const datas = [];
+  String(raw).split("\n").forEach(line => {
+    if (!line || line.charAt(0) === ":") return;     // 空行 / 注释（心跳）
+    if (line.indexOf("data:") !== 0) return;         // event: / id: / retry: 不用
+    let v = line.slice(5);
+    if (v.charAt(0) === " ") v = v.slice(1);
+    datas.push(v);
+  });
+  if (!datas.length) return;
+  const txt = datas.join("\n");
+  if (txt === "[DONE]") return;
+  let obj = null;
+  try { obj = JSON.parse(txt); }
+  catch (e) {
+    if (onEvent) onEvent({ t: "_junk", text: txt });
+    return;
+  }
+  if (onEvent) onEvent(obj);
+}
+
+/* ============================================================
+   实时输出：任务在跑的时候，模型正在吐的字
+   ============================================================
+   一个任务一条流（sid），每条流一块"牌子"。牌子长什么样、放哪儿，
+   全在这一节里管 —— 任务那边只管往流里塞字。
+
+   为什么不做成"一个全局的当前输出框"：
+   大纲是多模型并行跑的，分类是一批接一批跑的。全混在一个框里，
+   她会分不清哪句是哪个模型说的 —— 而这正是她要判断的东西。
+
+   挂点只有两个（都是静态容器，轮询永远碰不到）：
+     · 大纲的流   → #olLive（大纲页）
+     · 分类/内化  → #liveBox（总素材库）
+   为什么分类/内化不放进去文件行的按钮排里：那一条每 1.5 秒被
+   clsBarInner / infBarInner 整个重画一次，实时文字放进去会被反复擦掉。
+   ============================================================ */
+
+const LIVE = { subs: {}, order: [], MAX: 4 };
+
+function liveMountFor(sid) {
+  return String(sid || "").indexOf("ol-") === 0
+    ? document.getElementById("olLive")
+    : document.getElementById("liveBox");
+}
+
+/* 造一块牌子，并把已经收到的字补回来。
+   【为什么要"补回来"】页面重画、切页回来时牌子是新造的，
+   而她可能已经看了半屏字 —— 让她回到空框等于把过程吞了。 */
+function liveEnsure(sid, meta) {
+  sid = String(sid || "");
+  let st = LIVE.subs[sid];
+  if (st && st.el && st.el.parentNode) return st;
+  const mount = liveMountFor(sid);
+  if (!mount) return null;
+  if (!st) {
+    st = LIVE.subs[sid] = {
+      sid: sid, live: true, t0: Date.now(), chars: 0,
+      title: (meta && meta.title) || "任务", sub: (meta && meta.sub) || "",
+      panes: {}, el: null, body: null, noteEl: null, statEl: null,
+      timer: null, abort: null, ended: false, err: ""
+    };
+    LIVE.order.push(sid);
+  } else {
+    st.el = st.body = st.noteEl = st.statEl = null;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "livewrap";
+  wrap.innerHTML =
+    '<div class="livehead">' +
+      '<span class="livedot' + (st.live ? " on" : (st.err ? " bad" : " done")) + '"></span>' +
+      '<span class="lt"></span>' +
+      '<span class="lwho"></span>' +
+      '<span class="lstats"></span>' +
+      '<button class="lvx" type="button" title="关掉这一块（任务照旧在后台跑，不受影响）">✕</button>' +
+    '</div>' +
+    '<div class="lvbody"></div>' +
+    '<div class="lvnotes"></div>';
+  wrap.querySelector(".lt").textContent = st.title;
+  wrap.querySelector(".lwho").textContent = st.sub;
+  wrap.querySelector(".lvx").onclick = () => liveRemove(sid);
+  mount.appendChild(wrap);
+  st.el = wrap;
+  st.body = wrap.querySelector(".lvbody");
+  st.noteEl = wrap.querySelector(".lvnotes");
+  st.statEl = wrap.querySelector(".lstats");
+  /* 【先把空文字区画出来】
+     不画的话，第一个字到之前那块是空的 —— 她会以为"没反应"。
+     有了它，旁边就是那句「等模型吐第一个字…」，一眼看得出在等。
+     （大纲是多模型并行，等真收到某个模型的字时，这块空栏会被顶掉，
+       见 liveChunk 里的 dropEmptyDefaultPane。） */
+  if (!st.panes[""]) st.panes[""] = { text: "", el: null };
+  // 把已有的字补回来
+  Object.keys(st.panes).forEach(k => {
+    const p = st.panes[k];
+    p.el = null;
+    livePaneEl(st, k);
+    if (p.el) p.el.textContent = p.text;
+  });
+  liveStats(st);
+  return st;
+}
+
+function livePaneEl(st, name) {
+  let p = st.panes[name];
+  if (!p) return null;
+  if (p.el && p.el.parentNode) return p.el;
+  const box = document.createElement("div");
+  box.className = "lvpane";
+  if (name) {
+    const h = document.createElement("div");
+    h.className = "pn";
+    h.textContent = name;
+    box.appendChild(h);
+  }
+  const tx = document.createElement("pre");
+  tx.className = "livetext";
+  box.appendChild(tx);
+  if (st.body) st.body.appendChild(box);
+  p.el = tx;
+  return tx;
+}
+
+function liveStats(st) {
+  if (!st.statEl) return;
+  const parts = [];
+  if (st.live) parts.push("已等 " + ((Date.now() - st.t0) / 1000).toFixed(1) + " 秒");
+  else if (st.secs != null) parts.push("用时 " + st.secs.toFixed(1) + " 秒");
+  if (st.chars) parts.push(fmtNum(st.chars) + " 字");
+  else if (st.live) parts.push("还没等到第一个字");
+  st.statEl.textContent = parts.join(" · ");
+}
+
+/* 真收到带模型名的块时，把那个空着的主栏拿掉 ——
+   不然大纲那种"多模型并行"的场面会一直顶着一栏空白。 */
+function dropEmptyDefaultPane(st) {
+  const d = st.panes[""];
+  if (!d || d.text) return;
+  if (d.el && d.el.parentNode && d.el.parentNode.parentNode) {
+    d.el.parentNode.parentNode.removeChild(d.el.parentNode);
+  }
+  delete st.panes[""];
+}
+
+/* 塞一段字。**这里是"不缓冲"的最后一道**：
+   来一块就 append 一次，不合并、不排队、不等下一帧。 */
+function liveChunk(sid, text, model) {
+  const st = LIVE.subs[sid];
+  if (!st || !text) return;
+  const name = model || "";
+  if (name) dropEmptyDefaultPane(st);
+  if (!st.panes[name]) st.panes[name] = { text: "", el: null };
+  const p = st.panes[name];
+  p.text += text;
+  const el = livePaneEl(st, name);
+  if (el) {
+    /* 用 appendChild(文本节点) 而不是 el.textContent = p.text：
+       后者每来一块都要把整段重写一遍，几千块下来是平方级的工作量，
+       长任务会肉眼可见地卡。 */
+    const near = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+    el.appendChild(document.createTextNode(text));
+    if (near) el.scrollTop = el.scrollHeight;   // 新字始终贴在视野里
+  }
+  st.chars += text.length;
+  liveStats(st);
+}
+
+function liveNote(st, text, level) {
+  if (!text) return;
+  // 同一句话连着重三次（比如心跳警告）只留一条，别刷屏
+  if (st.lastNote === text && level !== "bad") return;
+  st.lastNote = text;
+  if (!st.noteEl) return;
+  const line = document.createElement("div");
+  line.className = "livenote" + (level === "bad" ? " bad" : level === "warn" ? " warn" : "");
+  line.textContent = text;
+  st.noteEl.appendChild(line);
+}
+
+function liveDot(st, cls) {
+  if (!st.el) return;
+  const d = st.el.querySelector(".livedot");
+  if (d) d.className = "livedot" + (cls ? " " + cls : "");
+}
+
+function liveEnd(st, err) {
+  if (st.ended) return;
+  st.ended = true;
+  st.live = false;
+  st.secs = (Date.now() - st.t0) / 1000;
+  if (st.timer) { clearInterval(st.timer); st.timer = null; }
+  if (st.abort) { try { st.abort.abort(); } catch (e) {} st.abort = null; }
+  if (err) { st.err = err; liveNote(st, err, "bad"); liveDot(st, "bad"); }
+  else { liveDot(st, "done"); }
+  liveStats(st);
+  liveReap();
+}
+
+function liveRemove(sid) {
+  const st = LIVE.subs[sid];
+  if (!st) return;
+  if (st.abort) { try { st.abort.abort(); } catch (e) {} }
+  if (st.timer) clearInterval(st.timer);
+  if (st.el && st.el.parentNode) st.el.parentNode.removeChild(st.el);
+  delete LIVE.subs[sid];
+  LIVE.order = LIVE.order.filter(x => x !== sid);
+}
+
+/* 收拾掉最老的、**已经结束**的牌子，别让页面越堆越长。
+   正在跑的一律不动 —— 那是她此刻在看的东西。 */
+function liveReap() {
+  while (LIVE.order.length > LIVE.MAX) {
+    const sid = LIVE.order.find(x => LIVE.subs[x] && !LIVE.subs[x].live);
+    if (!sid) return;
+    liveRemove(sid);
+  }
+}
+
+function liveEvent(st, ev) {
+  const t = ev && ev.t;
+  if (t === "chunk") {
+    liveChunk(st.sid, ev.text || "", ev.model || "");
+  } else if (t === "note") {
+    liveNote(st, ev.text || "", ev.level || "info");
+  } else if (t === "head") {
+    if (ev.dropped_chars) {
+      liveNote(st, "前面有 " + fmtNum(ev.dropped_chars) +
+        " 字没赶上显示（这块只留最近的一段；任务本身不受影响）。", "warn");
+    }
+  } else if (t === "gone") {
+    liveNote(st, ev.text || "这条流已经不在了。", "warn");
+    liveEnd(st, null);
+  } else if (t === "finish" || t === "end") {
+    liveEnd(st, null);
+  } else if (t === "_junk") {
+    liveNote(st, "有一段内容没能解析，已跳过 " +
+      fmtNum((ev.text || "").length) + " 个字符。", "warn");
+  }
+  // "idle" 是心跳，什么都不做 —— 它存在的意义是别让连接被掐掉
+}
+
+/* 挂上一条流。已经在看的不重复挂 ——
+   挂两次会有两条连接，同一段字会进来两次，看着像模型重复了。 */
+async function liveSubscribe(sid, meta) {
+  sid = String(sid || "");
+  if (!sid) return;
+  const old = LIVE.subs[sid];
+  if (old && old.live && old.abort) return;
+  const st = liveEnsure(sid, meta);
+  if (!st) return;                      // 页面上没有它的挂点（比如还没进这一页）
+  st.live = true;
+  st.ended = false;
+  st.err = "";
+  st.t0 = Date.now();
+  liveDot(st, "on");
+  liveStats(st);
+  if (st.timer) clearInterval(st.timer);
+  st.timer = setInterval(() => liveStats(st), 200);
+  const ac = new AbortController();
+  st.abort = ac;
+  liveReap();
+  try {
+    await readSSE("/api/live/" + encodeURIComponent(sid), { signal: ac.signal },
+      ev => liveEvent(st, ev));
+    if (LIVE.subs[sid]) liveEnd(st, null);
+  } catch (e) {
+    if (String((e && e.name) || "") === "AbortError") return;   // 我们自己关的
+    if (LIVE.subs[sid]) liveEnd(st, "实时通道断了：" + (e && e.message ? e.message : e));
+  }
+}
+
+/* 给一条流换个标题（任务卡刚拿到文件名之类的信息时用） */
+function liveRetitle(sid, title, sub) {
+  const st = LIVE.subs[sid];
+  if (!st) return;
+  if (title) st.title = title;
+  if (sub != null) st.sub = sub;
+  if (st.el) {
+    st.el.querySelector(".lt").textContent = st.title;
+    st.el.querySelector(".lwho").textContent = st.sub;
+  }
+}
+
 /* ================== 左导航与功能切换 ================== */
 
 /* 按 VIEWS 画出左侧那一列 */
@@ -3711,7 +4228,12 @@ function paintClsHint(force) {
   let txt;
   if (m.llm_ready) {
     txt = '自动分类现在能用<b>大模型</b>了，已配好 <b>' + usable.length + '</b> 个：' +
-      esc(usable.map(u => u.label || u.key).join("、")) +
+      // 真模型名也写上（例如「通义千问 Plus（阿里云百炼）（qwen3.7-plus）」）。
+      // 她 2026-09-27 问"列表里没有 qwen3.7-plus" —— 光看她自己起的中文标签
+      // 确实看不出来，而两条「中转站」的标签还是一模一样的。
+      esc(usable.map(u => (u.label || u.key) +
+        (u.model && u.model !== (u.label || u.key)
+          ? "（" + u.model + "）" : "")).join("、")) +
       '。点「自动分类」时可以自己挑用哪个。<br>' +
       '先把一件事说清楚：<b>被分类的素材片段会发到模型服务商那边</b>，' +
       '换来的才是「读得懂句子」的判断。原文只存在你电脑上，分类不会改动它一个字；' +
@@ -3793,15 +4315,17 @@ function clsBarInner(mid) {
     if (s.failed_cards) {
       btns.push(clsBtn(mid, "failed",
                        "失败 " + fmtNum(s.failed_cards) + " 张 · 手动归类", ""));
+      btns.push(clsBtn(mid, "retry", "重试失败项", "primary"));
     }
-    btns.push(clsBtn(mid, "retry", "重试失败项", "primary"));
     btns.push(clsBtn(mid, "redo", "重新分类", ""));
 
   } else if (s.state === "failed") {
     chips.push('<span class="chip warn">上次失败</span>');
     why = clsWhy(s);
-    // 整份都判挂的时候，先给她一条手动兜底的路，再让她决定要不要重试
-    btns.push(clsBtn(mid, "failed", "手动归类", ""));
+    // 整份都判挂的时候，先给她一条手动兜底的路，再让她决定要不要重试。
+    // 但**只有真的还有失败卡片时**才给「手动归类」——
+    // 那些卡她已经处理完的话，这个入口就是催她白跑一趟（见下面注释）。
+    if (s.failed_cards) btns.push(clsBtn(mid, "failed", "手动归类", ""));
     btns.push(clsBtn(mid, "retry", "重试分类", "primary"));
 
   } else if (s.state === "cancelled") {
@@ -3854,7 +4378,14 @@ function clsWho(s) {
   // 名字只藏在 model_version（"placeholder-rules-v1"）里。
   // 两种都得认出来，不然历史任务会显示成一串机器名 —— 看着像坏数据。
   if (c === "placeholder" || /placeholder/i.test(mv)) return "本地占位规则判的";
-  const name = r.model_key || mv;
+  /* 【显示真模型名，不显示内部短名字】2026-09-27 她的困惑就是这一行。
+     她在「模型设置」里把模型名改成了 qwen3.7-plus（阿里云新版本的名字），
+     卡片上却一直写「qwen-plus 判的」—— 因为这里原来优先取 model_key。
+     model_key 是**内部短名字**：建库时由 DEFAULT_MODELS 播种成 qwen-plus，
+     之后不管模型名怎么改它都不动（动了就认不出历史任务了）。
+     model_version 记的才是**那一次真发给服务商的名字**，跟设置页对得上。
+     顺序不能反，而且必须是 mv 在前 —— 她要靠这一行判断"我改的名字生效没有"。 */
+  const name = mv || r.model_key || "";
   return name ? (name + " 判的") : "";
 }
 
@@ -3919,6 +4450,23 @@ function paintClsBars() {
     const mid = Number(el.dataset.clsfor);
     el.innerHTML = clsBarInner(mid);
   });
+  clsAutoLive();
+}
+
+/* 把还在跑的分类任务重新挂上实时通道。
+   为什么必须做：页面刷新一下、切页回来一下，内存里的订阅就没了 ——
+   而刷新是她的常用动作。不补这一步，她刷新后就再也看不到过程。
+   【可以反复调】liveSubscribe 自己会挡住重复挂载，所以放在
+   每 1.5 秒跑一次的 paintClsBars 里是安全的。 */
+function clsAutoLive() {
+  Object.keys(S.cls || {}).forEach(k => {
+    const s = S.cls[k] || {};
+    if (s.state !== "running" || !s.run || !s.run.stream_id) return;
+    liveSubscribe(s.run.stream_id, {
+      title: "素材分类",
+      sub: "《" + (s.title || "这份素材") + "》· 正在把卡片分批判类"
+    });
+  });
 }
 
 /* 有任务在跑就开轮询，没有就停。
@@ -3971,25 +4519,28 @@ async function clsAct(mid, act, el) {
     return showFailedCards(mid, t ? t.textContent.trim() : "");
   }
 
-  // 重新分类 / 开始：先弹面板让她定"这次用谁判"。
+  // 重新分类 / 开始 / 重试：先弹面板让她定"这次用谁判"。
   // 面板里一次说清这几件事：用大模型还是本地规则、重新分类会覆盖多少张、
   // 素材会不会发到服务商那边。比原来那种"一句 confirm 然后闷头跑"诚实得多 ——
   // 尤其是"素材会离开这台电脑"这件事，她有权在按钮之前就知道。
-  if (act === "redo" || act === "start") {
+  //
+  // 【重试为什么也走这里】她 2026-09-27 提的第三条就是它：重试以前是
+  // 一键闷头跑，模型写死后端沿用上次那个，她在界面上换不了。可「重试」
+  // 本来就是"再判一遍"，凭什么不能挑模型 —— 她要比哪个模型分得准，
+  // 靠的正是这个。默认还是替她选好上次那一个：什么都不改就点，
+  // 行为跟以前一模一样，也不会多花一分钱。
+  if (act === "redo" || act === "start" || act === "retry") {
     return openClsRun(mid, act, el);
   }
 
+  // 走到这儿的只剩「取消」（start / redo / retry 上面都已经 return 了）。
+  // 取消是一键动作，不用选模型 —— 它不花钱。
   S.clsBusy[mid] = true;
   if (el) el.disabled = true;
 
-  const url = "/api/materials/" + mid +
-              (act === "cancel" ? "/classification-cancel"
-               : act === "retry" ? "/classification-retry"
-               : "/auto-classify");
-
   try {
-    const r = await post(url);
-    toast(r.message || (act === "cancel" ? "已请求取消" : "任务已提交，后台开始跑"));
+    const r = await post("/api/materials/" + mid + "/classification-cancel");
+    toast(r.message || "已请求取消");
     await clsRefreshOne(mid);
   } catch (e) {
     toast(e.message, true);
@@ -4433,6 +4984,8 @@ const C = {
   groups: [], gCounts: {},
   gs: { pending: "", merged: "", ignored: "" },
   ga: { merge: "", review: "" },
+  gsum: { done: 0, empty: 0, failed: 0, total: 0 },
+  gsumBusy: false,
   /* 卡片状态的「键 → 中文」映射，也是后端下发的。
      用它来表达"AI 没判成功的那一批卡"（sk.failed），
      这样 JS 里就不用写死「失败」两个字 —— 后端哪天改口径，
@@ -5311,6 +5864,7 @@ async function loadGroups() {
     const r = await api("/api/groups?limit=200");
     C.groups = r.groups || [];
     C.gCounts = r.counts || {};
+    C.gsum = r.summary || { done: 0, empty: 0, failed: 0, total: 0 };
   } catch (e) {
     // 组取不到不该拦住卡片流 —— 它只是列表上面的一条提示，
     // 而卡片是这个页面的主体。
@@ -5342,10 +5896,14 @@ function renderGroups() {
   const head = '<div class="ghead"><b>' +
     (pend ? "有 " + fmtNum(pend) + " 组素材等着你定" : "逻辑素材组") + "</b>" +
     "<span>AI 觉得这几段合起来才算一条完整素材。" +
-    "点「合并这一组」才会真的合成一条，随时能撤销。</span></div>";
+    "点「合并这一组」才会真的合成一条，随时能撤销。" +
+    summaryHint() + "</span>" +
+    summaryBtn() + "</div>";
 
   box.innerHTML = head + list.map(groupCardHtml).join("");
 
+  const sb = box.querySelector("button[data-gsum]");
+  if (sb) sb.onclick = () => summarizeGroups(sb);
   box.querySelectorAll("button[data-gact]").forEach(b => {
     b.onclick = () => actGroup(Number(b.dataset.gid), b.dataset.gact, b);
   });
@@ -5374,8 +5932,66 @@ function groupCardHtml(g) {
       "（共 " + fmtNum(g.chars) + " 字）—— 它的理由：" + why + esc(conf) +
     "</div>" +
     '<div class="gmem">' + mem + "</div>" +
+    summaryBlockHtml(g) +
     '<div class="gacts">' + groupActsHtml(g) +
       '<span class="sp">' + esc(tail) + "</span></div></div>";
+}
+
+function summaryBlockHtml(g) {
+  // 只有「已合并」的组才需要摘要（它才是大纲参考的对象）。
+  if (g.status !== C.gs.merged) return "";
+  if (!g.summary && g.summary_status !== "失败") {
+    return '<div class="gsum off">还没生成摘要 —— 点上面的「生成摘要」' +
+      "才会给它写一份，以后大纲生成好检索细节。</div>";
+  }
+  if (g.summary_status === "失败") {
+    return '<div class="gsum bad">上次生成摘要失败了，可以再点「生成摘要」重试。</div>';
+  }
+  const meta = g.summary_meta || {};
+  const bits = [];
+  if (meta.use) bits.push("用途：" + esc(meta.use));
+  if (meta.emotion_path) bits.push("情绪：" + esc(meta.emotion_path));
+  if (meta.scene_function) bits.push("场景作用：" + esc(meta.scene_function));
+  const metaLine = bits.length
+    ? '<div class="gsum-meta">' + bits.join("　") + "</div>" : "";
+  return '<div class="gsum">' +
+    '<div class="gsum-body">' + esc(g.summary) + "</div>" +
+    metaLine +
+    '<div class="gsum-safe">' + esc(meta.safe_note || "") + "</div>" +
+    "</div>";
+}
+
+function summaryHint() {
+  const s = C.gsum || {};
+  if (!s.total) return "";
+  const left = Math.max(0, (s.empty || 0) + (s.failed || 0));
+  if (!left) return "（" + s.total + " 组合并的都已生成摘要）";
+  return "（" + s.total + " 组已合并，" + left + " 组还没摘要）";
+}
+
+function summaryBtn() {
+  const s = C.gsum || {};
+  const left = Math.max(0, (s.empty || 0) + (s.failed || 0));
+  if (!s.total) return "";   // 没有已合并的组，就没有可摘要的对象
+  const busy = C.gsumBusy ? " disabled" : "";
+  return '<button class="mini" data-gsum' + busy + ">" +
+    (C.gsumBusy ? "正在生成…" : "生成摘要") + "</button>";
+}
+
+async function summarizeGroups(btn) {
+  if (C.gsumBusy) return;
+  C.gsumBusy = true;
+  renderGroups();
+  try {
+    const r = await api("/api/groups/summarize", { method: "POST", body: {} });
+    toast(r.message || "好了");
+    await loadGroups();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    C.gsumBusy = false;
+    renderGroups();
+  }
 }
 
 function groupActsHtml(g) {
@@ -6067,6 +6683,8 @@ async function openModels() {
     await loadProviders();
     renderModels();
     show("mkModels");
+    // 耗时对比表每次打开都重算一遍 —— 她刚跑完任务进来看的就是它
+    loadModelStats();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -6238,25 +6856,62 @@ function renderModels() {
         '<span class="grow" style="flex:1"></span>' +
         '<button class="mini mddel" data-act="mdel">从清单里删掉</button>' +
       '</div>' +
+      /* ---- 试跑 ----
+         为什么要跟「测试」分开两条按钮：
+           「测试」是查通不通 —— 发一句「在吗」，一秒回个提示，够用。
+           「试跑」是看它**怎么干活** —— 让她填自己的提示词（比如直接把
+           分类要求贴进来），把模型吐的字逐字显示出来，顺带量出
+           「首字等了多久 / 整段多久 / 多少字 / 有没有被掐断」。
+         这两件事的用途完全不同，合成一个按钮只会两边都不好用。 */
+      '<div class="mdrow2">' +
+        '<button class="mini" data-act="mprobe">试跑</button>' +
+        '<span class="mdhint" data-pbs>还没试过。点它会真发一次请求，' +
+          '把模型吐的字逐字显示出来，并量出首字和总耗时。</span>' +
+      '</div>' +
+      '<div class="pbwrap" data-pb style="display:none">' +
+        '<div class="pbtool">' +
+          '<input type="text" data-pbprompt id="pbp_' + esc(pbSafe(m.key)) + '"' +
+            ' placeholder="想试什么就写什么；留空就让它介绍自己">' +
+          '<button class="mini primary" data-act="pbrun">开始试跑</button>' +
+          '<button class="mini" data-act="pbstop" disabled>停下</button>' +
+        '</div>' +
+        '<div class="pbstats" data-pbst></div>' +
+        '<pre class="livetext" data-pbtx></pre>' +
+      '</div>' +
     '</div>';
   }).join("");
 
   box.querySelectorAll(".mdrow").forEach(row => {
     const i = Number(row.dataset.i);
     const get = f => row.querySelector('[data-f="' + f + '"]');
-    const kw = get("api_key"), en = get("enabled");
 
     row.querySelector('[data-act="mtest"]').onclick = () => testModel(i, row);
     row.querySelector('[data-act="mlist"]').onclick = () => openRowModels(i, row);
     row.querySelector('[data-act="msave"]').onclick = () => saveModel(i, row);
+    row.querySelector('[data-act="mprobe"]').onclick = () => openProbe(i, row);
     const mc = row.querySelector('[data-act="mclear"]');
     if (mc) mc.onclick = () => clearModelKey(i, row);
     row.querySelector('[data-act="mdel"]').onclick = () => deleteModel(i, row);
+    /* 试跑区里的控件单独接 —— 不能落进下面那个「回车 = 保存」里，
+       否则她在试跑输入框里按回车会莫名其妙地保存配置。 */
+    const pin = row.querySelector("[data-pbprompt]");
+    if (pin) {
+      draftBind(pin.id);
+      pin.onkeydown = ev => {
+        if (ev.key === "Enter") { ev.preventDefault(); probeRun(i, row); }
+      };
+    }
+    const pr = row.querySelector('[data-act="pbrun"]');
+    if (pr) pr.onclick = () => probeRun(i, row);
+    const ps = row.querySelector('[data-act="pbstop"]');
+    if (ps) ps.onclick = probeStop;
     // 回车 = 保存，省得她还要挪鼠标去点
-    row.querySelectorAll("input").forEach(inp => {
+    row.querySelectorAll(".mdgrid input, .mdrow2 input").forEach(inp => {
       inp.onkeydown = ev => { if (ev.key === "Enter") saveModel(i, row); };
     });
   });
+  // 重画之后把还开着的试跑区恢复出来（保存一次配置就会重画整块）
+  restoreProbe();
 }
 
 /* ---------------- 接入点：一个「地址 + 密钥」对 ---------------- */
@@ -6609,6 +7264,13 @@ function paintPicked() {
   if (rf) rf.onclick = fetchProvModels;
 })();
 
+/* 耗时对比表的「看多少天」。
+   绑一次就够 —— 它不在任何会被重画的区域里。 */
+(function bindMstDays() {
+  const sel = document.getElementById("mstDays");
+  if (sel) sel.onchange = loadModelStats;
+})();
+
 /* 把这一行的输入框收成一份请求体。
    【只把"改过的字段"发出去】—— 这是这一整块最容易出错的地方。
    后端是 PATCH 语义：字段在不在请求里决定改不改。
@@ -6624,13 +7286,50 @@ function readModelRow(i, row) {
   const body = {
     key: m.key,
     label: v("label") || m.label || m.key,
-    base_url: v("base_url"),
-    model: v("model"),
     enabled: !!(row.querySelector('[data-f="enabled"]') || {}).checked
   };
+  /* 【地址和模型名：空的就**不发**】
+     这两栏空着只有一种含义 —— "地址跟着接入点走"（地址真在接入点上）。
+     发一个空串过去，后端会当成"她现在没有地址"，把库里那条好好的地址
+     改成空；而接入点那一节在老配置里是空的，地址就等于**彻底丢了**。
+     2026-09-27 实测过一次：在模型设置页点一下「保存」，模型的
+     base_url 就变成空字符串，之后再点测试/分类全都发不出去。
+     反过来说"我要清空地址"这种意图不存在 —— 没有地址的模型根本没法用。
+     所以这两栏跟 api_key 同一条规矩：有值才发。
+     （这条注释以前就写着"只发真正有值的字段"，但代码一直是无条件发的。） */
+  const bu = v("base_url");
+  if (bu) body.base_url = bu;
+  const md = v("model");
+  if (md) body.model = md;
   const k = v("api_key");
   if (k) body.api_key = k;             // 没填就不发 = 不改密钥
   return body;
+}
+
+/* 这一行**实际生效**的地址。
+   【为什么不能直接看输入框】地址可以「跟着接入点走」—— 那时候输入框是空的
+   （占位符里写着「跟着 xx 走」），真用的地址在接入点那一份上。
+   照输入框判的话，一条好好的配置会被拦下来说「API 地址得填上」，
+   而请求**根本没发出去**：她点了保存/试跑，界面上什么都不动。
+   这种"点了没反应"比报错难查得多 —— 2026-09-27 界面验收时真的撞上了：
+   扁平配置（每条模型自带地址+密钥）下，前端把它认成"跟着接入点走"，
+   于是每行的地址框都是空的，保存和试跑全被自己拦住。
+   判据顺序：她刚敲的 → 接入点的 → 这条自己存的。 */
+function effAddrOf(m, row) {
+  const inp = row ? row.querySelector('[data-f="base_url"]') : null;
+  const typed = inp ? (inp.value || "").trim() : "";
+  if (typed) return typed;
+  const pv = provOf(m || {});
+  if (pv && pv.base_url) return pv.base_url;
+  return ((m && m.base_url) || "").trim();
+}
+
+/* 实际生效的模型名。这一栏没有"跟着走"的说法，兜底就是已存的那份。 */
+function effModelOf(m, row) {
+  const inp = row ? row.querySelector('[data-f="model"]') : null;
+  const typed = inp ? (inp.value || "").trim() : "";
+  if (typed) return typed;
+  return ((m && m.model) || "").trim();
 }
 
 /* 保存一条。
@@ -6641,8 +7340,16 @@ async function saveModel(i, row) {
   const m = S.models[i];
   const btn = row.querySelector('[data-act="msave"]');
   const body = readModelRow(i, row);
-  if (!body.base_url) { toast("API 地址得填上，不然发不出去请求", true); return; }
-  if (!body.model) { toast("模型名得填上（服务商文档里写的那个）", true); return; }
+  // 【拦之前先看"实际生效的那一份"，不是看输入框】见 effAddrOf 上面那段。
+  // 地址框空着但接入点上是有的 —— 那条配置是好的，不该被拦。
+  if (!effAddrOf(m, row)) {
+    toast("这条还没有 API 地址 —— 填上地址（或者先把接入点的地址填好）再保存", true);
+    return;
+  }
+  if (!effModelOf(m, row)) {
+    toast("模型名得填上（服务商文档里写的那个）", true);
+    return;
+  }
   btn.disabled = true;
   try {
     const url = m._draft ? "/api/models/add" : "/api/models";
@@ -6723,6 +7430,328 @@ async function testModel(i, row) {
 }
 
 
+/* ============================================================
+   试跑：把这条模型真跑一次，逐字看它怎么吐
+   ============================================================
+   为什么这件事值得单独做一条路（而不是复用「测试」）：
+   她真正要回答的问题是「这个模型适不适合干这个活」——
+   快不快、稳不稳、会不会半路被掐断。这些只有真跑一次、并且
+   **一边跑一边显示**才看得出来。等它整段回来再显示，
+   那就只剩一个结果，过程里所有信息都丢了。
+   ============================================================ */
+
+function pbSafe(key) {
+  return String(key == null ? "x" : key).replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function fmtMs(ms) {
+  ms = Math.round(ms || 0);
+  if (!ms) return "—";
+  if (ms < 1000) return ms + " 毫秒";
+  if (ms < 10000) return (ms / 1000).toFixed(1) + " 秒";
+  return Math.round(ms / 1000) + " 秒";
+}
+
+function probeState() {
+  if (!S.probe) {
+    S.probe = { key: "", row: null, abort: null, timer: null,
+                running: false, stopped: false, text: "", stat: "", hint: "",
+                t0: 0, chars: 0, sawFirst: 0, elapsed: 0, done: null };
+  }
+  return S.probe;
+}
+
+function probeEls() {
+  const row = S.probe && S.probe.row;
+  return {
+    tx: row ? row.querySelector("[data-pbtx]") : null,
+    stat: row ? row.querySelector("[data-pbst]") : null,
+    hint: row ? row.querySelector("[data-pbs]") : null
+  };
+}
+
+function probeButtons(row, running, txt) {
+  if (!row) return;
+  const b = row.querySelector('[data-act="pbrun"]');
+  const s = row.querySelector('[data-act="pbstop"]');
+  if (b) { b.disabled = !!running; if (txt) b.textContent = txt; }
+  if (s) s.disabled = !running;
+}
+
+function openProbe(i, row) {
+  const wrap = row.querySelector("[data-pb]");
+  if (!wrap) return;
+  const showing = wrap.style.display !== "none";
+  wrap.style.display = showing ? "none" : "";
+  if (!showing) {
+    const pin = row.querySelector("[data-pbprompt]");
+    if (pin) pin.focus();
+  }
+}
+
+function probeStop() {
+  const p = S.probe;
+  if (!p) return;
+  p.stopped = true;
+  if (p.abort) { try { p.abort.abort(); } catch (e) {} p.abort = null; }
+  if (p.timer) { clearInterval(p.timer); p.timer = null; }
+  p.running = false;
+  p.hint = "已停下 —— 这次没量到完整耗时。想量准就再跑一次，别中途打断。";
+  const e = probeEls();
+  if (e.hint) e.hint.textContent = p.hint;
+  probeButtons(p.row, false, "再跑一次");
+}
+
+/* 重画整块之后（保存一次配置就会重画）把她刚看到的字搬回来。
+   不搬的话，她改个备注、点保存，正在跑的那一屏字就没了。 */
+function restoreProbe() {
+  const p = S.probe;
+  if (!p || !p.key) return;
+  const p2 = probeRowOf(p.key);
+  if (!p2) return;
+  p.row = p2;
+  const wrap = p2.querySelector("[data-pb]");
+  if (wrap) wrap.style.display = "";
+  const e = probeEls();
+  if (e.tx) {
+    e.tx.textContent = "";
+    if (p.text) e.tx.appendChild(document.createTextNode(p.text));
+    e.tx.scrollTop = e.tx.scrollHeight;
+  }
+  if (e.stat) e.stat.textContent = p.stat;
+  if (e.hint) e.hint.textContent = p.hint;
+  if (p.running) probeButtons(p2, true, "试跑中…");
+}
+
+function probeRowOf(key) {
+  const rows = document.querySelectorAll("#mdBody .mdrow");
+  for (let i = 0; i < rows.length; i++) {
+    const m = S.models[Number(rows[i].dataset.i)] || {};
+    if (m.key === key) return rows[i];
+  }
+  return null;
+}
+
+async function probeRun(i, row) {
+  const m = S.models[i];
+  if (!m) return;
+  const body = readModelRow(i, row);
+  body.key = m.key;
+  const pin = row.querySelector("[data-pbprompt]");
+  body.prompt = pin ? (pin.value || "").trim() : "";
+  /* 【同样不能用输入框判"有没有地址"】地址可以跟着接入点走 ——
+     那时候输入框是空的，但配置是好的。照输入框判的话，
+     她点「开始试跑」界面上什么都不发生（连报错都没有）。见 effAddrOf。 */
+  if (!effAddrOf(m, row)) {
+    toast("这条还没有 API 地址 —— 填上地址（或者先把接入点的地址填好）再试跑", true);
+    return;
+  }
+  if (!effModelOf(m, row)) {
+    toast("模型名得填上（服务商文档里写的那个）", true);
+    return;
+  }
+
+  /* 【一次只跑一条】
+     两条同时吐，她看到的两个耗时就没有可比性了（互相抢带宽、抢
+     服务商那边的并发）。所以开新的之前先把上一条掐掉。 */
+  const prev = S.probe;
+  if (prev && prev.running) probeStop();
+
+  const p = probeState();
+  p.key = m.key;
+  p.row = row;
+  p.running = true;
+  p.stopped = false;
+  p.text = "";
+  p.chars = 0;
+  p.sawFirst = 0;
+  p.elapsed = 0;
+  p.done = null;
+  p.err = "";
+  p.t0 = performance.now();
+  p.stat = "正在发请求…";
+  p.hint = "试跑中：真发了一次请求，模型吐多少字就显示多少字。";
+
+  const wrap = row.querySelector("[data-pb]");
+  if (wrap) wrap.style.display = "";
+  const e = probeEls();
+  if (e.tx) e.tx.textContent = "";
+  if (e.stat) e.stat.textContent = p.stat;
+  if (e.hint) e.hint.textContent = p.hint;
+  probeButtons(row, true, "试跑中…");
+
+  const tick = () => {
+    const s = ((performance.now() - p.t0) / 1000).toFixed(1);
+    p.stat = "已等 " + s + " 秒" +
+      (p.sawFirst ? " · 首字 " + fmtMs(p.sawFirst) : " · 还在等第一个字") +
+      (p.chars ? " · " + fmtNum(p.chars) + " 字" : "");
+    const el = probeEls();
+    if (el.stat) el.stat.textContent = p.stat;
+  };
+  const ac = new AbortController();
+  p.abort = ac;
+  if (p.timer) clearInterval(p.timer);
+  p.timer = setInterval(tick, 120);
+  tick();
+
+  try {
+    await readSSE("/api/models/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ac.signal
+    }, ev => {
+      if (!ev || !ev.t) return;
+      if (ev.t === "chunk") {
+        const txt = ev.text || "";
+        if (!txt) return;
+        if (!p.sawFirst) p.sawFirst = performance.now() - p.t0;
+        p.chars += txt.length;
+        p.text += txt;
+        const el = probeEls();
+        if (el.tx) {
+          /* 【最后一道"不缓冲"】来一块就 append 一块。
+             下面这两行是这个需求的核心，别改成"攒几块一起写"。 */
+          const near = el.tx.scrollTop + el.tx.clientHeight >= el.tx.scrollHeight - 24;
+          el.tx.appendChild(document.createTextNode(txt));
+          if (near) el.tx.scrollTop = el.tx.scrollHeight;
+        }
+        tick();
+      } else if (ev.t === "done") {
+        p.done = ev;
+      } else if (ev.t === "error") {
+        p.err = ev.message || "上游没给原因";
+      }
+    });
+  } catch (err) {
+    if (String((err && err.name) || "") !== "AbortError") {
+      p.err = (err && err.message) ? err.message : String(err);
+    }
+  }
+
+  // 收尾。注意 p 可能是"上一条"（她中途又点了一次试跑）—— 那种情况下
+  // 这里什么都不该动，新的那条自己会画。
+  if (S.probe !== p) return;
+  p.running = false;
+  p.elapsed = performance.now() - p.t0;
+  if (p.timer) { clearInterval(p.timer); p.timer = null; }
+  p.abort = null;
+  probeFinish(p);
+}
+
+function probeFinish(p) {
+  const d = p.done || {};
+  const el = probeEls();
+  const bits = [];
+  const srvTtft = d.ttft_ms || 0;
+  if (srvTtft) bits.push("首字 " + fmtMs(srvTtft));
+  else if (p.sawFirst) bits.push("首字 " + fmtMs(p.sawFirst));
+  else if (!p.err) bits.push("首字：没量到");
+  bits.push("总耗时 " + fmtMs(d.elapsed_ms || p.elapsed));
+  if (p.chars) bits.push(fmtNum(p.chars) + " 字");
+  const u = d.usage || {};
+  const tok = u.total_tokens || ((u.prompt_tokens || 0) + (u.completion_tokens || 0));
+  if (tok) bits.push("用了 " + fmtNum(tok) + " token");
+
+  /* 把"为什么没有首字这个数"直接说出来。
+     不说的话她会以为是我们没记 —— 而真正的原因十有八九是服务商
+     没走流式（整段回来的），那就根本没有"第一个字"这个时刻。 */
+  const notes = [];
+  if (p.err) notes.push("失败了：" + p.err);
+  else if (p.stopped) notes.push("被你停下了，所以没有完整的耗时。");
+  if (d.streamed === false) {
+    notes.push("这次没有走流式：服务商是一整段一起回来的，所以没有「首字」这个数。");
+  }
+  if (d.fallback === "server_ignored_stream") {
+    notes.push("服务商没接受 stream 参数，按普通请求回的 —— 所以文字是一次性出现的。");
+  }
+  if (d.finish_label) notes.push("结束原因：" + d.finish_label + "。");
+  if (d.model) notes.push("上游报回来的模型名是「" + d.model + "」。");
+
+  const stat = bits.join(" · ");
+  p.stat = stat;
+  p.hint = notes.length ? notes.join(" ")
+    : "跑通了 —— 这条能用。想比快慢，再去别的模型上跑一次，两个数并排看。";
+  if (el.stat) el.stat.textContent = stat;
+  if (el.hint) el.hint.textContent = p.hint;
+  probeButtons(p.row, false, "再跑一次");
+  // 跑过就刷新一次对比表，她不用手动点（这张表就是给"比"用的）
+  loadModelStats();
+}
+
+
+/* 这一行是哪个模型。
+   【三层名字要分清】model_key 是内部短名字（她看不到）、
+   model_name 是真发给服务商的那个名字（记在 llm_calls 里）、
+   她自己起的 label 只有配置里才有 —— 而这张表是从 llm_calls 汇总的。
+   所以拿 model_key 回配置里把 label 找回来当主名，真名附在旁边：
+   她认得出是哪条，也看得见实际发出去的是哪个名字。 */
+function mstName(r) {
+  const m = (S.models || []).find(x => x.key === r.model_key);
+  const label = m ? (m.label || m.key || "") : "";
+  const real = r.model_name || "";
+  if (label && real && label !== real) return { main: label, sub: real };
+  if (label) return { main: label, sub: "" };
+  if (real) return { main: real, sub: r.model_key || "" };
+  return { main: r.model_key || "（没记模型）", sub: "" };
+}
+
+/* ---------------- 耗时对比表 ----------------
+   回答的是"哪个模型快、哪个稳"。数据来自后端每次响应都记的那一笔 ——
+   试跑记，真实任务（分类/内化/大纲）也记，所以样本会自己长起来。 */
+async function loadModelStats() {
+  const box = document.getElementById("mstBody");
+  if (!box) return;
+  const sel = document.getElementById("mstDays");
+  const days = sel ? (sel.value || "30") : "30";
+  let d = null;
+  try {
+    d = await api("/api/models/stats?days=" + encodeURIComponent(days));
+  } catch (e) {
+    box.innerHTML = '<div class="blank">耗时汇总读不出来：' + esc(e.message) + "</div>";
+    return;
+  }
+  const rows = (d && d.rows) || [];
+  if (!rows.length) {
+    box.innerHTML = '<div class="blank">最近 ' + esc(String((d && d.days) || days)) +
+      " 天还没有记录。<br>在任意一条模型上点「试跑」，" +
+      "或者跑一次分类/内化/大纲，这里就会自己长出数来。</div>";
+    return;
+  }
+  const th = ["模型", "调用", "成功", "失败", "首字·平均", "首字·最快",
+              "总耗时·平均", "平均字数", "token", "最近一次"];
+  box.innerHTML =
+    '<div class="mstwrap"><table class="mst"><thead><tr>' +
+    th.map(h => "<th>" + h + "</th>").join("") +
+    "</tr></thead><tbody>" +
+    rows.map(r => {
+      const nm = mstName(r);
+      const alt = nm.sub ? ' <span class="mm">' + esc(nm.sub) + "</span>" : "";
+      const chars = r.ok ? Math.round((r.chars || 0) / r.ok) : 0;
+      return "<tr>" +
+        '<td class="mname">' + esc(nm.main) + alt + "</td>" +
+        "<td>" + fmtNum(r.calls) + "</td>" +
+        "<td>" + fmtNum(r.ok) + "</td>" +
+        '<td class="' + (r.bad ? "mbad" : "") + '">' + fmtNum(r.bad) + "</td>" +
+        "<td>" + (r.ttft_n ? fmtMs(r.ttft_avg) : "没量到") + "</td>" +
+        "<td>" + (r.ttft_min ? fmtMs(r.ttft_min) : "—") + "</td>" +
+        "<td>" + fmtMs(r.elapsed_avg) + "</td>" +
+        "<td>" + (chars ? fmtNum(chars) : "—") + "</td>" +
+        "<td>" + fmtNum(r.tokens) + "</td>" +
+        "<td>" + esc(r.last || "") + "</td>" +
+        "</tr>";
+    }).join("") +
+    "</tbody></table></div>" +
+    '<div class="livenote">共扫了 ' + fmtNum((d && d.scanned) || 0) + " 条记录。" +
+    (rows.some(r => r.ttft_n < r.calls)
+      ? "「首字·平均」只算量到首字的那几次 —— 把没量到的当成 0 算进去，"
+        + "会把平均拉低，得出「这个模型很快」的错误结论。" : "") +
+    (rows.some(r => r.calls < 3)
+      ? " 有模型才跑过一两次，那个平均值先别当结论。" : "") +
+    "</div>";
+}
+
+
 async function refreshClsMeta() {
   await loadClsStates();
   paintClsHint(true);
@@ -6734,10 +7763,19 @@ async function refreshClsMeta() {
    她还有机会退出去。 */
 function openClsRun(mid, act, el) {
   const usable = (S.clsMeta && S.clsMeta.usable_models) || [];
+  const s = S.cls[mid] || {};
+  const last = s.run || {};
+  const isRetry = act === "retry";
+  // 重试默认沿用上次那个方法（上次走本地规则就还是本地规则）——
+  // 理由跟后端 retry_run 一样：同一份文件里一半用一种方法判的，她分不出来。
+  const lastEngine = (last.classifier === "placeholder") ? "placeholder" : "llm";
   S.runPick = { mid: mid, act: act, el: el,
-                engine: usable.length ? "llm" : "placeholder" };
+                engine: (isRetry && last.classifier)
+                  ? lastEngine
+                  : (usable.length ? "llm" : "placeholder") };
   document.getElementById("crTitle").textContent =
-    act === "redo" ? "重新分类" : "自动分类";
+    act === "redo" ? "重新分类"
+      : isRetry ? "重试这批卡片" : "自动分类";
 
   const engines = [
     { k: "llm", name: "大模型",
@@ -6758,11 +7796,29 @@ function openClsRun(mid, act, el) {
       "<br>" + esc(e.desc) + "</span></label>").join("");
 
   const sel = document.getElementById("crModel");
+  /* 【选项里带上真模型名】她 2026-09-27 问"列表里为什么没有 qwen3.7-plus"。
+     它其实在 —— 但下拉框只显示她自己起的中文标签，真名字藏在
+     「模型设置」页的下一行，光看这里确实找不到。更要命的是两条
+     「中转站 / 其它 OpenAI 兼容服务」标签一模一样，本来也分不出谁是谁。
+     所以把真名字一并显示。**选中的值仍然是内部的 key**，没变。 */
   sel.innerHTML = usable.length
     ? usable.map(u => '<option value="' + esc(u.key) + '">' +
-        esc(u.label || u.key) + '</option>').join("")
+        esc(u.label || u.key) +
+        (u.model && u.model !== (u.label || u.key)
+          ? "（" + esc(u.model) + "）" : "") +
+        '</option>').join("")
     : '<option value="">（没有可用的模型）</option>';
-  if (S.clsMeta && S.clsMeta.default_model) sel.value = S.clsMeta.default_model;
+  // 默认选谁：重试 → 上次那个；其余 → 默认模型。
+  // （不传空串给 sel.value：那会把 selectedIndex 搞成 -1，
+  //   readModel 拿到空值，报"还没有可用的模型"—— 明明有。）
+  const want = (isRetry && last.model_key)
+    ? last.model_key : ((S.clsMeta && S.clsMeta.default_model) || "");
+  if (want) sel.value = want;
+  if (sel.selectedIndex < 0 && usable.length) sel.selectedIndex = 0;
+  // 上次那个现在不在可用清单里了（删了、或密钥被清空）→ 只能换一个。
+  // 必须说出来：不说的话她会以为"还是上次那个模型"，两次结果一比就懵。
+  S.runPick.lastMissing = !!(isRetry && last.model_key
+                            && sel.value !== last.model_key);
 
   const repaint = () => {
     const r = document.querySelector('input[name="crEngine"]:checked');
@@ -6776,17 +7832,33 @@ function openClsRun(mid, act, el) {
   });
   repaint();
 
+  document.getElementById("crGo").textContent =
+    act === "redo" ? "重新分类" : isRetry ? "重试这几张" : "开始分类";
   document.getElementById("crGo").onclick = runCls;
 
-  // 补充提示词和提示词库每次开弹层都重读一遍：
-  // 上一轮跑完到现在，她可能刚在别处改过自己存的那条。
-  // 读回来之后再补一次 crNote —— 那段说明里有"会带上 N 字"这种数字，
-  // 用读之前的旧数字说事，她会对不上账。
-  pfLoad("classify").then(() => {
-    pfPaint("classify", "clP", pfOpts("clP"));
+  /* 【重试不给改补充提示词 —— 那就别摆出来】
+     重试接口只认「方法 + 模型」，提示词一律沿用上次那份快照
+     （理由见 classification.retry_run：中途换掉的话，同一份素材里
+     一半按新要求判、一半按旧的判，她看不出这个区别）。
+     她改不动的东西就不该摆在眼前。摆一个存不了、也发不出去的控件，
+     比没有它更糟 —— 她会以为自己改了，然后拿结果去对账对不上。
+     也**不读**草稿：读出来会被回写进草稿层，下次开面板看着像"它记住了"。 */
+  const pfField = document.getElementById("crPromptField");
+  if (pfField) pfField.style.display = isRetry ? "none" : "";
+  if (isRetry) {
     const n = document.getElementById("crNote");
-    if (n && S.runPick && S.runPick.mid === mid) n.innerHTML = runNoteHtml();
-  });
+    if (n) n.innerHTML = runNoteHtml();
+  } else {
+    // 补充提示词和提示词库每次开弹层都重读一遍：
+    // 上一轮跑完到现在，她可能刚在别处改过自己存的那条。
+    // 读回来之后再补一次 crNote —— 那段说明里有"会带上 N 字"这种数字，
+    // 用读之前的旧数字说事，她会对不上账。
+    pfLoad("classify").then(() => {
+      pfPaint("classify", "clP", pfOpts("clP"));
+      const n = document.getElementById("crNote");
+      if (n && S.runPick && S.runPick.mid === mid) n.innerHTML = runNoteHtml();
+    });
+  }
 
   show("mkClRun");
 }
@@ -6804,31 +7876,51 @@ function runNoteHtml() {
       " 张建议</b>重算一遍，旧建议被新结果覆盖。你手动改过主类、" +
       "或手动确认过的卡片不动。");
   }
-  if (st.engine === "llm") {
-    lines.push("<b>这份素材被切成的每一条片段都会发到模型服务商那边</b>" +
-      "（只发片段文本；几百条就是几百次调用，会产生少量费用）。" +
-      "原文本身只存在你电脑上，分类不会改动它一个字。");
-    // 提示词这件事必须提前说 —— 她写的时候在另一个页面，
-    // 站在这儿她才想起来"对了，会带上那几句吗"。
-    const pick = pfPick("classify");
-    if (pick) {
-      // 挑的要是别人的那条，这里不能说"你的提示词" ——
-      // 她确实没写过它，说错了她会以为自己写的内容丢了。
-      lines.push(pick.mine
-        ? ("会带上你挑的<b>「" + esc(pick.name) + "」</b>这条提示词，"
-           + "每一条片段都会捎上它。")
-        : ("会带上别人公开的<b>「" + esc(pick.name) + "」</b>"
-           + "（内容不公开，服务端直接拿去用），每一条片段都会捎上它。"));
+  if (st.act === "retry") {
+    // 重试的账要算准：只有没判成的那几张要重发，别让她以为整份重跑一遍。
+    lines.push("只重跑上次没判成的那 <b>" + fmtNum(s.failed_cards || 0) +
+      " 张</b>：已经判好的卡片一张都不会动，也不会重复花钱。");
+    if (st.lastMissing) {
+      lines.push("上次用的那个模型现在不在可用清单里了（删掉了、或者密钥清空了），"
+        + "这次只能用上面选中的这个。");
     } else {
-      const up = pfValue("classify", "clP");
-      const n = up === null
-        ? ((pfS("classify").content || "").length) : up.length;
-      if (n) {
-        lines.push("会带上你在上面写的<b>补充提示词（" + fmtNum(n) +
-          " 字）</b>，每一条片段都会捎上它。");
+      lines.push("默认还是上次那个模型和方法 —— 什么都不改直接点，"
+        + "结果跟上一批接得上。想换个模型比一比准头，就在上面挑一个。");
+    }
+    lines.push("补充提示词沿用上次那份，这次不改（中途换掉的话，"
+      + "同一份素材会一半按新要求判、一半按旧的判，你分不出来）。");
+  }
+  if (st.engine === "llm") {
+    lines.push(st.act === "retry"
+      ? ("这次的 <b>" + fmtNum(s.failed_cards || 0) + " 条片段</b>会再发一次到"
+         + "模型服务商那边 —— 只有这些，判好的不重发。")
+      : ("<b>这份素材被切成的每一条片段都会发到模型服务商那边</b>" +
+         "（只发片段文本；几百条就是几百次调用，会产生少量费用）。"));
+    lines.push("原文本身只存在你电脑上，分类不会改动它一个字。");
+    if (st.act !== "retry") {
+      // 提示词这件事必须提前说 —— 她写的时候在另一个页面，
+      // 站在这儿她才想起来"对了，会带上那几句吗"。
+      // （重试不给改提示词，上面那段已经单独说过了，这里不重复。）
+      const pick = pfPick("classify");
+      if (pick) {
+        // 挑的要是别人的那条，这里不能说"你的提示词" ——
+        // 她确实没写过它，说错了她会以为自己写的内容丢了。
+        lines.push(pick.mine
+          ? ("会带上你挑的<b>「" + esc(pick.name) + "」</b>这条提示词，"
+             + "每一条片段都会捎上它。")
+          : ("会带上别人公开的<b>「" + esc(pick.name) + "」</b>"
+             + "（内容不公开，服务端直接拿去用），每一条片段都会捎上它。"));
       } else {
-        lines.push("没写补充提示词。想让它按你的习惯判，就在上面的框里写几句，"
-          + "或者从「快捷选项」里挑一条存好的。");
+        const up = pfValue("classify", "clP");
+        const n = up === null
+          ? ((pfS("classify").content || "").length) : up.length;
+        if (n) {
+          lines.push("会带上你在上面写的<b>补充提示词（" + fmtNum(n) +
+            " 字）</b>，每一条片段都会捎上它。");
+        } else {
+          lines.push("没写补充提示词。想让它按你的习惯判，就在上面的框里写几句，"
+            + "或者从「快捷选项」里挑一条存好的。");
+        }
       }
     }
   } else {
@@ -6852,22 +7944,40 @@ async function runCls() {
   //   · 在"快捷选项"里挑了一条 → 只发 prompt_id，内容由服务端自己取
   //     （挑的要是别人公开的，前端根本没有原文可发 —— 这是有意的）
   //   · 否则 → 发"自定义"框里的自由文本
-  const pl = pfPayload("classify", "clP");
-  if (pl.prompt_id) {
-    body.prompt_id = pl.prompt_id;
-  } else {
-    if (pl.user_prompt.length > pfS("classify").max) {
-      toast("补充提示词超长了，把它删短一些再跑", true);
-      return;
+  //
+  // 【重试不发提示词】重试接口只认「方法 + 模型」，提示词一律沿用上次
+  // 那份快照（理由见 classification.retry_run）。上面那一整块也藏起来了，
+  // 前后一致 —— 界面不给她改，请求也就不会偷偷带上别的。
+  if (st.act !== "retry") {
+    const pl = pfPayload("classify", "clP");
+    if (pl.prompt_id) {
+      body.prompt_id = pl.prompt_id;
+    } else {
+      if (pl.user_prompt.length > pfS("classify").max) {
+        toast("补充提示词超长了，把它删短一些再跑", true);
+        return;
+      }
+      body.user_prompt = pl.user_prompt;
     }
-    body.user_prompt = pl.user_prompt;
   }
   btn.disabled = true;
   try {
-    // start 和 redo 走同一个接口：后端会自己看"上次跑到哪"来决定干什么
-    const r = await post("/api/materials/" + st.mid + "/auto-classify", body);
+    // start 和 redo 走同一个接口：后端会自己看"上次跑到哪"来决定干什么。
+    // 重试单独一个接口 —— 它只动"上次没判成的那几张"，整份重来会白花钱。
+    const url = st.act === "retry"
+      ? "/api/materials/" + st.mid + "/classification-retry"
+      : "/api/materials/" + st.mid + "/auto-classify";
+    const r = await post(url, body);
     hide("mkClRun");
     toast(r.message || "任务已提交，后台开始跑");
+    /* 挂上实时通道。sid 由**后端**给（不是这里拼 "cls-"+run_id）——
+       前缀是后端的内部约定，前端自己拼一次，哪天改了就会静默对不上，
+       表现是"点了开始、实时区一直空着"，而且谁也不报错。 */
+    if (r.stream_id) {
+      const t = (S.cls[st.mid] && S.cls[st.mid].title) || "这份素材";
+      liveSubscribe(r.stream_id,
+        { title: "素材分类", sub: "《" + t + "》· 正在把卡片分批判类" });
+    }
     await clsRefreshOne(st.mid);
   } catch (e) {
     toast(e.message, true);
@@ -7595,6 +8705,21 @@ function paintInfBars() {
     const mid = Number(el.dataset.inffor);
     el.innerHTML = infBarInner(mid);
   });
+  infAutoLive();
+}
+
+/* 把还在跑的内化任务重新挂上实时通道。
+   理由跟 clsAutoLive 一样：刷新一下就丢订阅，必须能自己补回来。
+   同样可以反复调 —— liveSubscribe 会挡住重复挂载。 */
+function infAutoLive() {
+  Object.keys(S.inf || {}).forEach(k => {
+    const s = S.inf[k] || {};
+    if (s.state !== "running" || !s.run || !s.run.stream_id) return;
+    liveSubscribe(s.run.stream_id, {
+      title: "剧情内化",
+      sub: "《" + (s.title || "这份素材") + "》· 正在把卡片变成剧情零件"
+    });
+  });
 }
 
 function infSyncPoll() {
@@ -7978,6 +9103,11 @@ async function infRun() {
     const mid = st.mid;
     hide("mkInfuse");
     toast(r.message || "已开始，后台按批跑 —— 进度看文件下面那行");
+    if (r.stream_id) {
+      const t = (S.inf[mid] && S.inf[mid].title) || "这份素材";
+      liveSubscribe(r.stream_id,
+        { title: "剧情内化", sub: "《" + t + "》· 正在把卡片变成剧情零件" });
+    }
     await infRefreshOne(mid);
   } catch (e) {
     toast(e.message, true);
@@ -8922,7 +10052,8 @@ function olEl(id) { return document.getElementById(id); }
    草稿里那份还是旧的，她就会看着一张已经不存在的卡去生成。 */
 const OL_CHOICE = { models: "c:ol.models", chars: "c:ol.chars",
                     poolMode: "c:ol.poolmode", picked: "c:ol.picked",
-                    worldId: "c:ol.worldid", worldName: "c:ol.worldname" };
+                    worldId: "c:ol.worldid", worldName: "c:ol.worldname",
+                    useRef: "c:ol.useref" };
 
 function olSaveChoices() {
   draftPutJSON(OL_CHOICE.models,
@@ -8933,6 +10064,9 @@ function olSaveChoices() {
     Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number));
   draftPut(OL_CHOICE.worldId, OL.worldId ? String(OL.worldId) : "");
   draftPut(OL_CHOICE.worldName, OL.worldName || "");
+  // 素材参考开关也记住 —— 开不开是她的判断，刷新就该回来
+  const refBox = document.getElementById("olUseRef");
+  if (refBox) draftPut(OL_CHOICE.useRef, refBox.checked ? "1" : "");
 }
 
 /* 启动时把上次的勾选摆回 OL 里。角色卡要等 /api/characters 回来之后
@@ -8947,6 +10081,9 @@ function olRestoreChoices() {
   OL.worldId = Number(draftText(OL_CHOICE.worldId)) || 0;
   OL.worldName = draftText(OL_CHOICE.worldName) || "";
   OL.charIds = draftGetJSON(OL_CHOICE.chars, null);
+  const useRef = draftText(OL_CHOICE.useRef);
+  const refBox = document.getElementById("olUseRef");
+  if (refBox) refBox.checked = (useRef === "1");
 }
 
 /* ---------------- 读数据 ---------------- */
@@ -9069,6 +10206,18 @@ function olPaintModelNote() {
     + "写大纲慢，一般几分钟；单个模型最长等 "
     + olFmtDur(Number(L.outline_timeout) || 600) + "。"
     + (cases ? "另外会参考你标过的 " + cases + " 条「不可用」。" : "");
+}
+
+/* 候选卡右上角：除了人话标签，再亮出**真发给服务商的模型名**。
+   她 2026-09-27 提的：两条「中转站 / 其它 OpenAI 兼容服务」标签一模一样，
+   光看标签分不出哪份候选是哪条模型跑的；而她在「模型设置」里改的正是
+   真名字（qwen3.7-plus），界面上不显示它就等于她白改了。
+   名字一样（或者这条模型已经删了、查不到）就不重复显示。 */
+function olModelTag(key, label) {
+  const m = (((OL.meta || {}).models) || []).find(x => x.key === key);
+  const raw = (m && m.model) || "";
+  if (!raw || raw === (label || key)) return "";
+  return ' <span class="mdhint" style="flex:0 0 auto">' + esc(raw) + '</span>';
 }
 
 async function olLoadChars() {
@@ -9254,6 +10403,31 @@ function olPoolSizeValue() {
   return Math.max(5, Math.min(n, max));
 }
 
+/* 「分类素材参考 · 整篇最多带 N 条」的实际取值。
+   兜底：输入框 → 后端默认 15；夹到后端给的上限（30）里。
+   上限她填多少用多少，30 只是保险丝 —— 超了按 30 算，不发警告。 */
+function olRefSizeValue() {
+  const L = ((OL.meta || {}).limits) || {};
+  const max = L.reference_max || 30;
+  const dflt = L.reference_default || 15;
+  const el = olEl("olRefSize");
+  let n = el ? parseInt(el.value, 10) : NaN;
+  if (!n || n < 1) n = dflt;
+  return Math.max(1, Math.min(n, max));
+}
+
+/* 开关联动：开着才露条数框。 */
+function olPaintRef() {
+  const on = !!olEl("olUseRef").checked;
+  olEl("olRefSizeWrap").hidden = !on;
+  const note = olEl("olRefNote");
+  if (on) {
+    note.textContent = "从已合并、已生成摘要的素材组里挑";
+  } else {
+    note.textContent = "";
+  }
+}
+
 /* ---------------- 大纲库 ---------------- */
 
 async function olLoadLib() {
@@ -9309,7 +10483,9 @@ function olBody() {
     target_words: Number(olEl("olWords").value || 0),
     model_keys: Object.keys(OL.models).filter(k => OL.models[k]),
     pool_size: olPoolSizeValue(),
-    use_learning: !!olEl("olUseLearn").checked
+    use_learning: !!olEl("olUseLearn").checked,
+    reference_enabled: !!olEl("olUseRef").checked,
+    reference_limit: olRefSizeValue()
   };
   if (OL.poolMode === "manual") {
     const ids = Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number);
@@ -9393,6 +10569,26 @@ function olPaintPreview(pv) {
       + (sp.length > 8 ? " 等 " + sp.length + " 条" : "")
       + '</span></div>';
   }
+  // ---- 分类素材参考（开了才显示；显示的是按一句话梗粗筛的预计值）----
+  if (pv.reference_enabled) {
+    const rc = pv.reference_cards || [];
+    h += '<div class="kv"><b>分类素材</b><span>'
+      + (rc.length
+          ? '预计参考 ' + rc.length + ' 条摘要'
+            + '（上限 ' + pv.reference_limit + '，实际以规划后按节点需求检索的为准）'
+          : '开着，但库里还没有可参考的素材 ——'
+            + '去【素材分类】合并逻辑素材组并点「生成摘要」')
+      + '</span></div>';
+    if (rc.length) {
+      h += '<div class="kv"><b>素材清单</b><span>'
+        + rc.slice(0, 6).map(x =>
+            '#' + x.ref_card_id
+            + (x.category_name ? '（' + esc(x.category_name) + '）' : ''))
+          .join('、')
+        + (rc.length > 6 ? ' 等 ' + rc.length + ' 条' : '')
+        + '</span></div>';
+    }
+  }
   h += '<div class="kv"><b>模型</b><span>'
     + (pv.models || []).map(m => esc(m.label)
       + (m.usable ? "" : '（用不了' + (m.reason ? "：" + esc(m.reason) : "") + '）')
@@ -9435,6 +10631,28 @@ async function olGo() {
   btn.disabled = true;
   try {
     const r = await post("/api/outlines/generate", body);
+    // 缓存命中（补充二.5）：输入一模一样、之前跑过。不偷偷重跑烧钱，
+    // 先问她一句 —— 看上次的结果，还是重摇一遍。
+    if (r.reason === "cache_hit") {
+      const go = confirm("这份输入你之前跑过一模一样的（任务 #" + r.cached_run_id + "）。\n\n"
+        + "点「确定」直接看上次的结果（不花钱）；\n"
+        + "点「取消」就重新生成一遍（会再花一次钱，结果也可能不一样）。");
+      if (go) {
+        await olLoadRuns();
+        olPoll(r.cached_run_id);
+        return;
+      }
+      // 她要重摇：带上 cache_bypass 再发一次，跳过缓存判断。
+      body.cache_bypass = true;
+      const r2 = await post("/api/outlines/generate", body);
+      toast(r2.message || "开始生成了，进度在下面那块");
+      if ((r2.skipped_models || []).length) {
+        toast(r2.skipped_models[0].message, true);
+      }
+      await olLoadRuns();
+      olPoll(r2.run_id);
+      return;
+    }
     toast(r.message || "开始生成了，进度在下面那块");
     if ((r.skipped_models || []).length) {
       toast(r.skipped_models[0].message, true);
@@ -9450,6 +10668,21 @@ async function olGo() {
 
 function olIsActive(status) {
   return (((OL.meta || {}).run_active) || []).indexOf(status) >= 0;
+}
+
+/* 把还在跑的大纲任务挂上实时通道。
+   【大纲这里最能体现"多模型分开显示"】
+   一次生成有 1~4 个模型并行跑，它们的字会**同时**涌进来。
+   所以后端在每个字上带了 model 标记，实时区按模型分成几栏 ——
+   不然她看到的是一团混在一起的字，分不出哪句是谁说的。 */
+function olAutoLive() {
+  (OL.runs || []).forEach(r => {
+    if (!r.stream_id || !olIsActive(r.status)) return;
+    liveSubscribe(r.stream_id, {
+      title: "大纲生成",
+      sub: "任务 #" + r.id + " · " + (r.total_models || 0) + " 个模型在分别生成"
+    });
+  });
 }
 
 /* ---------- 跑了多久 / 最坏还要等多久 ---------- */
@@ -9576,11 +10809,20 @@ async function olLoadCands(run) {
 }
 
 function olPaintRuns() {
+  olAutoLive();
   const box = olEl("olRuns");
   if (!OL.runs.length) { box.innerHTML = ""; return; }
+  const finished = OL.runs.filter(r => !olIsActive(r.status)).length;
   let h = '<div class="olsec"><h3>生成任务</h3>' +
     '<div class="mdhint">可以切去看别的页，回来进度还是新的 —— ' +
     '任务在服务端跑，不是挂在这个页面上。</div>';
+  // 历史堆得多了她嫌乱。给一个"清掉已结束的"，正在跑的不动。
+  if (finished) {
+    h += '<div class="olrow"><button class="mini" data-olact="clear" data-id="0">'
+      + '清掉已结束的任务</button>'
+      + '<span class="mdhint" style="flex:1 1 auto">'
+      + '正在跑的那个不会被清掉；已经推进大纲库的大纲也不受影响。</span></div>';
+  }
   OL.runs.forEach(run => {
     const total = run.total_models || 0;
     const done = run.done_models || 0;
@@ -9595,9 +10837,13 @@ function olPaintRuns() {
       + '<span class="grow"></span>';
     if (active) {
       rh += '<button class="mini" data-olact="cancel" data-id="' + run.id + '">取消</button>';
-    } else if (failed) {
-      rh += '<button class="mini primary" data-olact="retry" data-id="' + run.id
-        + '">补跑失败的 ' + failed + ' 个</button>';
+    } else {
+      if (failed) {
+        rh += '<button class="mini primary" data-olact="retry" data-id="' + run.id
+          + '">补跑失败的 ' + failed + ' 个</button>';
+      }
+      rh += '<button class="mini mddel" data-olact="del" data-id="' + run.id
+        + '" title="把这条任务记录删掉">删除</button>';
     }
     rh += '</div>';
     rh += '<div class="rmeta">' + run.total_models + ' 个模型 · '
@@ -9705,6 +10951,7 @@ function olCandCard(c) {
       + esc(String(j.ending)) + '</div>';
   }
   let ch = '<div class="ch">' + esc(c.model_name || c.model_key)
+    + olModelTag(c.model_key, c.model_name)
     + (c.adopted ? ' <span class="chip ok">已推入</span>' : '')
     + '<span class="grow"></span>'
     + '<span class="mdhint" style="flex:0 0 auto">'
@@ -9951,6 +11198,10 @@ function olNodeHtml(n, i, nAll) {
     return '<span class="chip gray">#' + id + " "
       + esc(p ? (p.title || "") : "（库里的零件）") + '</span>';
   }).join("");
+  const refs = (n.reference_card_ids || []).map(id => {
+    return '<span class="chip">素材#' + id + '</span>';
+  }).join("");
+  const refUse = (n.reference_use || "").trim();
   const acts = OL.editing
     ? '<button class="mini" data-oln="up" data-i="' + i + '" title="往前挪一段">↑</button>'
       + '<button class="mini" data-oln="down" data-i="' + i + '" title="往后挪一段">↓</button>'
@@ -9976,6 +11227,9 @@ function olNodeHtml(n, i, nAll) {
     + '</div>'
     + '<div class="nbody">' + body + '</div>'
     + (src ? '<div class="nsrc">' + src + '</div>' : "")
+    + (refs ? '<div class="nsrc">' + refs
+        + (refUse ? ' <span class="mdhint">' + esc(refUse) + '</span>' : '')
+        + '</div>' : "")
     + '</div>';
 }
 
@@ -10170,6 +11424,11 @@ function olMergeNode(i) {
   };
   a.participating_roles = uniq(a.participating_roles, b.participating_roles, 12);
   a.source_plot_ids = uniq(a.source_plot_ids, b.source_plot_ids, 20);
+  // 两段并成一段，各自参考过的素材也并进来（编号去重）。
+  a.reference_card_ids = uniq(a.reference_card_ids, b.reference_card_ids, 30);
+  const ru = [String(a.reference_use || "").trim(), String(b.reference_use || "").trim()]
+    .filter(Boolean).join("；");
+  if (ru) a.reference_use = ru;
   a.estimated_words = Number(a.estimated_words || 0)
     + Number(b.estimated_words || 0);
   ns.splice(i + 1, 1);
@@ -10238,6 +11497,16 @@ function olSaveNode() {
     source_plot_ids: Object.keys(OL.nodeSrc)
       .filter(k => OL.nodeSrc[k]).map(Number).slice(0, 20)
   };
+  // 素材参考编号是 AI 生成时挂上去的，编辑文字时不许它丢。
+  if (i >= 0) {
+    const old = w.draft.nodes[i] || {};
+    if ((old.reference_card_ids || []).length) {
+      n.reference_card_ids = old.reference_card_ids;
+    }
+    if ((old.reference_use || "").trim()) {
+      n.reference_use = old.reference_use;
+    }
+  }
   fields.forEach(f => { n[f.key] = (olEl("olnf_" + f.key).value || "").trim(); });
   if (!n.node_title) {
     n.node_title = "第 " + ((i >= 0 ? i : w.draft.nodes.length) + 1) + " 段";
@@ -10696,6 +11965,26 @@ olEl("olRuns").onclick = async e => {
       }
       const r = await post("/api/outline-runs/" + id + "/cancel", {});
       toast(r.message || "已取消");
+    } else if (b.dataset.olact === "del") {
+      if (!confirm("删掉任务 #" + id + "？\n\n"
+        + "删的是这条任务记录和它生成的几份候选稿。\n"
+        + "已经推进大纲库的那份大纲不受影响。\n"
+        + "（正在跑的任务不能删，要先取消。）")) {
+        b.disabled = false;
+        return;
+      }
+      const r = await api("/api/outline-runs/" + id, { method: "DELETE" });
+      toast(r.message || "删掉了");
+    } else if (b.dataset.olact === "clear") {
+      if (!confirm("清掉所有已经结束的任务记录？\n\n"
+        + "完成、失败、取消的都会清掉（不管列出来几条，"
+        + "再往前的同类记录也一起清）。\n"
+        + "正在跑的那个不会被清，已经推进大纲库的大纲也不受影响。")) {
+        b.disabled = false;
+        return;
+      }
+      const r = await post("/api/outline-runs/clear-finished", {});
+      toast(r.message || "清完了");
     } else {
       const r = await post("/api/outline-runs/" + id + "/retry", {});
       toast(r.message || "已重试，只补没跑成的");
@@ -10961,10 +12250,18 @@ draftBind("olHook");
 draftBind("olDesign");
 draftBind("olWords", olPaintTier);
 draftBind("olPoolSize", olPaintPoolNote);
+draftBind("olRefSize");
 draftBind("olPText", () => pfPaintCount("outline", "olP"));
 draftBind("clPText", () => pfPaintCount("classify", "clP"));
 draftBind("ifPText", () => pfPaintCount("infuse", "ifP"));
 draftBind("ipText", () => pfPaintCount("infuse", "ip"));
+
+/* 素材参考开关：点一下就摆好条数框 + 记住选择。 */
+olEl("olUseRef").addEventListener("change", () => {
+  olPaintRef();
+  olSaveChoices();
+});
+olPaintRef();
 
 /* ---------------- 启动 ---------------- */
 
