@@ -588,6 +588,7 @@
     background: #fff; border-radius: 9px; padding: 9px 12px; color: var(--ink-2);
   }
   .clrule.on { border-color: var(--accent); background: var(--accent-2); color: var(--ink); }
+  .clrule.off { opacity: .45; cursor: default; }
   .clrule b { display: block; font-size: 13px; }
   .clrule span { font-size: 11.5px; color: var(--ink-3); }
   .clprev {
@@ -602,7 +603,13 @@
   .clprev .row.bad { background: #fdf4f3; }
   .clprev .row.hint { background: #fbf8ee; }
   .clprev .no { flex: 0 0 40px; color: var(--ink-3); font-size: 11.5px; }
-  .clprev .tx { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+  /* 【pre-wrap 是给"按段号切"加的那一条用的】
+     按非空行切时每一行就是一条，看不出来；但按段号切的一条会横跨好几行，
+     默认的 white-space:normal 会把换行折叠成一个空格 ——
+     于是「这三行被合成了一条」这件事在预览里**看不出来**，
+     而那恰恰是她要确认的东西。保留换行，预览里看到的就等于卡片的样子。 */
+  .clprev .tx { flex: 1 1 auto; min-width: 0; word-break: break-word;
+                white-space: pre-wrap; }
   .clprev .wh { flex: 0 0 auto; font-size: 11px; color: var(--ink-3); }
 
   .clcatbar {
@@ -6658,6 +6665,17 @@ async function refreshPreview(keepRule) {
   renderClPanel();
 }
 
+/* 切法 key → 中文名。
+   为什么非要从接口拿、不在这里写死一张表：
+   切法清单是后端 RULES 说了算（状态轴也遵循同一条规矩 —— 只定义一处）。
+   写死一张表的结果是：后端加了新切法，界面把它显示成"非空行切"，
+   而她看到的每一个字都会当成真的。 */
+function clRuleName(k) {
+  if (!k) return "自动判断";
+  const a = (C.preview && C.preview.alternatives) || {};
+  return (a[k] && a[k].name) || k;
+}
+
 function renderClPanel() {
   const box = document.getElementById("clPanel");
   const row = C.sources.find(x => x.id === C.cur);
@@ -6668,9 +6686,16 @@ function renderClPanel() {
   const cur = C.rule || pv.rule;
   const pick = Object.keys(alts).map(k => {
     const a = alts[k];
-    return '<button class="clrule' + (k === cur ? " on" : "") + '" data-rule="' + k + '">' +
+    // 切不出东西的切法要禁掉：一份没有段号的稿子点「按段号切」会毫无反应，
+    // 而"点了没反应"比"没有这个按钮"更让人怀疑是自己点错了。
+    const off = (a.usable === false);
+    return '<button class="clrule' + (k === cur ? " on" : "") + (off ? " off" : "") +
+      '" data-rule="' + k + '"' + (off ? " disabled" : "") +
+      ' title="' + esc(a.desc || "") + '">' +
       '<b>' + esc(a.name) + (a.recommended ? "（推荐）" : "") + '</b>' +
-      '<span>切成 ' + a.count + ' 条 · 中位 ' + a.median + ' 字 · 最长 ' + a.max + ' 字</span>' +
+      '<span>' + (off ? "这份文件里切不出来"
+                      : "切成 " + a.count + " 条 · 中位 " + a.median +
+                        " 字 · 最长 " + a.max + " 字") + '</span>' +
       '</button>';
   }).join("");
 
@@ -6680,10 +6705,17 @@ function renderClPanel() {
     const lvl = s.noise_level === "high" ? " bad"
               : (s.noise_level === "hint" ? " hint" : "");
     const t = ("text" in s) ? s.text : "（这一段没带正文）";
+    // 右上角这一小列放"这条是哪来的"：按段号切时先说它对应原稿第几段，
+    // 再跟噪音原因。她要拿着这一列和手上的稿子对，所以段号在最前面。
+    const meta = [];
+    if (s.marker !== undefined && s.marker !== null) {
+      meta.push("原稿第 " + s.marker + " 段");
+    }
+    if (s.noise_reason) meta.push(s.noise_reason);
     return '<div class="row' + lvl + '">' +
       '<div class="no">' + s.seq + '</div>' +
       '<div class="tx">' + esc(t) + '</div>' +
-      '<div class="wh">' + esc(s.noise_reason || "") + '</div></div>';
+      '<div class="wh">' + esc(meta.join(" · ")) + '</div></div>';
   }).join("");
 
   // ---- 已经切好过的文件：默认把这个面板收起来 ----
@@ -6701,7 +6733,7 @@ function renderClPanel() {
         '<button class="mini" id="clPvOpen" style="margin-left:8px">' +
         '切分预览 / 重切</button>' +
       '</h3>' +
-      '<div class="why">按「' + esc(cur === "blank" ? "空行切" : "非空行切") +
+      '<div class="why">按「' + esc(clRuleName(cur)) +
         '」切成 <b>' + c.total + '</b> 条' +
         (c.noise_high ? '，自动排除 <b>' + c.noise_high + '</b> 条噪音' : '') +
         '，生成 <b>' + c.will_create_cards + '</b> 张卡片。' +
@@ -6725,6 +6757,18 @@ function renderClPanel() {
     '</h3>' +
     '<div class="why">' + esc(pv.rule_reason || "") + '</div>' +
     '<div class="clrules">' + pick + '</div>' +
+    // 按段号切时额外说清两件事：段号不算进正文、第一条可能是"开头那几行"。
+    // 不说的话她会拿卡片正文去对原稿，发现"1."不见了会以为切错了。
+    (cur === "number" && pv.marker_info
+      ? '<div class="why">段号（1. / 2、）本身<b>不算进卡片正文</b>，' +
+        '卡片正文从段号后面开始 —— 原文一个字都没动，只是每条少带那几个字符。' +
+        '右边「原稿第 N 段」只是给你对稿子用的，卡片上不会留。' +
+        (pv.marker_info.head_blocks
+          ? '<br>第 1 条是<b>第一个段号之前的内容</b>（书名行、开头几句），' +
+            '单独算一条 —— 那段也是原文的一部分，没有丢。'
+          : '') +
+        '</div>'
+      : '') +
     '<div class="why">这份文件一共 <b>' + c.total + '</b> 条；' +
       '自动排除 <b>' + c.noise_high + '</b> 条噪音，提示 <b>' + c.noise_hint + '</b> 条；' +
       '预计生成 <b>' + c.will_create_cards + '</b> 张卡片。' +
@@ -6762,8 +6806,12 @@ async function applySplit() {
   const body = { rule: C.rule || null };
   if (row.has_run) {
     const changing = C.rule && row.rule && C.rule !== row.rule;
+    // row.rule 是后端存的**内部代号**（line / blank / number）。
+    // 以前这里直接把代号显示给她，于是确认框上写着「上次是用 line 切的」——
+    // 她不认识这个词，只会怀疑自己点错了什么。一律翻成中文名。
     const msg = changing
-      ? "这个文件上次是用「" + row.rule + "」切的，这次选的是「" + C.rule + "」。\n" +
+      ? "这个文件上次是用「" + clRuleName(row.rule) + "」切的，这次选的是「" +
+        clRuleName(C.rule) + "」。\n" +
         "换切法会重新生成一套段落。已经人工改过的卡片不会失效（它们靠原文偏移定位），确定吗？"
       : "再切一遍？已经人工改过的卡片不会失效。";
     if (!confirm(msg)) return;

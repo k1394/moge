@@ -627,6 +627,7 @@ def api_import_run(req: PathIn, user: dict = Depends(auth.current_user)):
 class SplitIn(BaseModel):
     """确认切分"""
     rule: Optional[str] = None      # None = 用自动判断的结果
+                                    # line 按非空行 / blank 按空行 / number 按段号
     force: bool = False             # 换切法时是否强制
 
 
@@ -847,7 +848,7 @@ def api_disable_category(cid: int, user: dict = Depends(auth.current_user)):
 def api_split_preview(
     mid: int,
     user: dict = Depends(auth.current_user),
-    rule: str = Query("", description="line / blank，留空则自动判断"),
+    rule: str = Query("", description="line / blank / number，留空则自动判断"),
     limit: int = Query(80, ge=0, le=800),
     offset: int = Query(0, ge=0),
 ):

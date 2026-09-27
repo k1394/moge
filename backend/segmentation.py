@@ -51,7 +51,13 @@ import re
 # 归一化规则版本。v1 的规则见 normalize() 的注释。
 NORM_VERSION = "v1"
 
-# 切分规则版本。目前只有 line（按非空行切）/ blank（按空行切）两种。
+# 切分规则版本。
+#
+# 【2026-09-27 加了第三种切法「按段号切」，为什么没有把版本号从 v1 升到 v2】
+#   这个版本号的含义是"同一个规则算出来的结果变了，旧偏移要作废重算"。
+#   加一种新规则**不动** line / blank 的算法，同一段文字用旧规则切出来
+#   仍然是一模一样的位置 —— 旧数据依然有效，所以不该升版本号。
+#   什么情况才要升：改了 normalize()、或者改了 line/blank 的算法本身。
 RULE_VERSION = "v1"
 
 # 校验文本取几个字
@@ -222,6 +228,117 @@ def split_by_blank(text):
     return segs
 
 
+# ---- 第三种切法：按段号切（她自己按 1. 2. 3. 编好段数的稿子）----
+#
+# 【为什么需要这一种】实测一批真实稿件（一份 708 行、其中 132 行是段号）：
+#   按非空行切是 707 条（每一行单独成一条，一段被拆成好几条，读起来是断的）；
+#   按段号切只有 133 条，每条正好是一个完整段落、平均 5 行。
+#   差别不是"好看一点"，是能不能用。
+#
+# 【只认阿拉伯数字】她的原话是"有些素材我已经按数字标好段数了"。
+#   中文数字（一、二、）不作为段号 —— 正文里「一、」开头的句子太常见，
+#   而她的 11 份编号稿里一个中文数字编号都没有。
+#
+# 行首缩进 / 段号与正文之间的空白。含全角空格（U+3000）——
+#   中文稿子里「1.　全息」这种全角空格很常见，只写 [ \t] 会整篇认不出来。
+_WS = r"[ \t\u3000]"
+
+# 段号长什么样：可选左括号 + 1~4 位数字 + 一个分隔符 + 内容
+#   认的写法：1.   1、   1．   1)   1）   1]   1］   1】   (1)   [1]
+#
+# 分隔符后面那一小段是这里最需要小心的（自检里真踩过）：
+#   要求是「要么后面有一个空格、要么后面紧跟的不是数字」——
+#     1. 全息      → 有点号后有空格               → 是段号
+#     1、汉子      → 点号后紧跟汉字               → 是段号
+#     3. 4.5 是他算的 → 点号后有空格，后头是数字  → 是段号（这条最容易漏）
+#     3.5万字      → 点号后紧跟数字、且没有空格   → 不是段号（是小数）
+#     1922.11      → 同上                        → 不是段号
+#   最早我写的是"分隔符后面第一个字符一律不能是数字"，
+#   结果是「3. 4.5 这个数字是他算出来的」整段被漏掉 —— 防小数防过了头。
+#   "有没有空格"才是真正的分界：她自己敲的段号后面几乎一定跟空格或汉字。
+#
+# 另一条：分隔符后面必须**还有内容**（「1.」单独占一行不算段号），
+#   否则一个孤零零的序号会凭空造出一条空卡片。
+#   注意这里不能写死成"后面必须是 \S" —— 末尾带空格的「1. 」也会被放进来，
+#   由 split_by_number 末尾的"没内容就丢掉"兜底。
+NUMBER_MARKER = re.compile(
+    r"^" + _WS + r"*[（(\[]?" + _WS + r"*(\d{1,4})" + _WS + r"*"
+    r"[.．。、)）\]］】]" + r"(?:[ \t\u3000]+(?=\S)|(?=\D))")
+
+
+def find_number_markers(text):
+    """找出所有"行首段号"的行。
+
+    返回 [(行下标(从0开始), 段号, 段号后面的正文起点), ...]
+    没有段号的行不返回 —— 它们靠"上一条还没结束"来归属，见 split_by_number。
+    """
+    out = []
+    for idx, (raw, start, _end) in enumerate(lines_with_span(text)):
+        m = NUMBER_MARKER.match(raw)
+        if m:
+            out.append((idx, int(m.group(1)), start + m.end()))
+    return out
+
+
+def split_by_number(text):
+    """按「行首段号」切：从一个段号所在的行开始，
+    到下一个段号所在行的前一行结束，合成一条。
+
+    适合：她自己按 1. 2. 3. 编好段数的稿子。
+
+    和其他两种切法有两个不同点，都是有意的：
+    · 一条会横跨好几行（这正是目的 —— 段号之间的内容属于同一段）
+    · **段号本身不算进这条的正文**（她拍板的）——
+      这不是"改原文"，只是这条的起点往后挪了几格，
+      切出来仍然是一个连续区间，原文一个字都没动。
+
+    第一个段号之前的内容（书名行、作者行、标题）单独算一条，不丢 ——
+    那也是原文的一部分。它会照常走噪音识别（书名行 / 头部短行会被标出来）。
+    """
+    lines = lines_with_span(text)
+    marks = find_number_markers(text)
+    if not marks:
+        return []
+
+    # 先把每条的行范围圈出来：头部一条（如果有）+ 每个段号一条
+    bounds = []
+    if marks[0][0] > 0:
+        bounds.append({"num": None, "from": 0, "to": marks[0][0] - 1, "cut": None})
+    for k, (idx, num, cut) in enumerate(marks):
+        to = (marks[k + 1][0] - 1) if k + 1 < len(marks) else len(lines) - 1
+        bounds.append({"num": num, "from": idx, "to": to, "cut": cut})
+
+    segs = []
+    for b in bounds:
+        first_line = last_line = None
+        last_core = None
+        for idx in range(b["from"], b["to"] + 1):
+            core = _core_span(lines[idx][0], lines[idx][1])
+            if core:
+                if first_line is None:
+                    first_line = idx
+                last_core = core
+                last_line = idx
+        if first_line is None:
+            continue          # 整段都是空行 —— 只可能是"第一个段号之前的空行"
+        # 有段号的：起点从段号后面算；头部那条：从第一行真正的字开始
+        start = b["cut"] if b["cut"] is not None else _core_span(
+            lines[first_line][0], lines[first_line][1])[0]
+        if start >= last_core[1]:
+            continue          # 段号后面一个字都没有（理论上已被正则挡掉），丢掉
+        seg = {"start": start, "end": last_core[1],
+               "line_from": first_line + 1, "line_to": last_line + 1}
+        if b["num"] is not None:
+            # 段号只在预览里给她看（"这条是原稿第几段"，方便和手上的稿子对上），
+            # 不写进卡片正文 —— 她选的就是"去掉序号"。
+            seg["marker"] = b["num"]
+        segs.append(seg)
+
+    for i, s in enumerate(segs):
+        s["seq"] = i + 1
+    return segs
+
+
 RULES = {
     "line": {
         "name": "按非空行切",
@@ -232,6 +349,13 @@ RULES = {
         "name": "按空行切",
         "desc": "连续的非空行合成一条，空行做分界。适合条目之间空一行隔开的文件。",
         "fn": split_by_blank,
+    },
+    "number": {
+        "name": "按段号切",
+        "desc": "认行首的段号（1. / 2、/ 3）这类），"
+                "从一个段号开始、到下一个段号之前算一条。"
+                "适合你自己按段编好号的稿子。段号本身不算进卡片正文。",
+        "fn": split_by_number,
     },
 }
 
@@ -260,9 +384,85 @@ TOO_COARSE_MEDIAN = 300    # 中位条长超过它 → 一块太粗，不是一�
 TOO_COARSE_P90 = 300       # 十块里有九块都超过它 → 同上
 MONSTER_CHARS = 800        # 出现这么大的块 → 分隔符不可靠
 
+# ---- 「按段号切」的自动推荐阈值 ----
+#
+# 怎么标定出来的：拿她库里 33 份真实素材跑了一遍，11 份带编号。
+#   阈值不是为了"多推荐几个"，是为了**不要在她没编号的稿子上乱推荐**。
+#
+# 关键的一条是 NUMBER_RESET_MIN（"每次编号变小，都必须回到 1"）：
+#   真实稿件往往是多篇拼在一起的，编号在每一篇里从 1 重新开始 ——
+#   所以"编号递增"根本不是必要条件（实测：只用递增比例做判据，
+#   会把两份**正是想切的**稿子误杀，因为组数一多、递增比例就被重置拉下来了）。
+#   而"重置就回到 1"反过来极准：7 份真编排过的稿子全是 100%，
+#   唯一一份"看起来像编号其实不是"的（6 个编号，其实是两段素材
+#   碰巧都以数字开头）是 0%。
+#
+# 各自的作用：
+#   NUMBER_MIN_MARKERS  编号太少不足以说明"整篇按编号排"（实测有一份 176 行只有 3 个）
+#   NUMBER_MIN_GAP      平均每段不足 2 行 → 按段号切和按非空行切没区别，不值得推荐
+#   NUMBER_RESET_MIN    "重置回 1"的比例，排除正文里碰巧出现的数字
+#   NUMBER_COVER_MIN    最后一个编号得铺到文件后半段，排除"只有开头几行有编号"
+NUMBER_MIN_MARKERS = 5
+NUMBER_MIN_GAP = 2.0
+NUMBER_RESET_MIN = 0.8
+NUMBER_COVER_MIN = 0.5
+
+
+def number_stats(text):
+    """数一遍段号，返回自动判断和界面说明要用到的几个数。"""
+    lines = lines_with_span(text or "")
+    n_non_blank = sum(1 for raw, _s, _e in lines if raw.strip())
+    marks = find_number_markers(text or "")
+    nums = [m[1] for m in marks]
+    n = len(nums)
+
+    st = {
+        "number_markers": n,
+        "number_first": nums[0] if nums else 0,
+        "number_last": nums[-1] if nums else 0,
+        "number_reset_ok": 0.0,
+        "number_gap": 0.0,
+        "number_cover": 0.0,
+        "number_blocks": 0,
+        "recommend": False,
+    }
+    if not nums:
+        return st
+
+    # 编号变小的每一个点，都是一次"新的一篇从 1 开始"
+    desc = [i for i in range(n - 1) if nums[i + 1] <= nums[i]]
+    st["number_reset_ok"] = (sum(1 for i in desc if nums[i + 1] == 1) / len(desc)
+                             if desc else 1.0)
+    st["number_gap"] = round(n_non_blank / n, 2) if n else 0.0
+    # 覆盖率要除以**总行数**（含空行）而不是非空行数 ——
+    # 用非空行数当分母，最后一个段号又是最后一行时，算出来会超过 1.0（实测出现过 1.006），
+    # 这个数是要给界面看的，超过 100% 会让人以为算错了。
+    st["number_cover"] = round((marks[-1][0] + 1) / len(lines), 3) if lines else 0.0
+    # 会切成几条：每个段号一条，外加"第一个段号之前那一段"（如果有内容）
+    st["number_blocks"] = len(split_by_number(text or ""))
+    st["recommend"] = bool(
+        n >= NUMBER_MIN_MARKERS
+        and 1 in nums
+        and st["number_reset_ok"] >= NUMBER_RESET_MIN
+        and st["number_gap"] >= NUMBER_MIN_GAP
+        and st["number_cover"] >= NUMBER_COVER_MIN
+    )
+    return st
+
 
 def auto_rule(text):
     """自动判断该用哪种切法，并把判断理由说清楚。
+
+    规则（v3）—— 新增第 0 条「按段号切」，且它优先级最高：
+
+      0. 行首有成体系的段号（见 number_stats 的阈值标定说明）
+         → 按段号切。为什么放最前面：她既然自己按段编了号，
+           那个编号就是比"行"和"空行"都更可靠的段边界。
+      1. 一个空行都没有 → 按非空行切（唯一选择）
+      2. 按空行切的条数 == 非空行数 → 两者等价，选更简单的按非空行切
+      3. 按空行切出现超大块（>800 字）或 九成块都超过 300 字
+         → 空行分隔不可靠，改按非空行切
+      4. 其余情况 → 按空行切（多行作为一个整体条目更合理）
 
     规则（v2）—— 判据从"中位数"升级为"中位数 + p90"，原因是实测踩过一次：
 
@@ -271,13 +471,6 @@ def auto_rule(text):
         也就是说这份文件的空行「有的地方是章节分界、有的地方是条目分界」，
         按空行切出来的东西一半是素材条、一半是整章，没法用。
         只盯中位数会完全看不出来。
-
-    规则：
-      1. 一个空行都没有 → 按非空行切（唯一选择）
-      2. 按空行切的条数 == 非空行数 → 两者等价，选更简单的按非空行切
-      3. 按空行切出现超大块（>800 字）或 九成块都超过 300 字
-         → 空行分隔不可靠，改按非空行切
-      4. 其余情况 → 按空行切（多行作为一个整体条目更合理）
     """
     t = text or ""
     n_blank = sum(1 for raw, _s, _e in lines_with_span(t) if not raw.strip())
@@ -285,14 +478,35 @@ def auto_rule(text):
     n_line = len(line_segs)
     med_line = _median([s["end"] - s["start"] for s in line_segs])
 
+    common = {"blank_lines": n_blank, "non_blank_lines": n_line,
+              "median_line": med_line}
+    nst = number_stats(t)
+    base_common = dict(common)
+    base_common.update(nst)
+
+    # ---- 0. 按段号切（优先）----
+    if nst["recommend"]:
+        d = dict(base_common)
+        d.update({
+            "rule": "number", "auto": True,
+            "reason": "这份文件的行首有 %d 个段号（1. / 2、这类），"
+                      "而且每次编号回到 1 都确实是一次重新起头 —— "
+                      "这是你自己按段编好号的稿子。所以按段号切："
+                      "%d 个段号 → 切成 %d 条，平均每条 %.1f 行。"
+                      "段号本身不算进卡片正文。"
+                      % (nst["number_markers"], nst["number_markers"],
+                         nst["number_blocks"], nst["number_gap"]),
+        })
+        return d
+
     if n_blank == 0:
-        return {
+        d = dict(base_common)
+        d.update({
             "rule": "line", "auto": True,
             "reason": "这份文件一个空行都没有，只能按非空行切：%d 行 → %d 条。"
                       % (n_line, n_line),
-            "blank_lines": 0, "non_blank_lines": n_line,
-            "median_line": med_line,
-        }
+        })
+        return d
 
     blank_segs = split_by_blank(t)
     n_blank_seg = len(blank_segs)
@@ -301,13 +515,13 @@ def auto_rule(text):
     p90_blank = _p90(sizes)
     max_blank = sizes[-1] if sizes else 0
 
-    base = {
-        "blank_lines": n_blank, "non_blank_lines": n_line,
+    base = dict(base_common)
+    base.update({
         "blank_segments": n_blank_seg,
         "median_blank": med_blank, "p90_blank": p90_blank,
-        "max_blank": max_blank, "median_line": med_line,
+        "max_blank": max_blank,
         "max_line": max((s["end"] - s["start"] for s in line_segs), default=0),
-    }
+    })
 
     if n_blank_seg == n_line:
         base.update({
@@ -468,6 +682,7 @@ def build_segments(text, rule, with_text=True):
         head_check / tail_check   首尾各 8 字，用来兜底校验
         noise_level / noise_reason
         line_from / line_to       行号范围（1 开始，给人看的）
+        marker                    按段号切时，这条对应的原稿段号（别的切法没有这个键）
     """
     if rule not in RULES:
         rule = "line"
@@ -496,6 +711,10 @@ def build_segments(text, rule, with_text=True):
             "line_from": lf,
             "line_to": lt,
         }
+        # 原稿段号只在预览里给她看（"这条是原稿第几段"，方便跟手上的稿子对上）。
+        # 它不在正文里 —— 她选的是"去掉序号"。
+        if s.get("marker") is not None:
+            seg["marker"] = s["marker"]
         if with_text:
             seg["text"] = piece
         lvl, why = detect_noise(text, {"text": piece, "line_from": lf},
@@ -538,7 +757,12 @@ def preview(text, rule=None, with_text=True, text_limit=None):
         alts[k] = {"name": v["name"], "desc": v["desc"], "count": len(raw),
                    "median": _median(sizes), "p90": _p90(sizes),
                    "max": max(sizes) if sizes else 0,
-                   "recommended": k == auto["rule"]}
+                   "recommended": k == auto["rule"],
+                   # 切不出东西的切法（比如一份没有段号的稿子选"按段号切"）
+                   # 要在界面上禁掉 —— 点了没反应比没有这个按钮更糟。
+                   "usable": bool(raw)}
+    # 按段号切时，这一条是给她对稿子的（"这段是原稿第几段"）
+    n_marked = sum(1 for s in segs if s.get("marker") is not None)
     return {
         "chars": len(text or ""),
         "norm_version": NORM_VERSION,
@@ -548,12 +772,19 @@ def preview(text, rule=None, with_text=True, text_limit=None):
         "auto_detail": {k: auto.get(k) for k in
                         ("blank_lines", "non_blank_lines", "blank_segments",
                          "median_blank", "p90_blank", "max_blank",
-                         "median_line", "max_line") if k in auto},
+                         "median_line", "max_line",
+                         "number_markers", "number_first", "number_last",
+                         "number_reset_ok", "number_gap", "number_cover",
+                         "number_blocks", "recommend") if k in auto},
         "rule": use,
         "rule_name": RULES[use]["name"],
         "rule_reason": auto["reason"] if use == auto["rule"] else
                        "手动改选为「%s」。自动判断的原始理由：%s"
                        % (RULES[use]["name"], auto["reason"]),
+        # 段号只有在"按段号切"时才统计得出来（别的切法里它已经被切进正文了）
+        "marker_info": ({"markers": n_marked,
+                         "head_blocks": len(segs) - n_marked}
+                        if use == "number" else None),
         "counts": {
             "total": len(segs),
             "blank_lines": auto.get("blank_lines", 0),
@@ -818,3 +1049,42 @@ if __name__ == "__main__":
     ])
     for p in dup:
         print("重复：", p["a_id"], "↔", p["b_id"], p["kind"], p["detail"])
+
+    # ---- 第三种切法：按段号切 ----
+    print()
+    print("=" * 60)
+    numdoc = """《某书》5（已分类-精华版）
+开头两行
+1. 全息现在已经实现了，要说生活里还有什么能让他保持愉悦的，就只有他了。
+真是有意思。
+阿岚心情好，也开始安安静静地等待。
+2. 他没想到来的人不是他，且此刻已经是晚上，想来关系也不一般。
+他试探着问道：“在家呢？”
+3. 4.5 这个数字是他算出来的，不是随便说的。
+4. 窗外的雨下了三天，檐下的水缸都满了。
+她终于转过身，看见他袖口的泥。
+5. 最后一句。
+1. 另一篇重新从 1 开始 —— 这是多篇拼在一起，不是编号错了。
+另一篇的第二行。
+2. 另一篇的最后一段。"""
+    print("段号统计：", number_stats(numdoc))
+    auto2 = auto_rule(numdoc)
+    print("自动判断：", auto2["rule"])
+    print("理由：", auto2["reason"])
+    pv2 = preview(numdoc)
+    print()
+    print("三种切法：")
+    for k, a in pv2["alternatives"].items():
+        print("   %-7s %-8s %2d 条  推荐=%-5s 可用=%s"
+              % (k, a["name"], a["count"], a["recommended"], a["usable"]))
+    print()
+    print("按段号切的结果（段号已从正文里去掉；「3.5万字」那种小数不该被当成段号）：")
+    for s in build_segments(numdoc, "number"):
+        print("  #%d 原稿第 %s 段 | %s"
+              % (s["seq"], s.get("marker", "—"),
+                 (s["text"] or "").replace("\n", " / ")[:62]))
+    print()
+    print("小数与孤立序号不该被认成段号：",
+          [bool(NUMBER_MARKER.match(x)) for x in
+           ("3.5万字是小数", "1922.11 是日期", "1.", "1. ", "1、是段号",
+            "3. 4.5 是段号后面跟数字", "2020年不是段号")])
