@@ -494,6 +494,40 @@
   .toast.on { opacity: 1; transform: translateX(-50%); }
   .toast.bad { background: var(--danger); }
 
+  /* ==================== 左导航可收起（她 2026-09-27 要求） ====================
+     收起 = 只留图标条，右舞台凭空多出 150px。写正文时满屏都是字，
+     这一点宽度很实在 —— 所以她专门提了这个需求。
+
+     为什么用 .app 上的一个 class，而不是另写一套宽度：
+       --nav-w 是全局**唯一**那个宽度定义（见 :root 的注释）。
+       在 .app 上覆盖它，右舞台的 flex 会自动跟上 —— 不用改第二处。
+       写成"给 .nav 再写个 width"的话，两处宽度迟早会对不上。 */
+  .app.mini { --nav-w: 62px; }
+  .app.mini .navtop { justify-content: center; padding: 14px 0 12px; }
+  .app.mini .brand { display: none; }
+  .app.mini .navlist { padding: 4px 8px 12px; }
+  .app.mini .navitem { justify-content: center; padding: 10px 0; }
+  .app.mini .navitem .tx, .app.mini .badge, .app.mini .soon { display: none; }
+  .app.mini .navfoot { padding: 11px 8px; }
+  .app.mini .userbox { flex-direction: column; gap: 7px; }
+  .app.mini .uname { display: none; }
+  .app.mini .navfold { margin-left: 0; }
+  .app.mini .navfold svg { transform: rotate(180deg); }
+
+  /* 品牌名负责把收起按钮顶到最右边。
+     不用 margin-left:auto —— 那个在宽窄切换和收起态里表现不一致，
+     而 flex:1 的效果是确定的。 */
+  .navtop .brand { flex: 1 1 auto; min-width: 0; }
+
+  .navfold {
+    flex: 0 0 26px; width: 26px; height: 26px;
+    border: 1px solid var(--line); border-radius: 7px; background: transparent;
+    color: var(--ink-3); display: flex; align-items: center; justify-content: center;
+    padding: 0; transition: background .14s, color .14s, border-color .14s;
+  }
+  .navfold:hover { color: var(--ink); background: var(--line-2); border-color: var(--line); }
+  .navfold svg { width: 14px; height: 14px; display: block; transition: transform .18s; }
+
   /* ==================== 窄屏：左导航收成图标条 ==================== */
   @media (max-width: 900px) {
     :root { --nav-w: 62px; --pad: 16px; }
@@ -1616,12 +1650,234 @@
   table.mst td.mname { color: var(--ink); white-space: normal; }
   table.mst td.mname .mm { color: var(--ink-3); font-size: 11.5px; }
   table.mst td.mbad { color: var(--danger); }
+
+  /* ==================== 正文创作（三栏） ====================
+     左：章节列表（固定 236px）｜中：正文编辑器（占满）｜右：AI 面板（固定 400px）
+     她 2026-09-27 的原话是"页面直接照抄我指定的那个网站"，那个站就是这么分的。
+
+     【为什么左右两栏是 sticky、滚动交给整页】
+     整站只有 .stage 一个滚动容器（见文件顶部那段布局说明）。
+     在这里另开一套"三栏各自滚动"的话，就会出现两个滚动条并排、
+     而且 mouse wheel 落在哪一栏全看指针位置 —— 她多半会以为卡住了。
+     所以：整页照常滚，左右两栏用 sticky 钉在视口里，只有它们**内部**
+     的长列表（章节多、AI 面板放不下时）自己滚。
+     top 的 76px = vhead 的高度，抄的是 .tagside 那套做法。 */
+  .chwrap { display: flex; align-items: flex-start; gap: 14px; }
+
+  .chlist {
+    flex: 0 0 236px; width: 236px;
+    position: sticky; top: 76px; max-height: calc(100vh - 100px);
+    display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .chlisthead {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--line-2);
+    font-size: 12.5px; color: var(--ink-3);
+  }
+  .chlisthead b { color: var(--ink); font-size: 13px; }
+  .chitems { flex: 1 1 auto; overflow: auto; padding: 6px; }
+  .chitem {
+    display: flex; flex-direction: column; gap: 2px;
+    width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid transparent; background: transparent; color: var(--ink-2);
+    transition: background .14s;
+  }
+  .chitem:hover { background: var(--line-2); }
+  .chitem.on { background: var(--ink); color: #fff; }
+  .chitem .ct {
+    font-size: 13.5px; font-weight: 600; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chitem.on .ct { color: #fff; }
+  .chitem .cm { font-size: 11px; color: var(--ink-3); }
+  .chitem.on .cm { color: rgba(255,255,255,.75); }
+  .chitem .cm .dot { color: var(--accent); }
+  .chitem.on .cm .dot { color: #fff; }
+  .chlistfoot {
+    flex: 0 0 auto; border-top: 1px solid var(--line-2); padding: 8px 10px;
+    display: flex; gap: 6px;
+  }
+
+  .chmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .chbar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 9px 12px;
+  }
+  .chbar input.ctitle {
+    flex: 1 1 auto; min-width: 0; border: none; background: transparent;
+    font-size: 16px; font-weight: 600; color: var(--ink); padding: 2px 0;
+  }
+  .chbar input.ctitle:focus { outline: none; }
+  .chbar .cwc { flex: 0 0 auto; font-size: 12px; color: var(--ink-3); }
+  .chsum {
+    border: 1px solid var(--line); background: var(--card);
+    border-radius: var(--radius); padding: 9px 12px;
+  }
+  .chsum input {
+    width: 100%; border: none; background: transparent; font-size: 13px;
+    color: var(--ink); padding: 0;
+  }
+  .chsum input:focus { outline: none; }
+  .chsum .cshint { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+
+  /* 生成中那条状态行。**它不是装饰**：她要看得见"已经等了多少秒"，
+     否则长任务里界面一片安静，她只能怀疑是不是死了。 */
+  .chstream {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--accent-2); border: 1px solid #e6d8ce;
+    border-radius: var(--radius); padding: 8px 12px;
+    font-size: 12.5px; color: var(--accent);
+  }
+  .chstream .livedot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor; }
+  .chstream.bad { background: #fdf4f3; border-color: #ecdcda; color: var(--danger); }
+  .chstream.done { background: #eef5f0; border-color: #d6e6dc; color: #2c7a4e; }
+  .chstream .grow { flex: 1 1 auto; }
+
+  textarea.chtext {
+    width: 100%; min-height: 420px; height: calc(100vh - 340px);
+    resize: vertical; line-height: 1.95; font-size: 15px;
+    background: var(--card); color: var(--ink);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px;
+  }
+  textarea.chtext:focus { outline: none; border-color: var(--ink-3); }
+
+  /* ---------- 右：AI 写作面板 ---------- */
+  .chai {
+    flex: 0 0 400px; width: 400px;
+    position: sticky; top: 76px; max-height: calc(100vh - 100px);
+    overflow: auto;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px 16px;
+  }
+  .chai > h3 {
+    margin: 0 0 10px; font-size: 13px; color: var(--ink-2);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chfield { margin-bottom: 14px; }
+  .chfield > label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--ink-2); margin-bottom: 5px;
+  }
+  .chfield textarea, .chfield input[type=text], .chfield select {
+    width: 100%; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; padding: 7px 9px; font-size: 13px; color: var(--ink);
+  }
+  .chfield textarea { line-height: 1.7; resize: vertical; }
+  .chfield textarea:focus, .chfield input:focus, .chfield select:focus {
+    outline: none; border-color: var(--ink-3);
+  }
+  .chfield .cfoot {
+    display: flex; align-items: center; gap: 8px; margin-top: 5px;
+    font-size: 11.5px; color: var(--ink-3);
+  }
+  .chfield .cfoot .grow { flex: 1 1 auto; }
+  .chfield .cfoot .over { color: var(--danger); }
+
+  .chchars { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow: auto; }
+  .chchars label {
+    display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px;
+    padding: 5px 7px; border-radius: 7px; color: var(--ink-2);
+  }
+  .chchars label:hover { background: var(--line-2); }
+  .chchars .cn { color: var(--ink); font-weight: 600; }
+  .chchars .cd { color: var(--ink-3); font-size: 11.5px; }
+
+  .chrefs { display: flex; flex-direction: column; gap: 5px; }
+  .chref {
+    display: flex; align-items: center; gap: 7px; font-size: 12.5px;
+    background: var(--line-2); border-radius: 7px; padding: 5px 8px;
+    color: var(--ink-2);
+  }
+  .chref .rt { flex: 1 1 auto; min-width: 0; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chref select {
+    flex: 0 0 auto; font-size: 11.5px; height: 24px; border-radius: 6px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  }
+  .chref .rx {
+    flex: 0 0 auto; border: none; background: transparent; color: var(--ink-3);
+    font-size: 14px; line-height: 1; padding: 0 2px;
+  }
+  .chref .rx:hover { color: var(--danger); }
+  .chrefnote { font-size: 11.5px; color: var(--ink-3); margin-top: 6px; line-height: 1.6; }
+
+  .chgo {
+    display: flex; align-items: center; gap: 8px;
+    border-top: 1px solid var(--line-2); padding-top: 12px; margin-top: 2px;
+  }
+  .chgo .btn { flex: 1 1 auto; }
+
+  /* 写作风格 / 写作要求旁边的「快捷选项」按钮 —— 点开是一列存好的片段，
+     点一条就填进上面那个框，填完还能接着改。 */
+  .chpickbar { display: flex; gap: 6px; margin-top: 5px; }
+  .chpickbtn {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 7px;
+    border: 1px dashed var(--line); background: #fff; color: var(--ink-2);
+  }
+  .chpickbtn:hover { border-style: solid; border-color: var(--ink-3); color: var(--ink); }
+  .chpickbtn b { color: var(--accent); font-weight: 600; }
+
+  /* 提示词快捷选项那个小弹层 */
+  .picksub { font-size: 12px; color: var(--ink-3); margin: 10px 0 5px; }
+  .picklist { display: flex; flex-direction: column; gap: 5px; }
+  .pickrow {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    text-align: left; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  }
+  .pickrow:hover { border-color: var(--ink-3); }
+  .pickrow .pn { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pickrow .pd { flex: 0 0 auto; font-size: 11px; color: var(--ink-3); }
+  .pickrow .pv {
+    flex: 0 0 auto; font-size: 11px; color: var(--accent);
+    background: var(--accent-2); border-radius: 20px; padding: 1px 8px;
+  }
+
+  /* ==================== 人设卡 ==================== */
+  .charcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 10px; }
+  .charcard {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .charcard.off { opacity: .6; }
+  .charcard .ch {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .charcard .ch .nm { flex: 1 1 auto; min-width: 0; font-size: 14.5px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .charcard .idn { font-size: 12.5px; color: var(--ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .charcard .meta { font-size: 11.5px; color: var(--ink-3); }
+  .charcard .fills { display: flex; gap: 4px; flex-wrap: wrap; }
+  .filldot {
+    font-size: 10.5px; padding: 1px 7px; border-radius: 20px;
+    background: var(--line-2); color: var(--ink-3);
+  }
+  .filldot.has { background: var(--accent-2); color: var(--accent); }
+  .charcard .cacts { display: flex; gap: 6px; margin-top: 2px; }
+
+  @media (max-width: 1180px) {
+    .chwrap { flex-direction: column; align-items: stretch; }
+    .chlist, .chai {
+      position: static; max-height: none;
+      flex: none; width: 100%; overflow: visible;
+    }
+    .chitems { max-height: 260px; }
+    textarea.chtext { height: auto; min-height: 360px; }
+  }
 </style>
 
 </head>
 <body class="guest">
 
-<div class="app">
+<div class="app" id="app">
 
   <!-- ==================== 左：功能导航 ====================
        这一列的内容不写死，由下面 JS 里的 VIEWS 清单渲染出来。
@@ -1630,6 +1886,8 @@
     <div class="navtop">
       <div class="logo">墨</div>
       <div class="brand">墨阁<small>写作素材台</small></div>
+      <button class="navfold" id="navFold" title="收起 / 展开左边这一栏"
+              aria-label="收起导航"></button>
     </div>
     <nav class="navlist" id="navlist"></nav>
     <div class="navfoot">
@@ -1987,6 +2245,197 @@
       </div>
     </section>
 
+    <!-- ---------- 人设卡 ----------
+         这一页一直是个"待做"占位页，但后端那张 characters 表**早就建好了**
+         （大纲生成要"至少关联一张角色卡"，当初就先开了表和接口）。
+         现在补上这一页，用的是同一张表、同一批接口 —— 不会再建第二套，
+         那正是计划禁止的"互相冲突的角色体系"。
+
+         它同时是【正文创作】的前置：正文表单里那个"角色卡"多选框，
+         读的就是这里的卡。不补这一页，那个框永远是空的。 -->
+    <section class="view" id="view-persona">
+      <header class="vhead">
+        <h1 class="vtitle">人设卡</h1>
+        <div class="vacts">
+          <button class="btn primary" id="pcNewBtn">＋ 新建角色卡</button>
+          <button class="btn" id="pcReload">刷新</button>
+        </div>
+      </header>
+
+      <div class="statsbar">
+        <div><span class="num" id="pcStatAll">-</span>张角色卡</div>
+        <div><span class="num" id="pcStatFull">-</span>张填得比较全</div>
+        <div><span class="num" id="pcStatThin">-</span>张只填了个名字</div>
+        <div><span class="num" id="pcStatOff">-</span>张已停用</div>
+      </div>
+
+      <div class="vbody">
+        <div class="clmain">
+          <div class="drafttip">
+            角色卡是写对话时随时对照的表。填得越全，AI 越不会把人物写得不像 ——
+            但空着也能用，只是那些没填的部分，模型只能自己猜。
+            大纲和正文关联角色卡时存的是<b>当时那份快照</b>，
+            所以你以后改这里，不会影响已经写过的东西。
+          </div>
+          <div class="olrow" style="margin:0 0 10px">
+            <input type="text" id="pcSearch" placeholder="按名字、身份、性格、关系找"
+                   style="flex:1 1 auto;min-width:0;height:34px;border:1px solid var(--line);
+                          border-radius:8px;padding:0 10px;background:#fff">
+            <label class="switch" title="停用的卡不会出现在大纲/正文的关联清单里">
+              <input type="checkbox" id="pcShowOff">
+              <span>也显示已停用的</span>
+            </label>
+          </div>
+          <div class="charcards" id="pcList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 正文创作 ----------
+         整条链路的终点：素材 → 分类 → 内化 → 大纲 → **正文**。
+
+         她 2026-09-27 拍板的两条：
+           1A  只做「章节」一层，不做参考站那层"作品"分组
+               （墨阁里"作品"其实就是大纲/书名，先跑通链路要紧）
+           2B  生成完**直接写进右边的正文框**，不做候选制
+
+         「直接写进正文框」这条有个必须处理好的后果：原来那段字有被
+         覆盖的风险。所以流程是 —— 生成的字先进编辑器（带一条"还没保存"
+         的提示条），她点「保存本章」才落库；生成前那一份也留着，
+         点「还原到生成前」就能回去。理由见 backend/chapter_db.py 顶部。 -->
+    <section class="view" id="view-chapter">
+      <header class="vhead">
+        <h1 class="vtitle">正文创作</h1>
+        <div class="vacts">
+          <button class="btn primary" id="chNewBtn">＋ 新建章节</button>
+          <button class="btn" id="chSaveBtn">保存本章</button>
+          <button class="btn" id="chHistoryBtn">生成记录</button>
+          <button class="btn" id="chReload">刷新</button>
+        </div>
+      </header>
+
+      <div class="vbody chwrap">
+        <!-- ============ 左：章节列表 ============ -->
+        <aside class="chlist">
+          <div class="chlisthead">
+            <b>章节</b>
+            <span class="grow" style="flex:1 1 auto"></span>
+            <span id="chListCount">0 章</span>
+          </div>
+          <div class="chitems" id="chList"></div>
+          <div class="chlistfoot">
+            <button class="mini" id="chUpBtn" title="把这一章往上挪一位">↑ 上移</button>
+            <button class="mini" id="chDownBtn" title="把这一章往下挪一位">↓ 下移</button>
+            <button class="mini d" id="chDelBtn">删除</button>
+          </div>
+        </aside>
+
+        <!-- ============ 中：正文编辑器 ============ -->
+        <div class="chmain">
+          <div class="chbar">
+            <input class="ctitle" id="chTitle" maxlength="80"
+                   placeholder="这一章叫什么（留空会自己起个「第 N 章」）">
+            <span class="cwc" id="chWc">0 字</span>
+            <button class="mini" id="chRevertBtn" hidden
+                    title="把正文恢复成这次生成之前的样子">还原到生成前</button>
+          </div>
+          <div class="chsum">
+            <input id="chSummary" maxlength="1000"
+                   placeholder="本章梗概：一句话说清这章发生了什么">
+            <div class="cshint">
+              梗概不是摘要存档 —— 它是<b>关联章节时用来代替正文的那份东西</b>
+              （只带梗概，省几百上千字的上下文钱），也是你在左边列表里认出这一章的唯一线索。
+            </div>
+          </div>
+
+          <!-- 生成中的状态行。放在正文框正上方，因为这时候她盯着的是这块。 -->
+          <div class="chstream" id="chStream" hidden>
+            <span class="livedot"></span>
+            <span id="chStreamText">正在写…</span>
+            <span class="grow"></span>
+            <button class="mini" id="chStopBtn">停止等待</button>
+          </div>
+
+          <textarea class="chtext" id="chText" spellcheck="false"
+            placeholder="在这里写正文，或者点右边 AI 面板下面的「开始写这一章」。&#10;&#10;AI 写出来的字会直接长在这个框里，你可以当场改。&#10;改动要记得点上面的「保存本章」才写进库里。"></textarea>
+
+          <div class="chfoot" style="font-size:11.5px;color:var(--ink-3);line-height:1.7">
+            <span id="chFootNote"></span>
+          </div>
+        </div>
+
+        <!-- ============ 右：AI 写作面板 ============ -->
+        <aside class="chai">
+          <h3>AI 写这一章</h3>
+
+          <div class="chfield">
+            <label>用哪个模型 <span class="chip">必选</span></label>
+            <select id="chModel"></select>
+            <div class="cfoot"><span id="chModelNote"></span></div>
+          </div>
+
+          <div class="chfield">
+            <label>故事背景 <span class="chip gray">选填 500 字</span></label>
+            <textarea id="chBack" rows="3" maxlength="500" spellcheck="false"
+              placeholder="这一章成立所必需的设定：时代地点、身份关系、之前发生过什么。&#10;不用把整本书的设定粘进来，只写这一章要用到的。"></textarea>
+            <div class="cfoot"><span class="grow"></span><span id="chBackCnt">0 / 500</span></div>
+          </div>
+
+          <div class="chfield">
+            <label>角色卡 <span class="chip gray">选填</span></label>
+            <div class="chchars" id="chChars"></div>
+            <div class="cfoot"><span id="chCharNote"></span></div>
+          </div>
+
+          <div class="chfield">
+            <label>本章剧情 <span class="chip">必填 5000 字</span></label>
+            <textarea id="chPlot" rows="6" maxlength="5000" spellcheck="false"
+              placeholder="这一章要发生的事：从哪儿开始、中间怎么走、到哪儿停。&#10;&#10;写得越具体，它越不会跑题。可以直接把大纲里那几段贴过来。"></textarea>
+            <div class="cfoot">
+              <span class="grow"></span>
+              <span id="chPlotCnt">0 / 5000</span>
+            </div>
+          </div>
+
+          <div class="chfield">
+            <label>写作风格 <span class="chip gray">选填 5000 字</span></label>
+            <textarea id="chStyle" rows="4" maxlength="5000" spellcheck="false"
+              placeholder="怎么说话：人称、句子长短、节奏、书面还是口语、冷还是热……&#10;例如：第三人称限知视角，多用短句，对白占一半，不写景"></textarea>
+            <div class="chpickbar">
+              <button class="chpickbtn" id="chStylePick">快捷选项</button>
+              <button class="chpickbtn" id="chStyleSave">存成我的提示词</button>
+            </div>
+            <div class="cfoot"><span class="grow"></span><span id="chStyleCnt">0 / 5000</span></div>
+          </div>
+
+          <div class="chfield">
+            <label>写作要求 <span class="chip gray">选填 5000 字</span></label>
+            <textarea id="chReq" rows="4" maxlength="5000" spellcheck="false"
+              placeholder="这一章必须做到什么、绝不许出现什么。&#10;例如：高潮那段必须有一次当众的冲突；不要出现第三者；不要用「突然」"></textarea>
+            <div class="chpickbar">
+              <button class="chpickbtn" id="chReqPick">快捷选项</button>
+              <button class="chpickbtn" id="chReqSave">存成我的提示词</button>
+            </div>
+            <div class="cfoot"><span class="grow"></span><span id="chReqCnt">0 / 5000</span></div>
+          </div>
+
+          <div class="chfield">
+            <label>关联章节 <span class="chip gray">选填 · 防失忆</span></label>
+            <div class="chrefs" id="chRefs"></div>
+            <div class="chpickbar">
+              <button class="chpickbtn" id="chRefAdd">＋ 加一章</button>
+            </div>
+            <div class="chrefnote" id="chRefNote"></div>
+          </div>
+
+          <div class="chgo">
+            <button class="btn primary" id="chGo">开始写这一章</button>
+          </div>
+          <div class="chrefnote" id="chGoNote"></div>
+        </aside>
+      </div>
+    </section>
+
     <!-- ---------- 还没做的功能：统一占位页 ---------- -->
     <section class="view" id="view-soon">
       <div class="soonwrap">
@@ -2002,6 +2451,87 @@
 
 <input type="file" id="fileInput" multiple hidden
        accept=".txt,.md,.docx,.pdf,.xlsx,.xlsm">
+
+<!-- ============ 人设卡：编辑一张卡 ============
+     字段**不写死在前端** —— 从 /api/character-meta 拿。
+     以后后端给 characters 表加一项（比如"口头禅"），
+     这一页自动就多一个输入框，不用改前端。 -->
+<div class="mask" id="mkPcEdit">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2 id="pcEditTitle">新建角色卡</h2>
+        <p>填得越全，写对话时越不会把它写跑。空着的项，模型只能自己猜。</p>
+      </div>
+      <button class="x" data-close="mkPcEdit">&times;</button>
+    </header>
+    <div class="content" id="pcFormBody"></div>
+    <footer>
+      <span class="mdhint" id="pcEditNote"></span>
+      <span class="grow"></span>
+      <button class="btn" data-close="mkPcEdit">取消</button>
+      <button class="btn primary" id="pcSaveBtn">保存</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 正文创作：提示词快捷选项 ============
+     「写作风格 / 写作要求」要能调用提示词库（她列的需求）。
+     这里刻意做得轻：它**不是**大纲页那种带页签的完整面板，
+     而是一个小清单 —— 点一条填进输入框，填进去之后她还能接着改。
+     理由：这两栏本来就是自由文字，她多半是"拿一条打底再调两句"，
+     做成面板反而多一层。 -->
+<div class="mask" id="mkChPick">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2 id="chPickTitle">挑一条提示词</h2>
+        <p>点一条就填进上面的框里。填进去之后你还能接着改，改完不影响存好的那一条。</p>
+      </div>
+      <button class="x" data-close="mkChPick">&times;</button>
+    </header>
+    <div class="content" id="chPickBody"></div>
+    <footer>
+      <button class="btn" data-close="mkChPick">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 正文创作：加一章到上下文里 ============ -->
+<div class="mask" id="mkChRef">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>把哪一章接在前面</h2>
+        <p>关联的章节会跟着这次生成一起发给模型，防止它忘了前面写过什么。
+           取正文还是只取梗概，加进去之后还能改。</p>
+      </div>
+      <button class="x" data-close="mkChRef">&times;</button>
+    </header>
+    <div class="content" id="chRefBody"></div>
+    <footer>
+      <button class="btn" data-close="mkChRef">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 正文创作：这一章的生成记录 ============ -->
+<div class="mask" id="mkChHist">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>这一章的生成记录</h2>
+        <p>每一次生成都留着一份：用的哪个模型、首字等了多久、一共花了多久、
+           写出来的原文。生成前的那份正文也在里面，随时能还原。</p>
+      </div>
+      <button class="x" data-close="mkChHist">&times;</button>
+    </header>
+    <div class="content" id="chHistBody"></div>
+    <footer>
+      <button class="btn" data-close="mkChHist">关闭</button>
+    </footer>
+  </div>
+</div>
 
 <!-- ============ 登录 / 注册 ============ -->
 <div class="mask auth on" id="mkAuth">
@@ -3201,8 +3731,13 @@ const VIEWS = [
     desc: "把原始素材提炼成可复用的剧情零件（谁做了什么、动机是什么）" },
   { id: "outline",  name: "大纲生成", icon: "list",    ready: true,
     desc: "从剧情库里挑零件，拼出一篇能直接动笔的细纲" },
-  { id: "persona",  name: "人设卡",   icon: "user",    ready: false,
-    desc: "角色的性格、关系、说话方式，写对话时随时对照" }
+  { id: "persona",  name: "人设卡",   icon: "user",    ready: true,
+    desc: "角色的性格、关系、说话方式，写对话时随时对照" },
+  /* 正文创作：整条链路的终点（零件 → 大纲 → 正文）。
+     2026-09-27 她拍板只做「章节」一层（1A）—— 不做参考站那层"作品"分组，
+     因为墨阁里"作品"其实就是大纲/书名。 */
+  { id: "chapter",  name: "正文创作", icon: "quill",   ready: true,
+    desc: "把大纲和角色卡变成一章一章写出来的正文" }
 ];
 
 /* 线性图标，统一 24×24、线条描边。加功能时在 VIEWS 里引用的名字要在这里有 */
@@ -3220,7 +3755,9 @@ const ICONS = {
   list: '<path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11"/>' +
         '<circle cx="4.4" cy="6.5" r="1.05"/><circle cx="4.4" cy="12" r="1.05"/>' +
         '<circle cx="4.4" cy="17.5" r="1.05"/>',
-  user: '<circle cx="12" cy="8.4" r="3.5"/><path d="M5.2 19.6c0-3.5 3-6 6.8-6s6.8 2.5 6.8 6"/>'
+  user: '<circle cx="12" cy="8.4" r="3.5"/><path d="M5.2 19.6c0-3.5 3-6 6.8-6s6.8 2.5 6.8 6"/>',
+  quill: '<path d="M6 3.6h8.4L19 8.2v12.2H6z"/><path d="M13.8 3.6v5h5.2"/>' +
+         '<path d="M9 12.8h6M9 16.2h4"/>'
 };
 
 function svgIcon(name) {
@@ -3521,6 +4058,10 @@ function emitSSEFrame(raw, onEvent) {
 const LIVE = { subs: {}, order: [], MAX: 4 };
 
 function liveMountFor(sid) {
+  // 【正文创作为什么不在这个表里】
+  // 它的字要**直接长进右边的正文框**（她拍板 2B：生成完直接写进正文框），
+  // 所以那一条流不走这里的"牌子"，由 CH 模块自己读、自己 append 到 textarea。
+  // 硬塞一个牌子进来的话，同一段正文会在屏幕上出现两遍。
   return String(sid || "").indexOf("ol-") === 0
     ? document.getElementById("olLive")
     : document.getElementById("liveBox");
@@ -3831,6 +4372,10 @@ function goView(id) {
   // 大纲页同理。离开时不停轮询 —— 生成任务可能还在跑，
   // 她要能切去看别的页，回来时进度还是新的（见 OL.poll 的说明）。
   if (id === "outline") loadOutline(false);
+  // 人设卡和正文创作同理：进来时才拉（省得每次登录都白拉一遍）。
+  // 正文页尤其要这样 —— 它要拉章节列表 + 角色卡 + 模型清单三样。
+  if (id === "persona") loadPersona(false);
+  if (id === "chapter") loadChapters(false);
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -12262,6 +12807,1138 @@ olEl("olUseRef").addEventListener("change", () => {
   olSaveChoices();
 });
 olPaintRef();
+
+/* ============================================================
+   左导航可收起（她 2026-09-27 需求）
+   ============================================================
+   收起 = 只留一条图标带，右舞台凭空多出 150px。写正文时满屏都是字，
+   这一点宽度很实在。
+
+   为什么存 localStorage 而不是走草稿层：草稿层管的是「她填的内容」，
+   这是「界面偏好」—— 两回事。混在一起的话，「清空草稿」会顺手
+   把她的界面设置也清掉。
+   ============================================================ */
+(function bindNavFold() {
+  const btn = document.getElementById("navFold");
+  const app = document.getElementById("app");
+  if (!btn || !app) return;
+  let mini = false;
+  try { mini = localStorage.getItem("moge_nav_mini") === "1"; } catch (e) {}
+  // 图标画一次就够，转向交给 CSS（.app.mini .navfold svg 里那个 rotate）
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M14.5 6.5L9 12l5.5 5.5"/></svg>';
+  const paint = () => {
+    app.classList.toggle("mini", mini);
+    btn.title = mini ? "展开左边这一栏" : "收起左边这一栏";
+    btn.setAttribute("aria-label", btn.title);
+  };
+  btn.onclick = () => {
+    mini = !mini;
+    try { localStorage.setItem("moge_nav_mini", mini ? "1" : "0"); } catch (e) {}
+    paint();
+    // 收起/展开会改宽度，铺开的 textarea 要重新量一次
+    if (window.dispatchEvent) window.dispatchEvent(new Event("resize"));
+  };
+  paint();
+})();
+
+/* ============================================================
+   人设卡
+   ============================================================
+   后端那张 characters 表早就建好了（大纲要"至少关联一张角色卡"，
+   当初就先开了表和接口），但左侧栏这一页一直是"待做"占位页。
+   现在补上，用的**是同一张表、同一批接口** —— 不会再建第二套。
+
+   它同时是【正文创作】的前置：正文面板里那个角色卡多选框，
+   读的就是这里的卡。
+   ============================================================ */
+
+const PC = { list: [], meta: null, ready: false, editing: 0 };
+
+async function loadPersona(force) {
+  if (!PC.meta || force) {
+    try { PC.meta = await api("/api/character-meta"); }
+    catch (e) { PC.meta = null; }
+  }
+  await pcFetch();
+}
+
+async function pcFetch() {
+  const box = document.getElementById("pcList");
+  try {
+    const d = await api("/api/characters");
+    PC.list = d.characters || [];
+    PC.ready = true;
+  } catch (e) {
+    PC.list = [];
+    box.innerHTML = '<div class="blank"><b>读不到角色卡</b>' + esc(e.message) + "</div>";
+    return;
+  }
+  pcStats();
+  pcRender();
+}
+
+function pcStats() {
+  const all = PC.list;
+  const full = all.filter(c => c.filled >= 6).length;
+  const thin = all.filter(c => c.filled <= 1).length;
+  const off = all.filter(c => c.status === "停用").length;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("pcStatAll", fmtNum(all.length));
+  set("pcStatFull", fmtNum(full));
+  set("pcStatThin", fmtNum(thin));
+  set("pcStatOff", fmtNum(off));
+  // 左侧栏「人设卡」后面那个数字徽标（跟别的功能一个待遇）
+  setNavBadge("persona", all.length ? fmtNum(all.length) : "-");
+}
+
+function pcRender() {
+  const box = document.getElementById("pcList");
+  if (!box) return;
+  const kw = (document.getElementById("pcSearch").value || "").trim().toLowerCase();
+  const showOff = document.getElementById("pcShowOff").checked;
+  let rows = PC.list.slice();
+  if (!showOff) rows = rows.filter(c => c.status !== "停用");
+  if (kw) {
+    rows = rows.filter(c => [c.name, c.identity, c.personality, c.relations,
+                             c.goal, c.speech, c.note]
+      .join(" ").toLowerCase().indexOf(kw) >= 0);
+  }
+  if (!rows.length) {
+    const has = PC.list.length;
+    box.innerHTML = '<div class="blank"><b>' +
+      (has ? "没有符合条件的角色卡" : "还没有角色卡") + "</b>" +
+      (has ? "换个词找找，或者把「也显示已停用的」勾上。"
+           : "点右上角「＋ 新建角色卡」建第一张。正文创作里的角色卡就是从这里来的。") +
+      "</div>";
+    return;
+  }
+  const fields = ((PC.meta || {}).fields || []).filter(f => f.key !== "name");
+  box.innerHTML = rows.map(c => {
+    const dots = fields.map(f =>
+      '<span class="filldot' + ((c[f.key] || "").trim() ? " has" : "") +
+      '" title="' + esc(f.label) + '">' + esc(f.label) + "</span>").join("");
+    return '<div class="charcard' + (c.status === "停用" ? " off" : "") + '">' +
+      '<div class="ch"><span class="nm">' + esc(c.name) + "</span>" +
+        (c.status === "停用" ? '<span class="chip gray">已停用</span>' : "") +
+      "</div>" +
+      '<div class="idn">' + esc(c.identity || "（还没填身份 —— 大纲和正文里就只能看到名字）") + "</div>" +
+      '<div class="meta">填了 ' + c.filled + " / " + c.field_total +
+        " 项 · 更新于 " + esc(c.updated_at || "") + "</div>" +
+      '<div class="fills">' + dots + "</div>" +
+      '<div class="cacts">' +
+        '<button class="mini" data-pcedit="' + c.id + '">编辑</button>' +
+        '<button class="mini" data-pcstat="' + c.id + '">' +
+          (c.status === "停用" ? "启用" : "停用") + "</button>" +
+        '<button class="mini d" data-pcdel="' + c.id + '">删除</button>' +
+      "</div></div>";
+  }).join("");
+  box.querySelectorAll("[data-pcedit]").forEach(b => {
+    b.onclick = () => pcOpenEdit(Number(b.dataset.pcedit));
+  });
+  box.querySelectorAll("[data-pcstat]").forEach(b => {
+    b.onclick = () => pcToggle(Number(b.dataset.pcstat));
+  });
+  box.querySelectorAll("[data-pcdel]").forEach(b => {
+    b.onclick = () => pcDelete(Number(b.dataset.pcdel));
+  });
+}
+
+/* 打开编辑弹层。cid = 0 表示新建。
+   字段**不写死在前端** —— 从 /api/character-meta 拿，
+   以后后端给这张表加一项，这里自动多一个输入框。 */
+function pcOpenEdit(cid) {
+  const fields = ((PC.meta || {}).fields || []);
+  const limits = (PC.meta || {}).limits || {};
+  const c = cid ? (PC.list.find(x => x.id === cid) || {}) : {};
+  PC.editing = cid || 0;
+  document.getElementById("pcEditTitle").textContent =
+    cid ? ("改「" + (c.name || "") + "」") : "新建角色卡";
+  const body = document.getElementById("pcFormBody");
+  if (!fields.length) {
+    body.innerHTML = '<div class="blank">读不到字段清单（/api/character-meta 没通）。' +
+      "刷新一下再试。</div>";
+    show("mkPcEdit");
+    return;
+  }
+  body.innerHTML = fields.map(f => {
+    const lim = f.key === "name" ? (limits.name_max || 40)
+      : (f.key === "note" ? (limits.note_max || 500) : (limits.field_max || 1000));
+    const val = c[f.key] || "";
+    if (f.key === "name") {
+      return '<div class="field"><label>' + esc(f.label) +
+        ' <span class="chip">必填</span></label>' +
+        '<input type="text" data-pcf="name" maxlength="' + lim +
+        '" value="' + esc(val) + '" placeholder="角色名，比如「阿岚」"></div>';
+    }
+    return '<div class="field"><label>' + esc(f.label) + "</label>" +
+      '<textarea data-pcf="' + f.key + '" rows="' + (f.key === "note" ? 2 : 3) +
+      '" maxlength="' + lim + '" spellcheck="false" placeholder="' +
+      esc(f.label) + "（上限 " + lim + " 字）\">" + esc(val) + "</textarea></div>";
+  }).join("");
+  document.getElementById("pcEditNote").textContent = "";
+  show("mkPcEdit");
+}
+
+async function pcSave() {
+  const body = {};
+  document.querySelectorAll("#pcFormBody [data-pcf]").forEach(el => {
+    body[el.dataset.pcf] = el.value;
+  });
+  const note = document.getElementById("pcEditNote");
+  const btn = document.getElementById("pcSaveBtn");
+  btn.disabled = true;
+  try {
+    if (PC.editing) await send("/api/characters/" + PC.editing, "PATCH", body);
+    else await post("/api/characters", body);
+    hide("mkPcEdit");
+    toast(PC.editing ? "改好了。" : "建好了。");
+    await pcFetch();
+    chFetchChars();      // 正文页那个角色卡清单跟着刷新
+  } catch (e) {
+    note.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function pcToggle(cid) {
+  const c = PC.list.find(x => x.id === cid);
+  if (!c) return;
+  const to = c.status === "停用" ? "启用" : "停用";
+  if (!confirm("把「" + c.name + "」" + to + "？\n\n" +
+      (to === "停用"
+        ? "停用之后它不会出现在大纲和正文的关联清单里，卡本身还在。"
+        : "启用之后它又会出现在关联清单里。"))) return;
+  try {
+    await send("/api/characters/" + cid, "PATCH", { status: to });
+    toast("已" + to + "。");
+    await pcFetch();
+    chFetchChars();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function pcDelete(cid) {
+  const c = PC.list.find(x => x.id === cid);
+  if (!c) return;
+  if (!confirm("删掉「" + c.name + "」？\n\n这个动作不可撤销。\n" +
+      "已经保存过的大纲和正文不受影响 —— 它们存的是当时的快照。")) return;
+  try {
+    await send("/api/characters/" + cid, "DELETE");
+    toast("删掉了。");
+    await pcFetch();
+    chFetchChars();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ============================================================
+   正文创作
+   ============================================================
+   整条链路的终点。她 2026-09-27 拍板：
+     1A  只做「章节」一层（不做参考站那层"作品"分组）
+     2B  生成完**直接写进正文框**，不做候选制
+
+   【2B 有个必须处理好的后果】
+   直接写进正文框 = 原来那段字有被覆盖的风险。所以：
+     · 进正文页、点生成之前，先把表单（含正文）存一次库
+       —— 后端抓的"生成前那一份"就是她真正在写的那一版
+     · 生成时把字**直接长进 textarea**（来多少长多少，不做合并/缓冲）
+     · 生成前那一份一直留着，点「还原到生成前」就能回去
+     · 结果不自动落库，她点「保存本章」才写进去
+   参考站是自动保存的，但墨阁这边的正文是她写很久的东西 ——
+   一次误点直接顶掉库里的正文，代价太大。
+   ============================================================ */
+
+const CH = {
+  ready: false,
+  meta: null,
+  list: [],        // 章节列表（不带正文）
+  chars: [],       // 可关联的角色卡（不含停用的）
+  cur: null,       // 当前章节详情（带正文）
+  run: null,       // 当前这一次生成（含 prev_content）
+  sid: "",
+  abort: null,
+  buf: "",
+  t0: 0,
+  tick: 0,
+  hist: [],
+  pick: { kind: "", target: "" },
+  // 关联章节 / 角色卡的改动标记。它们是在 CH.cur 里**就地改**的
+  // （没有"原值"可以比），所以单独记一个脏标记 —— 不然她改了关联章节、
+  // 没保存就切走，这些改动会静静地丢掉。
+  dirtyExtra: false,
+};
+
+const CH_DEFAULTS = { background_max: 500, plot_max: 5000,
+                      style_max: 5000, requirement_max: 5000 };
+
+async function loadChapters(force) {
+  if (!CH.meta || force) {
+    try { CH.meta = await api("/api/chapter-meta"); }
+    catch (e) { CH.meta = null; }
+  }
+  chRenderModel();
+  await chFetchList();
+  await chFetchChars();
+  // 首次进页面自动选最后一章（她多半是接着上一次往下写）
+  if (!CH.cur && CH.list.length) await chOpen(CH.list[CH.list.length - 1].id, true);
+  else chPaintChapter();
+}
+
+async function chFetchList() {
+  const box = document.getElementById("chList");
+  try {
+    const d = await api("/api/chapters");
+    CH.list = d.chapters || [];
+    CH.ready = true;
+  } catch (e) {
+    CH.list = [];
+    if (box) box.innerHTML = '<div class="mdhint" style="padding:8px">读不到章节：' +
+      esc(e.message) + "</div>";
+    return;
+  }
+  chRenderList();
+  setNavBadge("chapter", CH.list.length ? fmtNum(CH.list.length) : "-");
+}
+
+async function chFetchChars() {
+  try {
+    const d = await api("/api/characters");
+    CH.chars = (d.characters || []).filter(c => c.status !== "停用");
+  } catch (e) { CH.chars = []; }
+  chRenderChars();
+}
+
+function chRenderModel() {
+  const sel = document.getElementById("chModel");
+  if (!sel) return;
+  const usable = ((CH.meta || {}).usable_models) || [];
+  const keep = sel.value;
+  sel.innerHTML = usable.length
+    ? usable.map(m => '<option value="' + esc(m.key) + '">' + esc(m.label) +
+        (m.model && m.model !== m.label ? "（" + esc(m.model) + "）" : "") +
+        "</option>").join("")
+    : '<option value="">（模型设置里还没有能用的模型）</option>';
+  if (keep && usable.some(m => m.key === keep)) sel.value = keep;
+  else if (usable.length) sel.selectedIndex = 0;
+  const note = document.getElementById("chModelNote");
+  if (!note) return;
+  if (!usable.length) {
+    note.textContent = "先去「模型设置」填一个 API Key，这里才有得选。";
+  } else {
+    const t = (CH.meta && CH.meta.timeout) || 600;
+    note.textContent = "写一章一般要等一到几分钟。界面上会实时显示写到哪了、" +
+      "已经等了多少秒；单个模型最多等 " + Math.round(t / 60) + " 分钟，超了会报错。";
+  }
+}
+
+function chRenderList() {
+  const box = document.getElementById("chList");
+  const cnt = document.getElementById("chListCount");
+  if (!box) return;
+  if (cnt) cnt.textContent = fmtNum(CH.list.length) + " 章";
+  if (!CH.list.length) {
+    box.innerHTML = '<div class="mdhint" style="padding:10px">还没有章节。' +
+      "点右上角「＋ 新建章节」开始。</div>";
+    return;
+  }
+  box.innerHTML = CH.list.map(c => {
+    const on = CH.cur && CH.cur.id === c.id;
+    const wc = c.word_count ? fmtNum(c.word_count) + " 字" : "还没写";
+    const sum = (c.summary || "").trim();
+    return '<button class="chitem' + (on ? " on" : "") + '" data-chid="' + c.id + '">' +
+      '<span class="ct">' + esc(c.title || "（没标题）") + "</span>" +
+      '<span class="cm">' + wc + (sum ? ' · <span class="dot">有梗概</span>' : "") +
+      "</span></button>";
+  }).join("");
+  box.querySelectorAll("[data-chid]").forEach(b => {
+    b.onclick = () => chOpen(Number(b.dataset.chid));
+  });
+}
+
+/* 当前表单快照。用来判断"有没有没保存的改动"。 */
+function chSnap() {
+  const v = id => { const el = document.getElementById(id); return el ? el.value : ""; };
+  return {
+    title: v("chTitle"),
+    summary: v("chSummary"),
+    background: v("chBack"),
+    plot: v("chPlot"),
+    style: v("chStyle"),
+    requirement: v("chReq"),
+    content: v("chText"),
+  };
+}
+
+function chUnsaved() {
+  if (!CH.cur) return false;
+  if (CH.dirtyExtra) return true;
+  const s = chSnap(), c = CH.cur;
+  return s.title !== (c.title || "") || s.summary !== (c.summary || "")
+    || s.background !== (c.background || "") || s.plot !== (c.plot || "")
+    || s.style !== (c.style || "") || s.requirement !== (c.requirement || "")
+    || s.content !== (c.content || "");
+}
+
+async function chOpen(cid, silent) {
+  if (!cid) return;
+  if (!silent && CH.cur && CH.cur.id !== cid && chUnsaved()) {
+    if (!confirm("这一章有改动还没保存。\n\n切走这些改动就没了。要切换吗？")) return;
+  }
+  try {
+    const d = await api("/api/chapters/" + cid);
+    CH.cur = d.chapter;
+    CH.run = d.running || null;
+  } catch (e) { toast(e.message, true); return; }
+  chPaintChapter();
+  chRenderList();
+  // 刷新之前那一章正在跑 → 把实时区接回来（靠服务端给的 stream_id）
+  if (CH.run && CH.run.stream_id && CH.run.status === "running") {
+    chAttach(CH.run.stream_id);
+  }
+}
+
+function chPaintChapter() {
+  const c = CH.cur;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+  set("chTitle", c && c.title);
+  set("chSummary", c && c.summary);
+  set("chBack", c && c.background);
+  set("chPlot", c && c.plot);
+  set("chStyle", c && c.style);
+  set("chReq", c && c.requirement);
+  set("chText", c && c.content);
+  CH.dirtyExtra = false;
+  chRenderChars();
+  chRenderRefs();
+  chCount();
+  chFootNote();
+  chRevertBtn();
+}
+
+function chRenderChars() {
+  const box = document.getElementById("chChars");
+  if (!box) return;
+  if (!CH.chars.length) {
+    box.innerHTML = '<span class="cd">还没有角色卡。去左边的【人设卡】建一张 —— ' +
+      "写对话时它会照着你填的性格和说话方式来。</span>";
+    chCharNote();
+    return;
+  }
+  const picked = (CH.cur && CH.cur.char_ids) || [];
+  box.innerHTML = CH.chars.map(c =>
+    '<label><input type="checkbox" data-cc="' + c.id + '"' +
+    (picked.indexOf(c.id) >= 0 ? " checked" : "") + ">" +
+    "<span><span class=\"cn\">" + esc(c.name) + "</span> " +
+    '<span class="cd">' + esc(c.identity || "（未填身份）") + "</span></span></label>"
+  ).join("");
+  box.querySelectorAll("[data-cc]").forEach(el => {
+    el.onchange = () => {
+      if (!CH.cur) {
+        el.checked = false;
+        toast("先在左边新建或选一章，再挑角色卡。", true);
+        return;
+      }
+      const id = Number(el.dataset.cc);
+      const ids = (CH.cur.char_ids || []).slice();
+      const i = ids.indexOf(id);
+      if (el.checked && i < 0) ids.push(id);
+      if (!el.checked && i >= 0) ids.splice(i, 1);
+      CH.cur.char_ids = ids;
+      CH.dirtyExtra = true;
+      chCharNote();
+      chFootNote();
+    };
+  });
+  chCharNote();
+}
+
+function chCharNote() {
+  const el = document.getElementById("chCharNote");
+  if (!el) return;
+  if (!CH.chars.length) { el.textContent = ""; return; }
+  const picked = (CH.cur && CH.cur.char_ids) || [];
+  if (!picked.length) {
+    el.textContent = "一张都没挑。模型只能从「本章剧情」里猜人物 —— " +
+      "猜出来的性格可能跟你设的不一样。";
+    return;
+  }
+  const mins = picked.map(id => (CH.chars.find(c => c.id === id) || {}).filled || 0);
+  const thin = mins.filter(n => n <= 2).length;
+  el.textContent = "这次会带上 " + picked.length + " 张卡" +
+    (thin ? "（其中 " + thin + " 张几乎没填，" + "模型只能照名字猜）" : "") + "。";
+}
+
+function chRenderRefs() {
+  const box = document.getElementById("chRefs");
+  if (!box) return;
+  const refs = (CH.cur && CH.cur.refs) || [];
+  if (!refs.length) {
+    box.innerHTML = '<span style="font-size:12px;color:var(--ink-3)">' +
+      "还没关联任何章节。</span>";
+  } else {
+    box.innerHTML = refs.map((r, i) => {
+      const c = CH.list.find(x => x.id === r.id) || {};
+      return '<div class="chref">' +
+        '<span class="rt">' + esc(c.title || ("第 " + r.id + " 章")) + "</span>" +
+        '<select data-crmode="' + i + '">' +
+          '<option value="summary"' + (r.mode !== "content" ? " selected" : "") +
+            ">取梗概</option>" +
+          '<option value="content"' + (r.mode === "content" ? " selected" : "") +
+            ">取正文</option>" +
+        "</select>" +
+        '<button class="rx" data-crdel="' + i + '" title="去掉这一章">&times;</button>' +
+      "</div>";
+    }).join("");
+  }
+  box.querySelectorAll("[data-crmode]").forEach(el => {
+    el.onchange = () => {
+      const i = Number(el.dataset.crmode);
+      if (!CH.cur || !CH.cur.refs[i]) return;
+      CH.cur.refs[i].mode = el.value;
+      CH.dirtyExtra = true;
+      chRefNote();
+      chFootNote();
+    };
+  });
+  box.querySelectorAll("[data-crdel]").forEach(el => {
+    el.onclick = () => {
+      const i = Number(el.dataset.crdel);
+      if (!CH.cur) return;
+      CH.cur.refs.splice(i, 1);
+      CH.dirtyExtra = true;
+      chRenderRefs();
+      chFootNote();
+    };
+  });
+  chRefNote();
+}
+
+/* 关联章节的账要算给她看：一共要带多少字、有没有超。
+   【为什么必须显出来】超过额度的部分会被截掉 —— 不说的话，
+   她会以为"AI 看过全章"，然后拿结果去对账对不上（第 3 章写过的东西
+   它却不知道），还以为是模型不行。 */
+function chRefNote() {
+  const el = document.getElementById("chRefNote");
+  if (!el) return;
+  const refs = (CH.cur && CH.cur.refs) || [];
+  const lim = (CH.meta || {}).limits || {};
+  const per = lim.ref_chapter_chars || 3000;
+  const total = lim.ref_total_chars || 12000;
+  if (!refs.length) {
+    el.textContent = "不关联的话，模型只看得到「故事背景 + 本章剧情」—— " +
+      "前面埋的伏笔它会不知道。";
+    return;
+  }
+  let est = 0;
+  refs.forEach(r => {
+    const c = CH.list.find(x => x.id === r.id) || {};
+    if (r.mode === "content") est += Math.min(per, c.word_count || 0);
+    else est += ((c.summary || "").length);
+  });
+  let s = "一共带约 " + fmtNum(Math.min(est, total)) + " 字上下文" +
+    "（每章最多 " + fmtNum(per) + " 字，全篇最多 " + fmtNum(total) + " 字）。";
+  if (est > total) {
+    s += "超出的部分会被截掉 —— 想让它全带上，就把用不着的关联章节去掉几个，" +
+      "或者把「取正文」改成「取梗概」。";
+  }
+  s += " 正文按全文带（超长会截断，生成时会告诉你）；梗概按你写的那段带。";
+  el.textContent = s;
+}
+
+function chCount() {
+  chWcPaint();
+  const lim = (CH.meta || {}).limits || {};
+  chCntPaint("chBack", "chBackCnt", lim.background_max || CH_DEFAULTS.background_max);
+  chCntPaint("chPlot", "chPlotCnt", lim.plot_max || CH_DEFAULTS.plot_max);
+  chCntPaint("chStyle", "chStyleCnt", lim.style_max || CH_DEFAULTS.style_max);
+  chCntPaint("chReq", "chReqCnt", lim.requirement_max || CH_DEFAULTS.requirement_max);
+}
+
+function chCntPaint(id, cntId, max) {
+  const el = document.getElementById(id);
+  const c = document.getElementById(cntId);
+  if (!el || !c) return;
+  const n = (el.value || "").length;
+  c.textContent = fmtNum(n) + " / " + fmtNum(max);
+  c.className = n > max ? "over" : "";
+}
+
+function chWcPaint() {
+  const ta = document.getElementById("chText");
+  const el = document.getElementById("chWc");
+  if (!ta || !el) return;
+  // 字数口径跟后端一致：去掉所有空白之后数字符
+  el.textContent = fmtNum((ta.value || "").replace(/\s/g, "").length) + " 字";
+}
+
+function chFootNote() {
+  const note = document.getElementById("chFootNote");
+  if (!note) return;
+  if (!CH.cur) {
+    note.textContent = "左边还没有章节。点右上角「＋ 新建章节」开始。";
+    return;
+  }
+  const parts = [];
+  if (chUnsaved()) {
+    parts.push("正文框里和库里存的不一样了 —— 点「保存本章」才写进库里。" +
+      "（没保存就切走的话，这一框改动会丢。）");
+  }
+  const r = CH.run;
+  if (r && r.status === "done") {
+    parts.push("库里这一章对应第 " + r.id + " 次生成" +
+      (r.applied ? "（已经存过库）" : "（还没点保存）") + "。");
+  }
+  note.textContent = parts.join(" ");
+}
+
+function chRevertBtn() {
+  const btn = document.getElementById("chRevertBtn");
+  if (!btn) return;
+  const r = CH.run;
+  const ta = document.getElementById("chText");
+  const has = !!(r && typeof r.prev_content === "string" && r.prev_content !== ta.value);
+  btn.hidden = !has;
+}
+
+async function chNewChapter() {
+  try {
+    const d = await post("/api/chapters", {});
+    await chFetchList();
+    await chOpen(d.chapter.id, true);
+    toast("新建了一章。先写标题和梗概，再让 AI 写。");
+    const t = document.getElementById("chTitle");
+    if (t) t.focus();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function chSave(opt) {
+  opt = opt || {};
+  if (!CH.cur) { if (!opt.silent) toast("先在左边新建或选一章。", true); return false; }
+  const body = chSnap();
+  body.refs = CH.cur.refs || [];
+  body.char_ids = CH.cur.char_ids || [];
+  if (!String(body.title || "").trim()) {
+    if (!opt.silent) toast("章节标题不能是空的 —— 起个名字再存。", true);
+    return false;
+  }
+  try {
+    const d = await send("/api/chapters/" + CH.cur.id, "PATCH", body);
+    CH.cur = d.chapter;
+    CH.dirtyExtra = false;
+    chRenderList();
+    chFootNote();
+    if (!opt.silent) toast("存好了。");
+    return true;
+  } catch (e) {
+    if (!opt.silent) toast(e.message, true);
+    return false;
+  }
+}
+
+async function chDelete() {
+  if (!CH.cur) return;
+  const c = CH.cur;
+  if (!confirm("删掉「" + (c.title || "这一章") + "」？\n\n" +
+      "这一章 " + fmtNum(c.word_count || 0) + " 字，连它的生成记录一起删掉，" +
+      "不可撤销。")) return;
+  const idx = CH.list.findIndex(x => x.id === c.id);
+  try {
+    await send("/api/chapters/" + c.id, "DELETE");
+    CH.cur = null; CH.run = null;
+    await chFetchList();
+    const nx = CH.list[idx] || CH.list[idx - 1] || CH.list[0];
+    if (nx) await chOpen(nx.id, true);
+    else chPaintChapter();
+    toast("删掉了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function chMove(dir) {
+  if (!CH.cur) { toast("先选一章。", true); return; }
+  const ids = CH.list.map(x => x.id);
+  const i = ids.indexOf(CH.cur.id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) { toast("已经到头了。"); return; }
+  ids.splice(j, 0, ids.splice(i, 1)[0]);
+  try {
+    await post("/api/chapters/reorder", { order: ids });
+    await chFetchList();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 生成 ---------------- */
+
+async function chGo() {
+  if (!CH.cur) { toast("先在左边新建或选一章。", true); return; }
+  const model = document.getElementById("chModel").value;
+  if (!model) { toast("先选一个模型 —— 写正文必须指定用谁来写。", true); return; }
+  const snap = chSnap();
+  if (!snap.plot.trim()) {
+    toast("「本章剧情」是空的 —— 没说要写什么，模型只能瞎编。", true);
+    return;
+  }
+  if (!snap.title.trim()) { toast("先给这一章起个标题。", true); return; }
+
+  // 【先把表单存一次库，再发生成】
+  // 这一步不是可有可无的：后端抓的"生成前那一份正文"就是库里那一版。
+  // 不先存的话，她刚改的正文不会进 prev_content，"还原"会还到一个更早的版本。
+  if (!await chSave({ silent: true })) return;
+
+  const body = {
+    model_key: model,
+    background: snap.background,
+    plot: snap.plot,
+    style: snap.style,
+    requirement: snap.requirement,
+    character_ids: CH.cur.char_ids || [],
+    refs: CH.cur.refs || [],
+  };
+  const btn = document.getElementById("chGo");
+  btn.disabled = true;
+  try {
+    const d = await post("/api/chapters/" + CH.cur.id + "/generate", body);
+    CH.run = d.run;
+    CH.buf = "";
+    // 清空正文框，让新字**直接长进来**（她拍板 2B：生成完直接写进正文框）。
+    // 原来那一份已经在库里、也在这次的 prev_content 里，随时能还原。
+    document.getElementById("chText").value = "";
+    chWcPaint();
+    chAttach(d.stream_id);
+    chFootNote();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function chAttach(sid) {
+  if (!sid) return;
+  if (CH.abort) { try { CH.abort.abort(); } catch (e) {} }
+  CH.sid = sid;
+  CH.buf = "";
+  CH.t0 = Date.now();
+  const ac = new AbortController();
+  CH.abort = ac;
+  chStreamOn();
+  if (CH.tick) clearInterval(CH.tick);
+  CH.tick = setInterval(chStreamStats, 200);
+  readSSE("/api/live/" + encodeURIComponent(sid), { signal: ac.signal }, ev => {
+    const t = ev && ev.t;
+    if (t === "chunk") {
+      const txt = ev.text || "";
+      if (!txt) return;
+      CH.buf += txt;
+      /* 来一块长一块。中间不做任何合并、攒批、节流 ——
+         她的硬要求是"来多少字就显示多少字"。 */
+      const ta = document.getElementById("chText");
+      ta.value += txt;
+      ta.scrollTop = ta.scrollHeight;     // 新字始终在视野里
+      chWcPaint();
+      chStreamStats();
+    } else if (t === "note") {
+      chStreamNote(ev.text || "", ev.level || "info");
+    } else if (t === "finish" || t === "end") {
+      chStreamDone();
+    } else if (t === "gone") {
+      chStreamNote("这条实时通道已经不在了（服务重启过？）。" +
+        "去「生成记录」里看看这次到底跑成没有。", "warn");
+      chStreamDone();
+    } else if (t === "_junk") {
+      chStreamNote("有一段内容没能解析，已跳过 " +
+        fmtNum((ev.text || "").length) + " 个字符。", "warn");
+    }
+  }).then(() => chStreamDone()).catch(e => {
+    if (String((e && e.name) || "") === "AbortError") return;   // 我们自己关的
+    chStreamNote("实时通道断了：" + (e && e.message ? e.message : e), "bad");
+    chStreamDone();
+  });
+}
+
+function chStreamOn() {
+  const bar = document.getElementById("chStream");
+  if (!bar) return;
+  bar.hidden = false;
+  bar.className = "chstream";
+  const stop = document.getElementById("chStopBtn");
+  if (stop) stop.hidden = false;
+  chStreamStats();
+}
+
+function chStreamStats() {
+  const el = document.getElementById("chStreamText");
+  if (!el) return;
+  const secs = ((Date.now() - CH.t0) / 1000).toFixed(1);
+  const n = CH.buf.length;
+  el.textContent = n
+    ? ("正在写… 已经 " + fmtNum(n) + " 字 · 等了 " + secs + " 秒")
+    : ("正在写… 等了 " + secs + " 秒（模型还没吐第一个字。慢的话多半在排队）");
+}
+
+function chStreamNote(text, level) {
+  if (!text) return;
+  const el = document.getElementById("chStreamText");
+  if (!el) return;
+  // 警告要盖住那行"正在写…"，但她还得知道在等 —— 所以两段拼起来
+  el.textContent = text;
+  if (level === "bad" || level === "warn") {
+    const bar = document.getElementById("chStream");
+    if (bar) bar.className = "chstream" + (level === "bad" ? " bad" : "");
+  }
+}
+
+async function chStreamDone() {
+  if (CH.tick) { clearInterval(CH.tick); CH.tick = 0; }
+  const stop = document.getElementById("chStopBtn");
+  if (stop) stop.hidden = true;
+  // 把这一次的完整记录拉回来：首字耗时、总耗时、finish_reason 都在里面
+  if (CH.run && CH.run.id) {
+    try {
+      const d = await api("/api/chapter-runs/" + CH.run.id);
+      CH.run = d.run;
+    } catch (e) { /* 拉不到就用手上那份，别让它挡住收尾 */ }
+  }
+  const bar = document.getElementById("chStream");
+  const el = document.getElementById("chStreamText");
+  const r = CH.run || {};
+  if (bar && el) {
+    if (r.status === "done") {
+      bar.className = "chstream done";
+      el.textContent = chRunSummary(r);
+    } else if (r.status === "cancelled") {
+      bar.className = "chstream";
+      el.textContent = "已经停下。" + (r.error || "");
+    } else if (r.status === "running") {
+      // 通道断了但任务还在跑（比如页面刚刷新）—— 过一会儿再看
+      bar.className = "chstream";
+      el.textContent = "这次生成还在跑，字会继续长出来。";
+    } else {
+      bar.className = "chstream bad";
+      el.textContent = "没写成：" + (r.error || "原因不明");
+    }
+  }
+  chWcPaint();
+  chFootNote();
+  chRevertBtn();
+}
+
+function chRunSummary(r) {
+  const p = [];
+  if (r.ttft_ms) p.push("首字等了 " + fmtNum(r.ttft_ms) + " 毫秒");
+  else p.push("首字耗时没量到（这家没按流式回）");
+  if (r.elapsed_ms) p.push("一共 " + (r.elapsed_ms / 1000).toFixed(1) + " 秒");
+  p.push(fmtNum(r.ai_chars || 0) + " 字");
+  const u = r.usage || {};
+  if (u.total_tokens) p.push("用了 " + fmtNum(u.total_tokens) + " token");
+  let s = "写完了：" + p.join(" · ") + "。";
+  if (String(r.finish_reason || "").toLowerCase() === "length") {
+    s += "（注意：被单次字数上限掐断了，这一稿是半截的。）";
+  }
+  s += " 检查一下，满意就点「保存本章」。";
+  return s;
+}
+
+async function chStopGen() {
+  if (!CH.run || !CH.run.id) return;
+  if (!confirm("停止等待？\n\n已经写出来的字会留在框里和记录里。\n\n" +
+      "注意：请求已经发出去了，服务端的钱照算 —— 停止只是我们不等了。")) return;
+  try {
+    const d = await post("/api/chapter-runs/" + CH.run.id + "/cancel");
+    toast(d.message || "已停下。");
+  } catch (e) { toast(e.message, true); }
+}
+
+function chRevert() {
+  const r = CH.run;
+  if (!r || typeof r.prev_content !== "string") {
+    toast("这次没有可还原的上一版。", true);
+    return;
+  }
+  if (!confirm("把正文恢复成这次生成之前的样子？\n\n" +
+      "现在框里的内容会被替换掉（还没保存到库里的话就没了）。")) return;
+  document.getElementById("chText").value = r.prev_content;
+  chWcPaint();
+  chFootNote();
+  chRevertBtn();
+  toast("已经还原到生成前那一版。要留住它，点「保存本章」。");
+}
+
+/* ---------------- 生成记录 ---------------- */
+
+async function chOpenHist() {
+  if (!CH.cur) { toast("先选一章。", true); return; }
+  const body = document.getElementById("chHistBody");
+  body.innerHTML = '<div class="mdhint">正在读…</div>';
+  show("mkChHist");
+  try {
+    const d = await api("/api/chapters/" + CH.cur.id + "/runs");
+    CH.hist = d.runs || [];
+  } catch (e) {
+    body.innerHTML = '<div class="blank">读不到生成记录：' + esc(e.message) + "</div>";
+    return;
+  }
+  chPaintHist();
+}
+
+function chPaintHist() {
+  const body = document.getElementById("chHistBody");
+  if (!CH.hist.length) {
+    body.innerHTML = '<div class="blank"><b>这一章还没让 AI 写过</b>' +
+      "第一次点「开始写这一章」之后，每一次生成都会记在这里 —— " +
+      "用的哪个模型、等了多久、写出来什么，都留着。</div>";
+    return;
+  }
+  body.innerHTML = CH.hist.map(r => {
+    const badge = r.status === "done" ? '<span class="chip ok">写完了</span>'
+      : r.status === "running" ? '<span class="chip">正在写</span>'
+      : r.status === "cancelled" ? '<span class="chip gray">你停的</span>'
+      : '<span class="chip warn">没写成</span>';
+    const ms = [];
+    if (r.ttft_ms) ms.push("首字 " + fmtNum(r.ttft_ms) + " 毫秒");
+    if (r.elapsed_ms) ms.push("总共 " + (r.elapsed_ms / 1000).toFixed(1) + " 秒");
+    if (r.ai_chars) ms.push(fmtNum(r.ai_chars) + " 字");
+    const u = r.usage || {};
+    if (u.total_tokens) ms.push(fmtNum(u.total_tokens) + " token");
+    const fr = String(r.finish_reason || "").toLowerCase();
+    return '<div class="card" style="align-items:flex-start">' +
+      "<div style=\"flex:1 1 auto;min-width:0\">" +
+        "<div style=\"display:flex;align-items:center;gap:8px;flex-wrap:wrap\">" +
+          badge +
+          '<span style="font-size:12.5px;color:var(--ink-3)">第 ' + r.id + " 次 · " +
+            esc(r.created_at || "") + "</span>" +
+          (r.applied ? '<span class="chip ok">已写进正文</span>' : "") +
+        "</div>" +
+        '<div style="font-size:13px;margin-top:5px">用的 ' + esc(r.model_name || r.model_key) +
+          (r.model_version && r.model_version !== r.model_name
+            ? '（<span style="color:var(--ink-3)">' + esc(r.model_version) + "</span>）" : "") +
+        "</div>" +
+        '<div style="font-size:12px;color:var(--ink-3);margin-top:3px">' +
+          esc(ms.join(" · ")) +
+          (fr === "length" ? ' · <span style="color:var(--danger)">被字数上限掐断</span>' : "") +
+        "</div>" +
+        (r.error ? '<div style="font-size:12px;color:var(--danger);margin-top:4px">' +
+          esc(r.error) + "</div>" : "") +
+      "</div>" +
+      '<div class="acts" style="display:flex;gap:6px;flex:0 0 auto">' +
+        '<button class="mini" data-chload="' + r.id + '">取回这一版</button>' +
+        '<button class="mini d" data-chdrop="' + r.id + '">删除</button>' +
+      "</div></div>";
+  }).join("");
+  body.querySelectorAll("[data-chload]").forEach(b => {
+    b.onclick = () => chLoadRun(Number(b.dataset.chload));
+  });
+  body.querySelectorAll("[data-chdrop]").forEach(b => {
+    b.onclick = () => chDropRun(Number(b.dataset.chdrop));
+  });
+}
+
+/* 取回某一版：**先单查**再填 —— 列表里刻意不带全文（十来次生成的全文字段
+   加起来能有好几万字，列表一次拉全会明显卡）。 */
+async function chLoadRun(rid) {
+  try {
+    const d = await api("/api/chapter-runs/" + rid);
+    CH.run = d.run;
+    document.getElementById("chText").value = d.run.ai_content || "";
+    chWcPaint();
+    chFootNote();
+    chRevertBtn();
+    hide("mkChHist");
+    toast("已经把第 " + rid + " 次生成的原样结果填回正文框。" +
+      "要留住就点「保存本章」。");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function chDropRun(rid) {
+  if (!confirm("删掉第 " + rid + " 次生成的记录？\n\n" +
+      "章节正文和别的记录都不受影响，只是这一条账没了。")) return;
+  try {
+    await send("/api/chapter-runs/" + rid, "DELETE");
+    CH.hist = CH.hist.filter(r => r.id !== rid);
+    chPaintHist();
+    toast("删掉了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 写作风格 / 写作要求：提示词快捷选项 ----------------
+   她列的需求是"支持提示词"。这里做得刻意轻：
+   点「快捷选项」→ 列出一列她自己存过的片段 → 点一条填进上面的框。
+
+   【为什么不列"别人公开的"那批】公开条目在后端是**不带内容**返回的
+   （见 classification.py 里 _lib_dict 的注释：公开但不给原文）。
+   点一下能填进框的只有她自己存的那几条。把公开条目也列出来的话，
+   她点了没反应 —— 那比不列更糟。 */
+async function chOpenPick(kind, targetId, titleText) {
+  CH.pick.kind = kind;
+  CH.pick.target = targetId;
+  document.getElementById("chPickTitle").textContent = titleText;
+  const body = document.getElementById("chPickBody");
+  body.innerHTML = '<div class="mdhint">正在读提示词库…</div>';
+  show("mkChPick");
+  let mine = [];
+  try {
+    const d = await api("/api/prompt-library?kind=" + encodeURIComponent(kind));
+    mine = d.mine || [];
+  } catch (e) {
+    body.innerHTML = '<div class="blank">读不到提示词库：' + esc(e.message) + "</div>";
+    return;
+  }
+  if (!mine.length) {
+    body.innerHTML = '<div class="blank"><b>这一档还没存过东西</b>' +
+      "在页面上那个框里写几句，点「存成我的提示词」，下次就能一键填回来。</div>";
+    return;
+  }
+  body.innerHTML = '<div class="picksub">我自己存的（点一下填进框，填完还能接着改）</div>' +
+    '<div class="picklist">' + mine.map(p =>
+      '<button class="pickrow" data-chpick="' + p.id + '">' +
+        '<span class="pn">' + esc(p.name) + "</span>" +
+        '<span class="pd">约 ' + fmtNum(p.content_length || 0) + " 字</span>" +
+      "</button>").join("") + "</div>";
+  body.querySelectorAll("[data-chpick]").forEach(b => {
+    b.onclick = () => chUsePick(Number(b.dataset.chpick), mine);
+  });
+}
+
+function chUsePick(pid, list) {
+  const p = (list || []).find(x => x.id === pid);
+  if (!p) return;
+  const el = document.getElementById(CH.pick.target);
+  if (!el) return;
+  // 直接覆盖（不是追加）—— 她的用法是"拿一条打底再调两句"。
+  // 追加的话连点两条会拼成一段四不像，而且她要自己删。
+  el.value = p.content || "";
+  chCount();
+  chFootNote();
+  hide("mkChPick");
+  toast("已经填进去了（" + p.name + "）。你可以接着改，不影响存好的那一条。");
+}
+
+async function chSaveAsPrompt(kind, targetId, label) {
+  const el = document.getElementById(targetId);
+  const txt = (el.value || "").trim();
+  if (!txt) { toast("这个框还是空的 —— 先写几句再存。", true); return; }
+  if (txt.length > 5000) {
+    toast("超过 5000 字存不进去，先精简一下。", true);
+    return;
+  }
+  // 用 window.prompt 而不是自建弹层：站里 confirm 一直是这个用法，
+  // 多开一层弹层反而要多处理一套"叠开时点不动"的问题。
+  const name = window.prompt(
+    "给这条提示词起个名字（以后在「快捷选项」里靠它认出来）：",
+    label + " · " + txt.slice(0, 10));
+  if (name === null) return;
+  const nm = (name || "").trim();
+  if (!nm) { toast("得有个名字，不然下次认不出来。", true); return; }
+  try {
+    await post("/api/prompt-library",
+               { kind: kind, name: nm, content: txt, visibility: "private" });
+    toast("存好了。以后点「快捷选项」就能一键填回来。");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 关联章节：挑一章加进来 ---------------- */
+function chOpenRef() {
+  if (!CH.cur) { toast("先选一章。", true); return; }
+  const body = document.getElementById("chRefBody");
+  const picked = ((CH.cur.refs) || []).map(r => r.id);
+  const lim = ((CH.meta || {}).limits || {}).ref_chapter_max || 8;
+  const cands = CH.list.filter(c => c.id !== CH.cur.id);
+  if (!cands.length) {
+    body.innerHTML = '<div class="blank">还没有别的章节可以关联 —— ' +
+      "先去左边多建几章。</div>";
+    show("mkChRef");
+    return;
+  }
+  body.innerHTML =
+    '<div class="picksub">点一章加进上下文（最多 ' + lim + " 章）</div>" +
+    '<div class="picklist">' + cands.map(c => {
+      const has = picked.indexOf(c.id) >= 0;
+      return '<button class="pickrow" data-chref="' + c.id + '"' +
+        (has ? " disabled" : "") + ">" +
+        '<span class="pn">' + esc(c.title || ("第 " + c.id + " 章")) + "</span>" +
+        '<span class="pd">' + (c.word_count ? fmtNum(c.word_count) + " 字" : "还没写") +
+        ((c.summary || "").trim() ? " · 有梗概" : "") + "</span>" +
+        (has ? '<span class="pv">已经在里面了</span>' : "") +
+        "</button>";
+    }).join("") + "</div>" +
+    '<div class="picksub">加进来之后，在页面上那一行里可以改"取正文 / 取梗概"。</div>';
+  body.querySelectorAll("[data-chref]").forEach(b => {
+    b.onclick = () => {
+      const id = Number(b.dataset.chref);
+      const refs = CH.cur.refs || [];
+      if (refs.length >= lim) {
+        toast("最多只能关联 " + lim + " 章 —— 再多上下文就过长了。", true);
+        return;
+      }
+      // 默认"取梗概"：它便宜得多，而且防失忆这件事本来就不需要全文。
+      // 她要是想要全文，在页面上那行里改成「取正文」。
+      refs.push({ id: id, mode: "summary" });
+      CH.cur.refs = refs;
+      chRenderRefs();
+      chFootNote();
+      hide("mkChRef");
+      toast("加进去了。默认只取梗概 —— 想带全文就在那一行改成「取正文」。");
+    };
+  });
+  show("mkChRef");
+}
+
+/* ---------------- 进页面时把上次没填完的接上 ----------------
+   AI 面板里那几项**不进草稿层** —— 它们是"这一章的写作输入"，
+   已经落在章节表里了（见 chapter_db 的注释）。草稿层管的是
+   "还没提交的半成品"，两者不是一回事，混着来会互相覆盖。 */
+
+/* ---------------- 事件绑定 ---------------- */
+
+/* 小助手：拿不到元素就静静跳过。
+   为什么不用 querySelectorAll("[data-xxx]") 那一套：这些按钮是**静态**
+   写在 HTML 里的，一个 id 一个处理函数最直接 —— 少一层"先渲染再绑"的
+   时序问题（渲染没跑完时绑不上，表现就是"点了没反应"）。 */
+function chBind(id, ev, fn) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  el[ev] = fn;
+  return el;
+}
+
+/* 人设卡 */
+chBind("pcNewBtn", "onclick", () => pcOpenEdit(0));
+chBind("pcReload", "onclick", () => pcFetch());
+chBind("pcSearch", "oninput", pcRender);
+chBind("pcShowOff", "onchange", pcRender);
+chBind("pcSaveBtn", "onclick", pcSave);
+
+/* 正文创作：左栏 */
+chBind("chNewBtn", "onclick", chNewChapter);
+chBind("chSaveBtn", "onclick", () => chSave());
+chBind("chHistoryBtn", "onclick", chOpenHist);
+chBind("chReload", "onclick", () => loadChapters(true));
+chBind("chUpBtn", "onclick", () => chMove(-1));
+chBind("chDownBtn", "onclick", () => chMove(1));
+chBind("chDelBtn", "onclick", chDelete);
+
+/* 正文创作：中间 */
+chBind("chRevertBtn", "onclick", chRevert);
+chBind("chStopBtn", "onclick", chStopGen);
+chBind("chTitle", "oninput", chFootNote);
+chBind("chSummary", "oninput", chFootNote);
+chBind("chText", "oninput", () => { chWcPaint(); chFootNote(); chRevertBtn(); });
+
+/* 正文创作：右栏 */
+chBind("chGo", "onclick", chGo);
+chBind("chRefAdd", "onclick", chOpenRef);
+chBind("chStylePick", "onclick",
+       () => chOpenPick("style", "chStyle", "挑一条写作风格"));
+chBind("chReqPick", "onclick",
+       () => chOpenPick("require", "chReq", "挑一条写作要求"));
+chBind("chStyleSave", "onclick",
+       () => chSaveAsPrompt("style", "chStyle", "写作风格"));
+chBind("chReqSave", "onclick",
+       () => chSaveAsPrompt("require", "chReq", "写作要求"));
+["chBack", "chPlot", "chStyle", "chReq"].forEach(id => {
+  chBind(id, "oninput", () => { chCount(); chFootNote(); });
+});
 
 /* ---------------- 启动 ---------------- */
 

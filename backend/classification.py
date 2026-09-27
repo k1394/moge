@@ -989,7 +989,24 @@ PROMPT_KIND_INFUSE = "infuse"
 #   在列表里也看得见它 —— 挑错了不会报错，只会白花一笔钱。
 PROMPT_KIND_OUTLINE = "outline"
 
-PROMPT_KINDS = (PROMPT_KIND_CLASSIFY, PROMPT_KIND_INFUSE, PROMPT_KIND_OUTLINE)
+# 正文创作自己的两档：写作风格、写作要求。
+#
+# 【为什么是两档，而不是合成"正文"一档】
+#   这两句话管的根本不是一件事：
+#     写作风格 = "怎么说话"（人称、句长、节奏、书面还是口语、冷还是热）
+#     写作要求 = "这一章要做到什么、绝不许出现什么"（情节硬点、禁忌）
+#   合成一档的下场很具体：她给风格存了一条「多用短句、少用形容词」，
+#   然后在「写要求」的快捷选项里也看得见它 —— 挑错了不报错，
+#   只会让这一章的产出跑偏，而她对不上账。
+#
+# 【为什么要挂在 prompt_library 这张表上，不新建表】
+#   同 PROMPT_KIND_INFUSE 那段：加一个用途就是加一个 kind，
+#   分开建表 = 两套增删改查各修一遍，改一边忘一边就是静默故障。
+PROMPT_KIND_STYLE = "style"
+PROMPT_KIND_REQUIRE = "require"
+
+PROMPT_KINDS = (PROMPT_KIND_CLASSIFY, PROMPT_KIND_INFUSE, PROMPT_KIND_OUTLINE,
+                PROMPT_KIND_STYLE, PROMPT_KIND_REQUIRE)
 
 
 def check_prompt_kind(kind):

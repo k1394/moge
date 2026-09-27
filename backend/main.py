@@ -48,6 +48,8 @@ from pydantic import BaseModel
 
 try:
     from backend import auth, db, importer, parsers
+    from backend import chapter_ai as cai
+    from backend import chapter_db as cdb
     from backend import classify_db as cls
     from backend import classification as auto
     from backend import outline_ai as oai
@@ -61,6 +63,8 @@ except ImportError:                                   # pragma: no cover
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from backend import auth, db, importer, parsers
+    from backend import chapter_ai as cai
+    from backend import chapter_db as cdb
     from backend import classify_db as cls
     from backend import classification as auto
     from backend import outline_ai as oai
@@ -108,6 +112,11 @@ async def lifespan(app: FastAPI):
     # 大纲任务同理：不清理的话，服务重启后界面上那个进度条永远转，
     # 而且新任务会被"已经有一个在跑"挡住，她只能去手工改库。
     oai.reap_orphan_runs()
+    # 正文创作那两张表（chapters / chapter_runs）。纯新增空表。
+    # 必须在 odb.migrate() 之后 —— 组上下文时要读角色卡。
+    cdb.init_chapters()
+    # 正文任务同理：不清理的话，服务重启后界面上会永远显示"正在写"。
+    cai.reap_orphan_runs()
     db.purge_expired_sessions()
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
@@ -2954,6 +2963,256 @@ async def api_worldview_read(user: dict = Depends(auth.current_user),
             "chars": len(text), "text": text, "note": r["note"],
             "message": "读好了，%d 字。还没有存进世界观库 —— "
                        "你可以先改，改完再点保存。" % len(text)}
+
+
+# ----------------------------------------------------------------------
+# 正文创作（章节）
+#
+# 【为什么只做一层，没有"作品"分组】
+#   2026-09-27 她拍板（问题 1 选 A）：先做「章节」一层就能最快跑通
+#   「零件 → 大纲 → 正文」这条全链路。参考站那层"作品"在墨阁里
+#   其实就是大纲/书名。哪天确实要按作品分组，chapters 加一列就够。
+#
+# 【生成结果怎么落地】
+#   她选的是"生成完直接写进正文框"（2B，不做候选制）。所以这里
+#   没有 candidates 表，只有 chapter_runs —— 它管三件事：
+#     ① 实时通道的名字（前端订阅用）
+#     ② 生成前那份正文（后悔药，见 chapter_db 模块顶部）
+#     ③ 这一章的每个稿子是哪次生成出来的（对账用）
+#   结果写进编辑器之后**不自动落库**：她按「保存本章」才写进库里。
+#   参考站会自动保存，但墨阁这边的正文是她写很久的东西，
+#   让一次误点直接顶掉库里的正文，代价太大。
+# ----------------------------------------------------------------------
+
+class ChapterIn(BaseModel):
+    """新建 / 修改一章。字段不在请求里 = 不改（PATCH 语义）。
+
+    【这里少一个字段 = 她的东西存不进去，而且不报错】
+    前端的保存按钮把整张表单一起发上来（chSnap()），写作输入那四项
+    也在里面。请求体里多出来的字段 Pydantic 是**静默丢掉**的 ——
+    不声明就等于"她填了、界面也显示存好了，但库里一直是空的"。
+    所以表单上有几项，这里就得列几项。
+    """
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    content: Optional[str] = None
+    background: Optional[str] = None
+    plot: Optional[str] = None
+    style: Optional[str] = None
+    requirement: Optional[str] = None
+    char_ids: Optional[List[int]] = None
+    refs: Optional[List[Dict]] = None
+    sort_order: Optional[int] = None
+
+
+class ChapterGenIn(BaseModel):
+    """发起一次正文生成。
+
+    model_key 是**必填**（她的表单第一条就是"模型选择（必选）"）——
+    不填直接报错，不替她挑一个：正文是花钱的活，
+    "用哪个模型"必须是她自己点的。
+    """
+    model_key: str = ""
+    background: Optional[str] = None
+    plot: Optional[str] = None
+    style: Optional[str] = None
+    requirement: Optional[str] = None
+    character_ids: List[int] = []
+    refs: Optional[List[Dict]] = None
+
+
+class ChapterReorderIn(BaseModel):
+    order: List[int] = []
+
+
+def _chg_run(r):
+    """给一条生成记录补上实时通道的名字。
+
+    stream_id 由**后端**给（cai.stream_id_for 是唯一出口）——
+    前端绝不自己拼前缀，拼错的话实时区会永远空着，而且不报错。
+    """
+    d = dict(r)
+    d["stream_id"] = cai.stream_id_for(r["id"])
+    return d
+
+
+@app.get("/api/chapter-meta")
+def api_chapter_meta(user: dict = Depends(auth.current_user)):
+    """正文页要用的元信息：上限、可用模型、提示词库的分档。"""
+    usable = [{"key": m["key"],
+               "label": m.get("label") or m["key"],
+               "model": m.get("model") or ""}
+              for m in llm.usable_models()]
+    return {
+        "usable_models": usable,
+        "limits": {"title_max": cdb.TITLE_MAX,
+                   "summary_max": cdb.SUMMARY_MAX,
+                   "content_max": cdb.CONTENT_MAX,
+                   "background_max": cdb.BACKGROUND_MAX,
+                   "plot_max": cdb.PLOT_MAX,
+                   "style_max": cdb.STYLE_MAX,
+                   "requirement_max": cdb.REQUIRE_MAX,
+                   "ref_chapter_max": cdb.REF_CHAPTER_MAX,
+                   "ref_chapter_chars": cdb.REF_CHAPTER_CHARS,
+                   "ref_total_chars": cdb.REF_TOTAL_CHARS},
+        "word_modes": list(cdb.WORD_MODES),
+        # 这一档提示词库各用哪个 kind（写作风格 / 写作要求分开两档）
+        "prompt_kinds": {"style": auto.PROMPT_KIND_STYLE,
+                         "requirement": auto.PROMPT_KIND_REQUIRE},
+        "timeout": cai.TIMEOUT,
+        "max_retry": cai.MAX_RETRY,
+        "stats": cdb.chapter_stats(user["owner"]),
+    }
+
+
+@app.get("/api/chapters")
+def api_chapters(user: dict = Depends(auth.current_user)):
+    """章节列表。不带正文（正文可能很长，列表页不需要）。"""
+    return {"chapters": cdb.list_chapters(user["owner"]),
+            "stats": cdb.chapter_stats(user["owner"])}
+
+
+@app.post("/api/chapters")
+def api_create_chapter(req: ChapterIn,
+                       user: dict = Depends(auth.current_user)):
+    """新建一章。标题留空会自动起「第 N 章」。"""
+    c = _odb_call(cdb.create_chapter, user["owner"], _given(req))
+    return {"ok": True, "chapter": c}
+
+
+@app.post("/api/chapters/reorder")
+def api_reorder_chapters(req: ChapterReorderIn,
+                         user: dict = Depends(auth.current_user)):
+    """按给的一串 id 重排章节顺序。
+
+    【为什么这个路由必须写在 /api/chapters/{cid} 前面】
+    FastAPI 按定义顺序匹配：先注册 {cid} 的话，"reorder"会被当成
+    cid 去转 int，直接 422 —— 而报错信息是英文的、跟顺序毫无关系，
+    查起来要绕很久。
+    """
+    n = cdb.reorder_chapters(user["owner"], req.order)
+    return {"ok": True, "moved": n}
+
+
+@app.get("/api/chapters/{cid}")
+def api_chapter(cid: int, user: dict = Depends(auth.current_user)):
+    """一章的详情（带正文）+ 它正在跑的那次生成（刷新后靠它重挂实时区）。"""
+    c = cdb.get_chapter(user["owner"], cid, with_content=True)
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这一章")
+    running = cdb.running_run_for(user["owner"], cid)
+    return {"chapter": c,
+            "running": _chg_run(running) if running else None,
+            "limits": {"ref_chapter_chars": cdb.REF_CHAPTER_CHARS,
+                       "ref_total_chars": cdb.REF_TOTAL_CHARS}}
+
+
+@app.patch("/api/chapters/{cid}")
+def api_update_chapter(cid: int, req: ChapterIn,
+                       user: dict = Depends(auth.current_user)):
+    """改一章。只改传进来的字段（PATCH 语义）。"""
+    c = _odb_call(cdb.update_chapter, user["owner"], cid, _given(req))
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这一章")
+    return {"ok": True, "chapter": c}
+
+
+@app.delete("/api/chapters/{cid}")
+def api_delete_chapter(cid: int, user: dict = Depends(auth.current_user)):
+    """删一章。连它的生成记录一起删 —— 那些记录离开这一章就没意义了。
+
+    【为什么这条要二次确认】删的是她写过的字，而且没有回收站。
+    前端会弹一个把章节名和字数都念出来的确认框。
+    """
+    c = cdb.get_chapter(user["owner"], cid, with_content=False)
+    if not c:
+        raise HTTPException(status_code=404, detail="没有这一章")
+    if not cdb.delete_chapter(user["owner"], cid):
+        raise HTTPException(status_code=404, detail="没有这一章")
+    return {"ok": True,
+            "message": "已删除「%s」（%d 字），它的生成记录也一起删了。"
+                       % (c["title"], c["word_count"])}
+
+
+@app.post("/api/chapters/{cid}/generate")
+def api_chapter_generate(cid: int, req: ChapterGenIn,
+                         user: dict = Depends(auth.current_user)):
+    """发起一次正文生成。立刻返回，字在实时通道里流出来。"""
+    run, err = cai.create_run(user["owner"], cid, _given(req))
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return {"ok": True, "run": _chg_run(run),
+            "stream_id": cai.stream_id_for(run["id"]),
+            "note": "开始写了。字会实时出现在右边的正文框里 —— "
+                    "写完记得点「保存本章」才写进库里。"}
+
+
+@app.get("/api/chapters/{cid}/runs")
+def api_chapter_runs(cid: int, limit: int = Query(30, ge=1, le=200),
+                     user: dict = Depends(auth.current_user)):
+    """这一章的生成记录（新的在前）。列表不带全文。"""
+    rows = cdb.list_runs(user["owner"], cid, limit)
+    return {"runs": [_chg_run(r) for r in rows]}
+
+
+@app.get("/api/chapter-runs/{rid}")
+def api_chapter_run(rid: int, user: dict = Depends(auth.current_user)):
+    """单查一次生成（**带全文**）。候选卡那种"列表不带、单查才带"的规矩。"""
+    r = cdb.get_run(user["owner"], rid)
+    if not r:
+        raise HTTPException(status_code=404, detail="没有这次生成记录")
+    return {"run": _chg_run(r)}
+
+
+@app.post("/api/chapter-runs/{rid}/cancel")
+def api_chapter_run_cancel(rid: int, user: dict = Depends(auth.current_user)):
+    """停止等待这一次生成。
+
+    【界面上必须写清楚"钱照算"】请求已经发出去了，
+    取消只是"我们不等了"，服务端该算的钱一分不少。
+    把这句话藏起来比不给这个按钮更糟 —— 她会以为取消=没花钱。
+    """
+    if not cdb.cancel_run(user["owner"], rid):
+        r = cdb.get_run(user["owner"], rid)
+        if not r:
+            raise HTTPException(status_code=404, detail="没有这次生成记录")
+        raise HTTPException(status_code=400,
+                            detail="这次生成已经结束了，没什么可停的。")
+    return {"ok": True,
+            "message": "已停下。已经写出来的字留在记录里了，能找回来。"
+                       "（这次请求已经发出去，钱照算。）"}
+
+
+@app.post("/api/chapter-runs/{rid}/retry")
+def api_chapter_run_retry(rid: int, user: dict = Depends(auth.current_user)):
+    """用同样的输入再跑一次。"""
+    run, err = cai.retry_run(user["owner"], rid)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return {"ok": True, "run": _chg_run(run),
+            "stream_id": cai.stream_id_for(run["id"])}
+
+
+@app.post("/api/chapter-runs/{rid}/applied")
+def api_chapter_run_applied(rid: int, user: dict = Depends(auth.current_user)):
+    """记一笔"这次的结果已经写进正文了"。
+
+    为什么要有这一步：她在编辑器里再手改几笔之后，正文和记录里的
+    ai_content 就对不上了。有这个时间戳，才答得出
+    "现在这一稿是从哪一次改出来的"。
+    """
+    r = cdb.mark_applied(user["owner"], rid)
+    if not r:
+        raise HTTPException(status_code=404, detail="没有这次生成记录")
+    return {"ok": True, "run": _chg_run(r)}
+
+
+@app.delete("/api/chapter-runs/{rid}")
+def api_chapter_run_delete(rid: int, user: dict = Depends(auth.current_user)):
+    """删掉一条生成记录（正文和章节都不受影响）。"""
+    if not cdb.delete_run(user["owner"], rid):
+        raise HTTPException(status_code=404, detail="没有这次生成记录")
+    return {"ok": True}
 
 
 # ----------------------------------------------------------------------
