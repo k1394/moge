@@ -1935,16 +1935,34 @@
   /* ==================== 正文创作：素材浮窗 ====================
      她 2026-09-27 圈的那处：「点击出现悬浮窗，可以看剧情内化库和
      素材分类库，方便使用者一边码字一边看素材」。
-     可拖动 —— 拖标题栏挪位置，位置记在 localStorage 里。 */
+
+     同一天下午她又提了三件（原话见同日期的记忆日志）：
+       ① 改成【原界面的缩小版】—— 要能按主类 + 标签检索，
+          内化库那一侧用同样的检索方式；
+       ② 要能【放大缩小】；
+       ③ 右边加一栏【空白的备忘录】，方便她把要用的段落抄下来。
+
+     三条都落在这块样式里：
+       左栏  = 迷你版素材页（页签 / 主类 / 标签 / 搜索 / 结果）
+       右栏  = 备忘录（自动存、存服务端）
+       右下角 = 缩放手柄；整个窗口拖标题栏移动。
+     位置**和大小**都记在 localStorage —— 只记位置的话，
+     她每次还得重新拉一遍大小，跟"每次白拖一次"是同一类麻烦。 */
   .chfloat {
     position: fixed; z-index: 42;
-    width: 400px; height: 540px; max-width: calc(100vw - 24px);
+    width: 760px; height: 560px;
+    max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
     display: flex; flex-direction: column;
     background: var(--card); border: 1px solid var(--line);
     border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2);
     overflow: hidden;
   }
   .chfloat[hidden] { display: none; }
+  /* 备忘录栏收起来时（她手动收的，或者窗口太窄）整块让给左边。
+     为什么不留一条窄边当提示：这一栏是"我额外要的东西"，
+     收起之后它就不该再占地方。按钮变灰 = 一眼知道去哪找回来。 */
+  .chfloat.nomemo .cfright { display: none; }
+
   .cfh {
     flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
     padding: 9px 10px 9px 12px; background: var(--line-2);
@@ -1957,9 +1975,22 @@
   }
   .cfh .fx {
     flex: 0 0 auto; border: none; background: transparent; color: var(--ink-3);
-    font-size: 16px; line-height: 1; padding: 0 3px;
+    font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 5px;
   }
-  .cfh .fx:hover { color: var(--danger); }
+  .cfh .fx:hover { color: var(--ink); background: rgba(0, 0, 0, .05); }
+  .cfh .fx.on { color: var(--accent); background: var(--accent-2); }
+  #chFloatClose:hover { color: var(--danger); }
+
+  /* ---- 主体：左素材 + 右备忘录 ---- */
+  .cfmain { flex: 1 1 auto; min-height: 0; display: flex; }
+  .cfleft { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+  .cfright {
+    flex: 0 0 296px; min-width: 0;
+    display: flex; flex-direction: column;
+    border-left: 1px solid var(--line-2); background: var(--card);
+  }
+
+  /* ---- 左侧：页签 / 主类 / 标签 / 搜索 ---- */
   .cftabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 9px 11px 0; }
   .cftab {
     font-size: 12px; padding: 4px 11px; border-radius: 20px;
@@ -1970,14 +2001,48 @@
     background: var(--accent-2); border-color: var(--accent-2);
     color: var(--accent); font-weight: 600;
   }
-  .cfq { flex: 0 0 auto; margin: 9px 11px 6px; }
+
+  /* 主类 / 标签那几排。
+     【为什么要能横向滚】主类有 11 个，加上她自建的可能更多；
+     缩到一行放不下时不能换行 —— 一换行就把列表挤到看不见了。
+     横向滚动的代价是"右边还有"不够明显，所以底下留了一条细滚动条。 */
+  .cfbars { flex: 0 0 auto; padding: 8px 11px 0; }
+  .cfbar {
+    display: flex; align-items: center; gap: 5px;
+    overflow-x: auto; overflow-y: hidden; padding-bottom: 4px;
+  }
+  .cfbar + .cfbar { margin-top: 1px; }
+  .cfbar::-webkit-scrollbar { height: 4px; }
+  .cfbar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .cfbar .lbl {
+    flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
+    width: 42px; text-align: right; margin-right: 1px;
+  }
+  .cfchip {
+    flex: 0 0 auto; font-size: 11.5px; padding: 2px 9px; border-radius: 14px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+    white-space: nowrap; line-height: 1.6;
+  }
+  .cfchip:hover { border-color: var(--ink-3); color: var(--ink); }
+  .cfchip.on {
+    background: var(--accent-2); border-color: var(--accent-2);
+    color: var(--accent); font-weight: 600;
+  }
+  .cfchip .n { font-size: 10.5px; color: var(--ink-3); margin-left: 3px; }
+  .cfchip.on .n { color: var(--accent); }
+  .cfchip[disabled] { opacity: .45; cursor: default; }
+
+  .cfq { flex: 0 0 auto; margin: 6px 11px 6px; }
   .cfq input {
     width: 100%; height: 32px; border: 1px solid var(--line);
     border-radius: 8px; padding: 0 10px; font-size: 12.5px;
     background: #fff; color: var(--ink);
   }
   .cfq input:focus { outline: none; border-color: var(--ink-3); }
-  .cfbody { flex: 1 1 auto; overflow: auto; padding: 2px 8px 8px; }
+
+  /* min-height:0 这一句不能省 —— flex 子元素默认 min-height:auto，
+     内容一长就把整块撑破，滚动条出不来（列表会顶到窗口外面）。 */
+  .cfbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 8px 8px; }
   .cfrow {
     display: block; width: 100%; text-align: left;
     padding: 7px 9px; border-radius: 8px;
@@ -1986,7 +2051,7 @@
   .cfrow:hover { background: var(--line-2); border-color: var(--line); }
   .cfrow .t {
     display: block; font-size: 12.5px; color: var(--ink);
-    margin-bottom: 2px; line-height: 1.5;
+    margin-bottom: 2px; line-height: 1.55;
   }
   .cfrow .m { display: block; font-size: 11px; color: var(--ink-3); }
   .cfdetail { padding: 6px 4px 4px; }
@@ -2000,11 +2065,78 @@
     background: var(--line-2); border-radius: 8px; padding: 9px 10px;
   }
   .cffoot {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px;
     padding: 6px 11px; border-top: 1px solid var(--line-2);
-    font-size: 11px; color: var(--ink-3);
+    font-size: 11px; color: var(--ink-3); line-height: 1.5;
   }
   .cffoot .grow { flex: 1 1 auto; }
+  .cffoot span:first-child { flex: 1 1 auto; min-width: 0; }
+  .cffoot span:last-child { flex: 0 0 auto; white-space: nowrap; }
+
+  /* ---- 右侧：备忘录 ---- */
+  .cfmhead {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+    padding: 10px 9px 8px;
+  }
+  .cfmhead .ft { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .cfmhead .grow { flex: 1 1 auto; }
+  .cfmhead .fst {
+    flex: 0 1 auto; min-width: 0; font-size: 11px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cfmhead .fst.ok { color: #5b8c5a; }
+  /* 存不进去的时候必须显眼 —— 她会以为"自动保存"一定成功了 */
+  .cfmhead .fst.err { color: var(--danger); font-weight: 600; }
+
+  .cfmlist {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 5px;
+    overflow-x: auto; padding: 0 9px 6px;
+  }
+  .cfmlist[hidden] { display: none; }
+  .cfmlist::-webkit-scrollbar { height: 4px; }
+  .cfmlist::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .cfmnote {
+    flex: 0 0 auto; max-width: 150px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+    font-size: 11.5px; padding: 2px 9px; border-radius: 14px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  }
+  .cfmnote:hover { border-color: var(--ink-3); color: var(--ink); }
+  .cfmnote.on {
+    background: var(--accent-2); border-color: var(--accent-2);
+    color: var(--accent); font-weight: 600;
+  }
+  .cfmhint { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-3); padding-left: 2px; }
+
+  .cfmtext {
+    flex: 1 1 auto; min-height: 0; margin: 0 9px;
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 9px; font-size: 12.5px; line-height: 1.8;
+    background: #fff; color: var(--ink);
+    /* 不写 inherit 的话 textarea 会用浏览器的等宽字体，
+       跟旁边的正文框看起来像两个软件 */
+    font-family: inherit; resize: none;
+  }
+  .cfmtext:focus { outline: none; border-color: var(--ink-3); }
+  .cfmfoot {
+    flex: 0 0 auto; padding: 6px 9px 8px;
+    font-size: 11px; color: var(--ink-3); line-height: 1.5;
+  }
+
+  /* ---- 右下角的缩放手柄 ----
+     位置是"贴着窗口右下角"，所以它必须在 .chfloat 内部绝对定位。
+     只画两条斜线（不是整块色），免得盖住列表最后一行看不清。 */
+  .cfrz {
+    position: absolute; right: 0; bottom: 0;
+    width: 18px; height: 18px; cursor: nwse-resize;
+  }
+  .cfrz::after {
+    content: ''; position: absolute; right: 3px; bottom: 3px;
+    width: 8px; height: 8px;
+    border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3);
+    border-radius: 0 0 4px 0; opacity: .55;
+  }
+  .cfrz:hover::after { opacity: 1; border-color: var(--accent); }
 
   @media (max-width: 1180px) {
     .chwrap { flex-direction: column; align-items: stretch; }
@@ -2732,28 +2864,62 @@
   </div>
 </div>
 
-<!-- ============ 正文创作：素材浮窗（可拖动） ============
+<!-- ============ 正文创作：素材浮窗（可拖动 / 可缩放） ============
      参考站那一处红字：「点击出现悬浮窗，可以看剧情内化库和素材分类库，
-     方便使用者一边码字一边看素材」。只看不写 —— 不做"插进正文"。 -->
+     方便使用者一边码字一边看素材」。
+
+     【为什么它现在是"原界面的缩小版"（2026-09-27 她提的）】
+     上一版这里只有一个搜索框 + 一列结果 —— 想按主类或标签找素材
+     就得关掉浮窗回正页去筛，那这个浮窗就只解决了"看得见"，
+     没解决"找得到"。现在左栏就是【素材分类库】和【剧情内化库】
+     两页本身的迷你版：页签、主类、标签、搜索、结果，一个不少。
+
+     【内化库那一侧的"标签"是什么】零件没有"副标签"这个概念，
+     最贴近它的两样是「剧情类型」和「使用场景」，所以它那排标签是这两组。
+
+     【右栏是备忘录】她原话：「额外增加一栏空白的备忘录区域，
+     便于我复制粘贴所需内容，供写作时参考」。所以它默认就是空白的 ——
+     一个字都不预填。存**服务端**（不是浏览器），换电脑也在。
+     存储与展示的完整逻辑见下面 CF 模块头部的说明。 -->
 <div class="chfloat" id="chFloat" hidden>
   <div class="cfh" id="chFloatHead">
     <span class="fname">素材浮窗</span>
-    <span class="fhint">按住这一条可以拖到别处 · 位置会记住</span>
+    <span class="fhint" id="chFloatHint">拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住</span>
+    <button class="fx" id="chFloatMemoBtn" title="收起右边那一栏备忘录">▤</button>
     <button class="fx" id="chFloatClose" title="收起来">&times;</button>
   </div>
-  <div class="cftabs">
-    <button class="cftab on" id="chFloatTabPlot" data-cftab="plots">剧情内化库</button>
-    <button class="cftab" id="chFloatTabCard" data-cftab="cards">素材分类库</button>
+  <div class="cfmain">
+    <div class="cfleft">
+      <div class="cftabs">
+        <button class="cftab on" id="chFloatTabPlot" data-cftab="plots">剧情内化库</button>
+        <button class="cftab" id="chFloatTabCard" data-cftab="cards">素材分类库</button>
+      </div>
+      <div class="cfbars" id="chFloatBars"></div>
+      <div class="cfq">
+        <input type="text" id="chFloatQ" placeholder="搜标题和内容…">
+      </div>
+      <div class="cfbody" id="chFloatBody"></div>
+      <div class="cffoot">
+        <span id="chFloatNote"></span>
+        <span class="grow"></span>
+        <span id="chFloatCount"></span>
+      </div>
+    </div>
+    <div class="cfright" id="chFloatMemo">
+      <div class="cfmhead">
+        <span class="ft">备忘录</span>
+        <span class="fst" id="chMemoState"></span>
+        <span class="grow"></span>
+        <button class="mini" id="chMemoNew" title="再加一条备忘录">＋</button>
+        <button class="mini d" id="chMemoDel" title="删掉当前这条">删</button>
+      </div>
+      <div class="cfmlist" id="chMemoList" hidden></div>
+      <textarea class="cfmtext" id="chMemoText" spellcheck="false"
+        placeholder="随手记点什么，或者把左边看到的段落复制过来，写的时候对着看。&#10;&#10;不用点保存 —— 停手一秒就自动存，存在你的账号里，换电脑也还在。"></textarea>
+      <div class="cfmfoot"><span id="chMemoFoot"></span></div>
+    </div>
   </div>
-  <div class="cfq">
-    <input type="text" id="chFloatQ" placeholder="搜标题和内容…">
-  </div>
-  <div class="cfbody" id="chFloatBody"></div>
-  <div class="cffoot">
-    <span id="chFloatNote"></span>
-    <span class="grow"></span>
-    <span id="chFloatCount"></span>
-  </div>
+  <div class="cfrz" id="chFloatRz" title="拖动这里可以放大或缩小"></div>
 </div>
 
 <!-- ============ 登录 / 注册 ============ -->
@@ -10070,7 +10236,7 @@ function renderPlFilters() {
   if (!box) return;
   const m = PL.meta || {};
   box.innerHTML =
-    '<input type="text" id="plKw" placeholder="搜标题或摘要…" value="' +
+    '<input type="text" id="plKw" placeholder="搜标题、摘要或使用场景…" value="' +
       esc(PL.f.kw) + '">' +
     '<select id="plFStatus"><option value="">全部状态</option>' +
       (m.statuses || []).map(s => '<option' + (PL.f.status === s ? " selected" : "") +
@@ -13678,37 +13844,97 @@ function chCharNote() {
 }
 
 /* ============================================================
-   素材浮窗（可拖动）
+   素材浮窗（可拖动 + 可缩放 + 自带一栏备忘录）
    ============================================================
    她 2026-09-27 圈出来的那处红字：
    「点击出现悬浮窗，可以看剧情内化库和素材分类库，方便使用者一边
-     码字一边看素材」。
+     码字一边看素材」。同一天她又补了三条要求。
 
-   她拍板的四条：
-     · 形态：可拖动浮窗（照参考站）
-     · 能力：只看不写 —— **不做"插进正文"**，先把"一边码字一边看"解决掉
-     · 位置记在 localStorage：挪到不挡字的地方，下次打开还在那儿
+   现在它是什么：
+     左栏 = 【素材分类库 / 剧情内化库】两页本身的**缩小版** ——
+            页签、主类、标签、搜索、结果，一个不少。
+            内化库那一侧没有"副标签"，用「剧情类型 + 使用场景」两排代替。
+     右栏 = 备忘录（她要的"一栏空白区域"）。
+     右下角 = 缩放手柄；标题栏 = 拖动。
 
-   【为什么位置要记】
-   浮窗的全部意义就是"挪开别挡字"。每次都回默认位置 = 她每开一次白拖一次。
+   ------------------------------------------------------------------
+   【一、为什么筛选必须走服务端，不能像上一版那样在浏览器里过】
 
-   【为什么列表里的字要截断、还要明说】
-   长文截断在界面上不留痕迹的话，会被当成"素材本身就这么短"。
-   所以列表里只显示开头（带省略号），并且底下一行明说"点一条看全文"。 */
+   上一版是"一次拉 500 条，然后在本地 filter"。这条路上有个不报错的坑：
+   她库里有 1200 多张卡，第 500 条之后的**永远不在结果里**。
+   她搜一个明明存在的词，界面说"没有匹配的" —— 那是我们在骗她。
+
+   现在主类 / 标签 / 关键词都交给服务端筛，搜的是全库。
+   但"窗口里只装得下 500 条"这件事仍然是事实，所以底下那行
+   **必须把总数讲出来**（"符合条件的 103 条都在这里了" /
+   "符合条件的共 1247 条，窗口里只装了前 500 条"）。
+   截断不写出来 = 她会以为库里就这么点东西。
+
+   ------------------------------------------------------------------
+   【二、备忘录：保存与展示逻辑】
+
+   存哪儿 —— **服务端**（表 memos，按账号隔离），不是浏览器缓存。
+       理由见 backend/memo_db.py 开头：草稿丢了能重填；备忘录是
+       "她从素材里一行一行挑出来攒下来的"，挑这个动作本身就是成本。
+       换个浏览器、清一次缓存就没了的东西，不该拿来装它。
+
+   什么时候存 —— 停手约 1 秒自动存，她不用点保存。
+       切条目前、关浮窗前、切功能页前都会**先强制存一次**；
+       存不下就不往下走（不切走、不关掉）—— 不然"自动保存"这四个字
+       就是一个骗人的承诺。
+
+   界面上怎么显示 —— 标题栏右边那行小字是**保存状态**：
+       正在写 / 正在存 / 已存好 / 存不进去（红字 + 原因）。
+       失败必须显眼，因为她会默认"自动保存"一定成功。
+       底下那行是字数 + 上次存的时间。
+
+   一条还是多条 —— 默认**一条空白的**（她要的就是"一栏空白区域"）。
+       点「＋」能再加；只有一条时条目列表**不显示**，
+       跟没有这个功能长得一模一样，不给她添认知负担。
+       条目名不用她起：标题空着就退到"正文第一行的前 20 字"
+       （服务端算好一起发下来，见 memo_db.display_title）。
+
+   和正文的关系 —— **没有关系**。这一栏是她自己的抄写板，
+       不参与生成、不会被发给模型。要发给模型的东西写在
+       「本章剧情 / 写作风格 / 写作要求」那几个字段里。
+       这一点必须说清，否则她会以为模型能看见她抄的东西。
+   ------------------------------------------------------------------ */
+
 const CF = {
-  tab: "plots",     // plots = 剧情内化库 / cards = 素材分类库
+  tab: "plots",          // plots = 剧情内化库 / cards = 素材分类库
   rows: [],
-  kw: "",
   detail: null,
-  cache: {},
-  meta: null,
+  meta: null,            // /api/plot-meta（主类 / 剧情类型 / 使用场景 / 节拍名）
+  tags: [],              // 副标签（来自 /api/categories）
+  counts: {},            // 每个主类各多少条（服务端算的，跟筛选一起变）
+  total: 0,              // 符合条件的**总数**（不受 limit 影响）
+  seq: 0,                // 请求序号：过时的那次回来时直接丢掉
   timer: 0,
   drag: null,
+  rz: null,
+  memoOn: true,
+  memos: [],             // 清单（不带正文）
+  memoId: 0,             // 当前这条；0 = 还没有（她一个字都没打过）
+  memoDirty: false,
+  memoTimer: 0,
+  f: {
+    plots: { cat: "", type: "", hint: "", kw: "" },
+    cards: { cat: "", tag: "", kw: "" },
+  },
 };
-const CF_LIMIT = 500;                  // 一次最多拉这么多（后端的硬顶是 1000）
 const CF_POS_KEY = "moge_chfloat_pos";
+const CF_SIZE_KEY = "moge_chfloat_size";
+const CF_MEMO_KEY = "moge_chfloat_memo_on";
+const CF_W_DEF = 760, CF_H_DEF = 560;
+const CF_W_MIN = 380, CF_H_MIN = 300;
+/* 窄于这个宽度就自动把备忘录栏收起来 —— 再窄下去左边那栏就没法看了。
+   注意这**不是**"她手动收的"：窗口拉宽它自己会回来（见 chFloatApplyMemo）。 */
+const CF_W_MEMO_MIN = 620;
+const CF_LIMIT = 500;                  // 一次最多装这么多（后端硬顶 1000）
+const CF_MEMO_DEBOUNCE = 900;          // 停手多久算"写完了"
 
 function chFloatEl() { return document.getElementById("chFloat"); }
+function cfF() { return CF.f[CF.tab]; }
 
 function chFloatToggle() {
   const el = chFloatEl();
@@ -13716,84 +13942,168 @@ function chFloatToggle() {
   if (el.hidden) chFloatOpen(); else chFloatHide();
 }
 
-async function chFloatOpen() {
+function chFloatOpen() {
   const el = chFloatEl();
   if (!el) return;
   el.hidden = false;
+  chFloatSize();          // 先定大小：位置要夹在可视区里，得先知道多大
   chFloatPlace();
   chFloatPaintTabs();
-  await chFloatLoad(false);
+  chFloatApplyMemo();
+  chFloatLoad(true);
+  chMemoInit();
 }
 
 function chFloatHide() {
   const el = chFloatEl();
-  if (el) el.hidden = true;
+  if (!el) return;
+  /* 关之前先把没落盘的备忘录发出去。**不 await** ——
+     关浮窗是她按的，不能因为存得慢就卡住界面。
+     请求发出去之后不会因为窗口隐藏而取消，会自己跑完。 */
+  chMemoSave(true);
+  el.hidden = true;
+}
+
+/* ---- 大小：记住她拉过的尺寸 ---- */
+function chFloatSize() {
+  const el = chFloatEl();
+  if (!el) return null;
+  let sz = null;
+  try { sz = JSON.parse(localStorage.getItem(CF_SIZE_KEY) || "null"); }
+  catch (e) { sz = null; }
+  let w = (sz && Number(sz.w)) || CF_W_DEF;
+  let h = (sz && Number(sz.h)) || CF_H_DEF;
+  // 夹回可视区：在台式机上拉的大窗，换笔记本打开时不能比屏幕还大。
+  // （CSS 的 max-width 兜得住"画出来多大"，但它不会告诉我们"被夹过"，
+  //   位置仍按原尺寸算，于是窗口会跑到屏幕外。）
+  w = Math.max(CF_W_MIN, Math.min(w, window.innerWidth - 16));
+  h = Math.max(CF_H_MIN, Math.min(h, window.innerHeight - 16));
+  el.style.width = w + "px";
+  el.style.height = h + "px";
+  return { w: w, h: h };
 }
 
 /* 位置：右上角起手；拖过就记住。
-   每次都夹回可视区 —— 窗口缩小之后浮窗不能留在屏幕外面拿不回来。 */
+   每次都夹回可视区 —— 窗口缩小之后，浮窗不能留在屏幕外面拿不回来。 */
 function chFloatPlace() {
   const el = chFloatEl();
   if (!el) return;
-  const w = el.offsetWidth || 400;
-  const h = el.offsetHeight || 540;
+  const w = el.offsetWidth || CF_W_DEF;
+  const h = el.offsetHeight || CF_H_DEF;
   let pos = null;
   try { pos = JSON.parse(localStorage.getItem(CF_POS_KEY) || "null"); }
   catch (e) { pos = null; }
   let x = (pos && typeof pos.x === "number") ? pos.x : window.innerWidth - w - 24;
   let y = (pos && typeof pos.y === "number") ? pos.y : 84;
-  const maxX = Math.max(8, window.innerWidth - w - 8);
-  const maxY = Math.max(8, window.innerHeight - Math.min(h, 200));
-  x = Math.max(8, Math.min(x, maxX));
-  y = Math.max(8, Math.min(y, maxY));
+  // 纵向只保证"标题栏露得出来"（标题栏是唯一的拖动把手，
+  // 它要是跑到屏幕外，这个窗口就永远挪不回来了）。
+  x = Math.max(8, Math.min(x, Math.max(8, window.innerWidth - w - 8)));
+  y = Math.max(8, Math.min(y, Math.max(8, window.innerHeight - 52)));
   el.style.left = x + "px";
   el.style.top = y + "px";
 }
 
-function chFloatPaintTabs() {
-  document.querySelectorAll("#chFloat .cftab").forEach(b => {
-    b.classList.toggle("on", b.dataset.cftab === CF.tab);
-  });
-  const q = document.getElementById("chFloatQ");
-  if (q && q.value !== CF.kw) q.value = CF.kw;
+/* ---- 备忘录栏的显隐 ----
+   两种原因会让它藏起来，必须分开对待：
+     · 她手动按了标题栏那个按钮 → 一直收着，拉宽也不回来
+     · 窗口太窄时自动收的       → 拉宽就自己回来
+   不分开的话，会出现"我明明没关它，它自己没了"，
+   或者反过来"我关掉它，一拉宽它又冒出来"。 */
+function chFloatApplyMemo() {
+  const el = chFloatEl();
+  if (!el) return;
+  const wide = el.offsetWidth >= CF_W_MEMO_MIN;
+  const show = CF.memoOn && wide;
+  el.classList.toggle("nomemo", !show);
+  const btn = document.getElementById("chFloatMemoBtn");
+  if (btn) {
+    btn.classList.toggle("on", show);
+    btn.title = show ? "收起右边那一栏备忘录" : "展开右边的备忘录栏";
+  }
+  const hint = document.getElementById("chFloatHint");
+  if (hint) {
+    hint.textContent = (!wide && CF.memoOn)
+      ? "窗口太窄，备忘录栏先收起来了 —— 把窗口往右拉宽，它自己会回来"
+      : "拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住";
+  }
+  chMemoPaint();
 }
 
-/* 拖动：按住标题栏挪。
-   拖动过程中不写 localStorage（每移动一像素写一次太浪费），松手才写。 */
+/* ---- 拖动（标题栏）+ 缩放（右下角） ---- */
 function chFloatBindDrag() {
   const head = document.getElementById("chFloatHead");
   const el = chFloatEl();
+  const rz = document.getElementById("chFloatRz");
   if (!head || !el) return;
+
   head.onmousedown = e => {
-    if (e.target && e.target.closest && e.target.closest(".fx")) return;  // 别把关闭当成拖动
+    // 标题栏右边那两个按钮长在标题栏里，别把"点按钮"当成"开始拖"
+    if (e.target && e.target.closest && e.target.closest(".fx")) return;
     const r = el.getBoundingClientRect();
     CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
     e.preventDefault();
   };
+  if (rz) {
+    rz.onmousedown = e => {
+      const r = el.getBoundingClientRect();
+      CF.rz = { w: r.width, h: r.height, x: e.clientX, y: e.clientY };
+      e.preventDefault();
+      e.stopPropagation();
+    };
+  }
   document.addEventListener("mousemove", e => {
-    if (!CF.drag) return;
-    const w = el.offsetWidth, h = el.offsetHeight;
-    const x = Math.max(4, Math.min(e.clientX - CF.drag.dx,
-                                   window.innerWidth - w - 4));
-    const y = Math.max(4, Math.min(e.clientY - CF.drag.dy,
-                                   window.innerHeight - 40));
-    el.style.left = x + "px";
-    el.style.top = y + "px";
+    if (CF.drag) {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      el.style.left = Math.max(4, Math.min(e.clientX - CF.drag.dx,
+                                            window.innerWidth - w - 4)) + "px";
+      el.style.top = Math.max(4, Math.min(e.clientY - CF.drag.dy,
+                                           window.innerHeight - 44)) + "px";
+      return;
+    }
+    if (CF.rz) {
+      // 下限挡住"拉成一个内容全挤成线的窗口"，上限不让它超出屏幕。
+      const w = Math.max(CF_W_MIN,
+        Math.min(CF.rz.w + (e.clientX - CF.rz.x), window.innerWidth - 16));
+      const h = Math.max(CF_H_MIN,
+        Math.min(CF.rz.h + (e.clientY - CF.rz.y), window.innerHeight - 16));
+      el.style.width = w + "px";
+      el.style.height = h + "px";
+      chFloatApplyMemo();     // 拖窄/拖宽时，备忘录栏的显隐要跟着变
+    }
   });
   document.addEventListener("mouseup", () => {
-    if (!CF.drag) return;
-    CF.drag = null;
-    const r = el.getBoundingClientRect();
-    try {
-      localStorage.setItem(CF_POS_KEY,
-        JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
-    } catch (e) { /* 存不了就算了，下次回默认位置，不影响用 */ }
+    if (CF.drag) {
+      CF.drag = null;
+      const r = el.getBoundingClientRect();
+      try {
+        localStorage.setItem(CF_POS_KEY,
+          JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
+      } catch (e) { /* 存不了就算了，下次回默认位置，不影响用 */ }
+    }
+    if (CF.rz) {
+      CF.rz = null;
+      try {
+        localStorage.setItem(CF_SIZE_KEY,
+          JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight }));
+      } catch (e) { /* 同上 */ }
+      // 往右下方向拉大之后可能顶出屏幕，夹回来。
+      // 代价是窗口会跳一下 —— 比"拉到一半跑到屏幕外拿不回来"好得多。
+      chFloatPlace();
+    }
   });
 }
 
+/* ---- 选项菜单 ---- */
 async function chFloatMeta() {
   if (CF.meta) return CF.meta;
-  try { CF.meta = await api("/api/plot-meta"); } catch (e) { CF.meta = {}; }
+  let m = null;
+  try { m = await api("/api/plot-meta"); }
+  catch (e) { return {}; }   // 【不缓存失败】否则一次网络抖动会锁死整段会话
+  CF.meta = m || {};
+  try {
+    const c = await api("/api/categories");
+    CF.tags = (c.sub_tags || []).map(t => t.name);
+  } catch (e) { /* 副标签拿不到就少一排标签，不挡别的 */ }
   return CF.meta;
 }
 
@@ -13803,88 +14113,202 @@ function chFloatCatName(id) {
   return c ? c.name : "未分类";
 }
 
+function chFloatPaintTabs() {
+  document.querySelectorAll("#chFloat .cftab").forEach(b => {
+    b.classList.toggle("on", b.dataset.cftab === CF.tab);
+  });
+  const q = document.getElementById("chFloatQ");
+  if (q) {
+    q.value = cfF().kw;
+    q.placeholder = CF.tab === "plots"
+      ? "搜标题、摘要或使用场景…" : "搜标题和内容…";
+  }
+}
+
 async function chFloatTab(tab) {
   if (CF.tab === tab && !CF.detail) return;
   CF.tab = tab;
-  CF.kw = "";
   CF.detail = null;
   chFloatPaintTabs();
-  await chFloatLoad(false);
+  await chFloatLoad(true);
 }
 
-async function chFloatLoad(force) {
+/* 主类 / 标签那几排。
+   【为什么要写小标题】两个页签下的第二、三排含义不同
+   （分类库是副标签，内化库是剧情类型和使用场景）。
+   不写字的话，她切过去会以为"我的标签怎么变了"。 */
+function chFloatBars() {
+  const box = document.getElementById("chFloatBars");
+  if (!box) return;
+  const f = cfF();
+  const counts = CF.counts || {};
+  const cats = ((CF.meta || {}).categories) || [];
+  const rows = [];
+
+  let sum = 0;
+  Object.keys(counts).forEach(k => { sum += counts[k]; });
+  const catChips = ['<button class="cfchip' + (f.cat === "" ? " on" : "") +
+    '" data-cfcat="">全部 <span class="n">' + sum + '</span></button>'];
+  /* 「未分类」只在真有东西（或者正看着它）时才露出来 ——
+     它的作用是指出"还没归置的尾巴"，永远显示 0 的话就只是个噪音。 */
+  const noCat = counts[""] || 0;
+  if (noCat || f.cat === "0") {
+    catChips.push('<button class="cfchip' + (f.cat === "0" ? " on" : "") +
+      '" data-cfcat="0">未分类 <span class="n">' + noCat + '</span></button>');
+  }
+  cats.forEach(c => {
+    const n = counts[String(c.id)] || 0;
+    catChips.push('<button class="cfchip' +
+      (String(f.cat) === String(c.id) ? " on" : "") +
+      '" data-cfcat="' + c.id + '">' + esc(c.name) +
+      ' <span class="n">' + n + '</span></button>');
+  });
+  rows.push('<div class="cfbar"><span class="lbl">主类</span>' +
+            catChips.join("") + '</div>');
+
+  const chipRow = (lbl, key, list, cur) => {
+    const chips = ['<button class="cfchip' + (cur ? "" : " on") +
+      '" data-cfkey="' + key + '" data-cfval="">全部</button>'];
+    list.forEach(v => {
+      chips.push('<button class="cfchip' + (cur === v ? " on" : "") +
+        '" data-cfkey="' + key + '" data-cfval="' + esc(v) + '">' +
+        esc(v) + '</button>');
+    });
+    return '<div class="cfbar"><span class="lbl">' + lbl + '</span>' +
+      chips.join("") + '</div>';
+  };
+
+  if (CF.tab === "plots") {
+    rows.push(chipRow("剧情类型", "type",
+                      ((CF.meta || {}).plot_types) || [], f.type));
+    rows.push(chipRow("使用场景", "hint",
+                      ((CF.meta || {}).usage_hints) || [], f.hint));
+  } else {
+    rows.push(chipRow("副标签", "tag", CF.tags || [], f.tag));
+  }
+
+  box.innerHTML = rows.join("");
+  box.querySelectorAll("[data-cfcat]").forEach(b => {
+    b.onclick = () => chFloatPick("cat", b.dataset.cfcat);
+  });
+  box.querySelectorAll("[data-cfkey]").forEach(b => {
+    b.onclick = () => chFloatPick(b.dataset.cfkey, b.dataset.cfval);
+  });
+}
+
+/* 点一下就筛。
+   【不做"再点一下取消"】取消统一走每一排最左边那个「全部」，
+   跟素材分类库正页一个规矩。两套交互混在一起，她会点出一个
+   自己没想要的状态，还不知道怎么回去。 */
+function chFloatPick(key, val) {
+  const f = cfF();
+  if (String(f[key]) === String(val)) return;
+  f[key] = val;
+  CF.detail = null;
+  chFloatLoad(true);
+}
+
+/* ---- 拉数据（服务端筛） ---- */
+async function chFloatLoad() {
   const body = document.getElementById("chFloatBody");
   if (!body) return;
   await chFloatMeta();
-  if (!force && CF.cache[CF.tab]) {
-    CF.rows = CF.cache[CF.tab];
-    chFloatRender();
-    return;
-  }
+  const tab = CF.tab;              // 【抓一份】await 之后 CF.tab 可能已经变了
+  const f = CF.f[tab];
+  const my = ++CF.seq;
   body.innerHTML = '<div class="cpblank">正在读…</div>';
-  try {
-    if (CF.tab === "plots") {
-      const d = await api("/api/plots?limit=" + CF_LIMIT + "&order=category");
-      CF.rows = d.plots || [];
-    } else {
-      const d = await api("/api/cards?limit=" + CF_LIMIT +
-                          "&order=category&include_excluded=true");
-      CF.rows = d.items || [];
-    }
-    CF.cache[CF.tab] = CF.rows;
-  } catch (e) {
-    CF.rows = [];
-    body.innerHTML = '<div class="cpblank"><b>读不到</b>' + esc(e.message) + "</div>";
-    const n = document.getElementById("chFloatNote");
-    if (n) n.textContent = "";
-    const c0 = document.getElementById("chFloatCount");
-    if (c0) c0.textContent = "";
+
+  const q = new URLSearchParams();
+  q.set("limit", CF_LIMIT);
+  q.set("order", "category");
+  if (f.cat !== "") q.set("category_id", f.cat);
+  if (f.kw) q.set("keyword", f.kw);
+  let url;
+  if (tab === "plots") {
+    if (f.type) q.set("plot_type", f.type);
+    if (f.hint) q.set("usage_hint", f.hint);
+    url = "/api/plots?" + q.toString();
+  } else {
+    if (f.tag) q.set("sub_tag", f.tag);
+    // 已排除的卡片也算"库里的东西" —— 她在这里是找素材，不是审账。
+    // 列表上会把状态标出来，免得她挑了一条其实已经被排除的。
+    q.set("include_excluded", "true");
+    url = "/api/cards?" + q.toString();
+  }
+
+  let d = null;
+  try { d = await api(url); }
+  catch (e) {
+    if (my !== CF.seq) return;
+    CF.rows = []; CF.counts = {}; CF.total = 0;
+    body.innerHTML = '<div class="cpblank"><b>读不到</b>' +
+      esc(e.message) + "</div>";
+    chFloatBars(); chFloatFoot();
     return;
   }
+  // 她手快，连着点了两下不同条件 —— 慢的那次回来时不许盖掉新结果。
+  if (my !== CF.seq || tab !== CF.tab) return;
+  if (tab === "plots") {
+    CF.rows = d.plots || [];
+    CF.counts = d.counts || {};
+    CF.total = (typeof d.total === "number") ? d.total : CF.rows.length;
+  } else {
+    CF.rows = d.items || [];
+    CF.counts = d.cat_counts || {};
+    CF.total = (typeof d.total === "number") ? d.total : CF.rows.length;
+  }
+  CF.detail = null;
+  chFloatBars();
   chFloatRender();
+}
+
+function chFloatFoot() {
+  const note = document.getElementById("chFloatNote");
+  const cnt = document.getElementById("chFloatCount");
+  if (note) {
+    if (!CF.total) {
+      note.textContent = "";
+    } else if (CF.total > CF.rows.length) {
+      /* 【截断必须说出来】不写的话她会以为"库里的素材就这么多"，
+         剩下的永远找不到 —— 而且不会报错。 */
+      note.textContent = "符合条件的共 " + fmtNum(CF.total) +
+        " 条，窗口里只装了前 " + fmtNum(CF.rows.length) +
+        " 条 —— 用上面的主类或标签再收窄一点，就能看到剩下的。" +
+        "列表里只显示开头，点一条看全文。";
+    } else {
+      note.textContent = "符合条件的 " + fmtNum(CF.total) +
+        " 条都在这里了。点一条看全文（列表里只显示开头）。";
+    }
+  }
+  if (cnt) cnt.textContent = CF.total ? fmtNum(CF.total) + " 条" : "";
 }
 
 function chFloatRender() {
   const body = document.getElementById("chFloatBody");
-  const note = document.getElementById("chFloatNote");
-  const cnt = document.getElementById("chFloatCount");
   if (!body) return;
   if (CF.detail) { chFloatDetail(); return; }
+  chFloatFoot();
+  const tab = CF.tab;
+  const f = CF.f[tab];
 
-  const kw = CF.kw.trim().toLowerCase();
-  let rows = CF.rows;
-  if (kw) {
-    rows = rows.filter(x => (CF.tab === "plots"
-      ? [x.title, x.summary, x.plot_type, (x.usage_hints || []).join(" ")]
-      : [x.text, x.title, x.summary]
-    ).join(" ").toLowerCase().indexOf(kw) >= 0);
-  }
-
-  if (note) {
-    // 【截断要说出来】拉的是前 N 条，搜索也只在这些里面找 ——
-    // 不说的话她会以为"搜不到 = 没有"。
-    note.textContent = "载入 " + fmtNum(CF.rows.length) + " 条" +
-      (CF.rows.length >= CF_LIMIT ? "（一次最多拉 " + CF_LIMIT + " 条，不是全部）" : "") +
-      "，搜索只在这些里面找。" +
-      (rows.length ? " 点一条看全文（列表里只显示开头）。" : "");
-  }
-  if (cnt) cnt.textContent = rows.length ? fmtNum(rows.length) + " 条" : "";
-
-  if (!rows.length) {
-    body.innerHTML = '<div class="cpblank"><b>' +
-      (CF.rows.length ? "没有匹配的" : (CF.tab === "plots"
-        ? "剧情内化库还是空的" : "素材分类库还是空的")) + "</b>" +
-      (CF.rows.length ? "换个词试试。"
-        : (CF.tab === "plots"
+  if (!CF.rows.length) {
+    const filtered = !!(f.cat !== "" || f.kw || f.type || f.hint || f.tag);
+    body.innerHTML = filtered
+      ? '<div class="cpblank"><b>这个条件下一条都没有</b>' +
+        "点每一排最左边那个「全部」把条件放开，或者换个词再搜。</div>"
+      : '<div class="cpblank"><b>' +
+        (tab === "plots" ? "剧情内化库还是空的" : "素材分类库还是空的") + "</b>" +
+        (tab === "plots"
           ? "先去「剧情内化」把卡片提炼成零件，这里才有东西看。"
-          : "先去「素材分类」切一份文稿，这里才有东西看。")) + "</div>";
+          : "先去「素材分类」切一份文稿，这里才有东西看。") + "</div>";
     return;
   }
 
-  body.innerHTML = rows.map(x => {
-    const key = CF.tab + ":" + x.id;
-    if (CF.tab === "plots") {
+  body.innerHTML = CF.rows.map(x => {
+    const key = tab + ":" + x.id;
+    if (tab === "plots") {
       const m = [chFloatCatName(x.primary_category_id), x.plot_type,
+                 (x.usage_hints || []).slice(0, 2).join("、"),
                  x.source_count ? x.source_count + " 条来源" : "还没挂来源",
                  (x.status && x.status !== "已确认") ? x.status : ""]
         .filter(Boolean).join(" · ");
@@ -13894,11 +14318,13 @@ function chFloatRender() {
     }
     const txt = (x.text || "").replace(/\s+/g, " ").trim();
     const m = [chFloatCatName(x.primary_category_id),
+               (x.sub_tags || []).slice(0, 3).join("、"),
+               x.material_title,
                (x.status && x.status !== "正常") ? x.status : ""]
       .filter(Boolean).join(" · ");
     return '<button class="cfrow" data-cfrow="' + key + '">' +
-      '<span class="t">' + esc(txt.slice(0, 72)) +
-        (txt.length > 72 ? "…" : "") + "</span>" +
+      '<span class="t">' + esc(txt.slice(0, 110)) +
+        (txt.length > 110 ? "…" : "") + "</span>" +
       '<span class="m">' + esc(m) + "</span></button>";
   }).join("");
   body.querySelectorAll("[data-cfrow]").forEach(b => {
@@ -13922,7 +14348,7 @@ function chFloatDetail() {
   const cnt = document.getElementById("chFloatCount");
   if (!body || !CF.detail) return;
   const it = CF.detail.item;
-  if (note) note.textContent = "看好了就点左上角返回。这里只是给你看，不会往正文里插东西。";
+  if (note) note.textContent = "这里只是给你看（看完点左上角回列表）。";
   if (cnt) cnt.textContent = "";
 
   const back = '<button class="chpickbtn" id="chFloatBack">← 回到列表</button>';
@@ -13930,7 +14356,7 @@ function chFloatDetail() {
   if (CF.detail.tab === "plots") {
     head = '<div class="dt">' + esc(it.title || "（没标题）") + "</div>" +
       '<div class="dm">' + esc([chFloatCatName(it.primary_category_id),
-        it.plot_type, it.status,
+        it.plot_type, it.status, (it.usage_hints || []).join("、"),
         it.source_count ? it.source_count + " 条来源" : "还没挂来源"]
         .filter(Boolean).join(" · ")) + "</div>";
     blocks = [];
@@ -13941,36 +14367,264 @@ function chFloatDetail() {
     const beats = it.beats || {};
     const beatRows = (((CF.meta || {}).beats) || [])
       .filter(b => (beats[b.key] || "").trim())
-      .map(b => '<div class="dm" style="margin:8px 0 3px">' + esc(b.label) + "</div>" +
-        '<div class="dc">' + esc(beats[b.key]) + "</div>").join("");
+      .map(b => '<div class="dm" style="margin:8px 0 3px">' +
+        esc(b.label) + "</div>" + '<div class="dc">' + esc(beats[b.key]) +
+        "</div>").join("");
     if (beatRows) blocks.push(beatRows);
-    const uh = (it.usage_hints || []).filter(Boolean);
-    if (uh.length) {
-      blocks.push('<div class="dm" style="margin:8px 0 3px">适合放在</div>' +
-        '<div class="dc">' + esc(uh.join("、")) + "</div>");
-    }
     if (!blocks.length) {
       blocks.push('<div class="cpblank">这一条只填了标题，还没写摘要和节拍。</div>');
     }
   } else {
     const txt = (it.text || "").trim();
-    head = '<div class="dt">' + esc((it.title || "（没有标题的素材）")) + "</div>" +
-      '<div class="dm">' + esc([chFloatCatName(it.primary_category_id), it.status]
+    head = '<div class="dt">' +
+      esc(it.material_title || "（没有标题的素材）") + "</div>" +
+      '<div class="dm">' + esc([chFloatCatName(it.primary_category_id),
+        (it.sub_tags || []).join("、"), it.status]
         .filter(Boolean).join(" · ")) + "</div>";
     blocks = ['<div class="dc">' +
       esc(txt || "（这一条没有可显示的正文）") + "</div>"];
   }
-  body.innerHTML = '<div class="cfdetail">' + back + head + blocks.join("") + "</div>";
+  body.innerHTML = '<div class="cfdetail">' + back + head +
+    blocks.join("") + "</div>";
   const b = document.getElementById("chFloatBack");
   if (b) b.onclick = () => { CF.detail = null; chFloatRender(); };
 }
 
 function chFloatSearch(v) {
-  CF.kw = v || "";
+  const f = cfF();
+  f.kw = v || "";
   if (CF.detail) CF.detail = null;
   if (CF.timer) clearTimeout(CF.timer);
-  // 本地过滤，但还是要防抖一下：一次敲键重画几百行会卡。
-  CF.timer = setTimeout(() => { CF.timer = 0; chFloatRender(); }, 140);
+  // 筛选在服务端做，敲一次键就是一次请求 —— 必须防抖。
+  // 300 毫秒差不多是"手打字的自然停顿"，再短就变成每敲一个字查一次库。
+  CF.timer = setTimeout(() => { CF.timer = 0; chFloatLoad(true); }, 300);
+}
+
+/* ============================================================
+   备忘录
+   ============================================================ */
+
+function chMemoEl() { return document.getElementById("chMemoText"); }
+
+function chMemoStatus(text, cls) {
+  const el = document.getElementById("chMemoState");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "fst" + (cls ? " " + cls : "");
+}
+
+/* 条目条 / 删除按钮的状态。
+   【只有一条时不显示条目列表】她要的入口是"一栏空白的备忘录区域"。
+   只有一条的时候把它藏起来 —— 跟没有这个功能长得一模一样。
+   第二条一出现，它自己出来。 */
+function chMemoPaint() {
+  const box = document.getElementById("chMemoList");
+  const del = document.getElementById("chMemoDel");
+  const show = CF.memos.length > 1;
+  if (box) {
+    /* 【内容每次都重画，只是用 hidden 控制显不显示】
+       原来写的是"只有要显示时才画" —— 于是收起之后 DOM 里留着一份
+       过期的条目（已经删掉的那条还在按钮列表里）。
+       虽然它是隐藏的、她点不到，但"藏着一份错的"这种事迟早会咬人：
+       哪天那个盒子因为别的原因露出来一下，她看到的就是已经不存在的条目。 */
+    box.innerHTML = CF.memos.map(m =>
+      '<button class="cfmnote' + (m.id === CF.memoId ? " on" : "") +
+        '" data-cfmnote="' + m.id + '" title="' +
+        esc((m.display_title || "") + " · " + fmtNum(m.chars) + " 字") + '">' +
+        esc(m.display_title || "") + "</button>").join("") +
+      (show ? '<span class="cfmhint">共 ' + fmtNum(CF.memos.length) + " 条</span>"
+            : "");
+    box.hidden = !show;
+    box.querySelectorAll("[data-cfmnote]").forEach(b => {
+      b.onclick = () => chMemoOpen(Number(b.dataset.cfmnote));
+    });
+  }
+  if (del) {
+    // 还没建过（一个字都没打过）时没有"当前这条"，删不了
+    del.disabled = !CF.memoId;
+    del.style.opacity = CF.memoId ? 1 : .45;
+  }
+}
+
+function chMemoFoot() {
+  const el = document.getElementById("chMemoFoot");
+  if (!el) return;
+  const t = chMemoEl();
+  const n = t ? t.value.length : 0;
+  const cur = CF.memos.find(m => m.id === CF.memoId);
+  const bits = [fmtNum(n) + " 字"];
+  if (CF.memoId && cur && cur.updated_at) bits.push("存于 " + cur.updated_at);
+  bits.push(CF.memoDirty ? "有改动还没落盘" : "停手一秒自动存");
+  el.textContent = bits.join(" · ");
+}
+
+async function chMemoInit() {
+  CF.memoId = 0;
+  CF.memos = [];
+  CF.memoDirty = false;
+  const t = chMemoEl();
+  if (t) t.value = "";
+  let d = null;
+  try { d = await api("/api/memos"); }
+  catch (e) {
+    chMemoStatus("读不到：" + e.message, "err");
+    chMemoPaint(); chMemoFoot();
+    return;
+  }
+  CF.memos = d.memos || [];
+  if (!CF.memos.length) {
+    /* 【为什么这里不顺手建一条空的】她可能只是点开浮窗看一眼、
+       一个字都不写。那样库里会开始攒"空白备忘录"，列表越来越脏。
+       所以先只给一个**本地**的空白编辑区：她一开始打字才真的建。 */
+    chMemoStatus("", "");
+    chMemoPaint(); chMemoFoot();
+    return;
+  }
+  // 已经有条目了：打开**最后动过的那条**（清单按 id 倒序）。
+  await chMemoOpen(CF.memos[0].id, true);
+}
+
+async function chMemoOpen(id, force) {
+  if (!id) return;
+  if (CF.memoId === id && !force) return;
+  // 切条目前先把上一条存掉 —— 存不下就不切，否则她的改动会没
+  const ok = await chMemoSave(true);
+  if (!ok) return;
+  let d = null;
+  try { d = await api("/api/memos/" + id); }
+  catch (e) { chMemoStatus("读不到：" + e.message, "err"); return; }
+  CF.memoId = id;
+  CF.memoDirty = false;
+  const t = chMemoEl();
+  if (t) t.value = (d.memo || {}).content || "";
+  const i = CF.memos.findIndex(m => m.id === id);
+  if (i >= 0 && d.memo) {
+    CF.memos[i].chars = d.memo.chars;
+    CF.memos[i].updated_at = d.memo.updated_at;
+    CF.memos[i].display_title = d.memo.display_title;
+  }
+  chMemoStatus("", "");
+  chMemoPaint(); chMemoFoot();
+}
+
+function chMemoInput() {
+  const t = chMemoEl();
+  if (!t) return;
+  CF.memoDirty = true;
+  chMemoStatus("正在写…", "");
+  chMemoFoot();
+  if (CF.memoTimer) clearTimeout(CF.memoTimer);
+  CF.memoTimer = setTimeout(() => {
+    CF.memoTimer = 0;
+    chMemoSave();
+  }, CF_MEMO_DEBOUNCE);
+}
+
+/* 存一次。
+   返回 true = "存好了"或者"本来就不用存"；false = 没存进去。
+   【为什么要返回这个】切条目前、关浮窗前都靠它 ——
+   存不下的时候必须**停下不动**，不能把她改的东西丢了还装作没事。
+
+   force 的用途是"别等防抖，现在就发"（关窗、切条目时用），
+   不是"内容没变也硬发一遍"。 */
+async function chMemoSave(force) {
+  if (CF.memoTimer) { clearTimeout(CF.memoTimer); CF.memoTimer = 0; }
+  const t = chMemoEl();
+  if (!t) return true;
+  if (!CF.memoDirty) return true;
+  const val = t.value;
+  // 空白的、而且还没建过 —— 不用为它建一条空记录
+  if (!CF.memoId && !val.trim()) { CF.memoDirty = false; chMemoFoot(); return true; }
+  chMemoStatus("正在存…", "");
+  try {
+    if (!CF.memoId) {
+      const d = await api("/api/memos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: val }),
+      });
+      const m = d.memo || {};
+      CF.memoId = m.id;
+      CF.memos.unshift({ id: m.id, title: m.title || "",
+                         chars: m.chars || 0,
+                         updated_at: m.updated_at || "",
+                         display_title: m.display_title || "" });
+    } else {
+      const d = await api("/api/memos/" + CF.memoId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: val }),
+      });
+      const m = d.memo || {};
+      const i = CF.memos.findIndex(x => x.id === m.id);
+      if (i >= 0) {
+        CF.memos[i].chars = m.chars || 0;
+        CF.memos[i].updated_at = m.updated_at || "";
+        CF.memos[i].display_title = m.display_title || "";
+      }
+    }
+    CF.memoDirty = false;
+    chMemoStatus("已存好", "ok");
+    chMemoPaint(); chMemoFoot();
+    return true;
+  } catch (e) {
+    // 【失败要留在屏幕上】她会默认"自动保存"一定成功。
+    // 只弹一个两秒就消失的 toast，等于什么都没说。
+    chMemoStatus("存不进去：" + e.message, "err");
+    chMemoFoot();
+    return false;
+  }
+}
+
+async function chMemoNew() {
+  const ok = await chMemoSave(true);
+  if (!ok) return;
+  try {
+    const d = await api("/api/memos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "" }),
+    });
+    const m = d.memo || {};
+    CF.memos.unshift({ id: m.id, title: m.title || "", chars: 0,
+                       updated_at: m.updated_at || "",
+                       display_title: m.display_title || "" });
+    CF.memoId = m.id;
+    CF.memoDirty = false;
+    const t = chMemoEl();
+    if (t) { t.value = ""; t.focus(); }
+    chMemoStatus("新建了一条", "ok");
+    chMemoPaint(); chMemoFoot();
+  } catch (e) {
+    chMemoStatus("建不了：" + e.message, "err");
+  }
+}
+
+async function chMemoDel() {
+  if (!CF.memoId) return;
+  const cur = CF.memos.find(m => m.id === CF.memoId) || {};
+  const t0 = chMemoEl();
+  const n = t0 ? t0.value.length : 0;
+  // 删的是她一个字一个字粘进去的东西，而且没有回收站 ——
+  // 确认框里把"叫什么、多少字"念出来，让她能确认删的是不是那一条。
+  if (!confirm("删掉这条备忘录「" + (cur.display_title || "") + "」？\n\n" +
+               "里面有 " + fmtNum(n) + " 字。删了没有回收站，找不回来。")) {
+    return;
+  }
+  try {
+    await api("/api/memos/" + CF.memoId, { method: "DELETE" });
+  } catch (e) {
+    chMemoStatus("删不掉：" + e.message, "err");
+    return;
+  }
+  CF.memos = CF.memos.filter(m => m.id !== CF.memoId);
+  CF.memoId = 0;
+  CF.memoDirty = false;
+  if (t0) t0.value = "";
+  chMemoStatus("删掉了", "ok");
+  if (CF.memos.length) await chMemoOpen(CF.memos[0].id, true);
+  else { chMemoPaint(); chMemoFoot(); }
+  toast("备忘录删掉了。");
 }
 
 function chRenderRefs() {
@@ -14670,7 +15324,13 @@ document.addEventListener("scroll", chCharClosePick, true);
 window.addEventListener("resize", () => {
   chCharClosePick();
   const el = chFloatEl();
-  if (el && !el.hidden) chFloatPlace();
+  if (el && !el.hidden) {
+    // 窗口变了，浮窗可能超出可视区 —— 尺寸重新夹一次，位置也夹回来。
+    // （夹尺寸必须排在算位置前面：位置要靠尺寸才能算对不对。）
+    chFloatSize();
+    chFloatPlace();
+    chFloatApplyMemo();     // 浏览器窗口变窄时，备忘录栏该收也得收
+  }
 });
 
 /* 正文创作：素材浮窗 */
@@ -14679,6 +15339,17 @@ chBind("chFloatClose", "onclick", chFloatHide);
 chBind("chFloatTabPlot", "onclick", () => chFloatTab("plots"));
 chBind("chFloatTabCard", "onclick", () => chFloatTab("cards"));
 chBind("chFloatQ", "oninput", () => chFloatSearch(document.getElementById("chFloatQ").value));
+chBind("chFloatMemoBtn", "onclick", () => {
+  CF.memoOn = !CF.memoOn;
+  try { localStorage.setItem(CF_MEMO_KEY, CF.memoOn ? "1" : "0"); } catch (e) { /* 记不住就回默认 */ }
+  chFloatApplyMemo();
+});
+chBind("chMemoNew", "onclick", chMemoNew);
+chBind("chMemoDel", "onclick", chMemoDel);
+chBind("chMemoText", "oninput", chMemoInput);
+/* 备忘录栏收没收，跨会话记住 —— 她收起它是因为"这一章我不想看备忘录"，
+   这个选择是有意义的；每次打开都弹回来会很难受。 */
+try { CF.memoOn = localStorage.getItem(CF_MEMO_KEY) !== "0"; } catch (e) { /* 默认展开 */ }
 chFloatBindDrag();
 
 (function paintChapterIcons() {

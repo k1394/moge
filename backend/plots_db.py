@@ -599,7 +599,8 @@ def get_plot(owner, plot_id):
 
 
 def list_plots(owner, category_id=None, status=None, plot_type=None,
-               keyword=None, order="category", limit=300, offset=0):
+               keyword=None, order="category", limit=300, offset=0,
+               usage_hint=None):
     """零件列表。
 
     【order='category' 是默认】按主分类分段看 —— 这是她要的组织方式
@@ -611,28 +612,40 @@ def list_plots(owner, category_id=None, status=None, plot_type=None,
     列表上要显示"这条现在是第几版"。前端光有 current_version_id 是不够的：
     那只是个自增主键，显示成 v12 会让人以为她改过 12 次。
     """
-    sql = ["SELECT p.*, c.name AS category_name, c.sort AS category_sort, "
-           "v.version_no AS current_version_no "
-           "FROM plots p "
-           "LEFT JOIN categories c ON c.id = p.primary_category_id "
-           "LEFT JOIN plot_versions v ON v.id = p.current_version_id "
-           "WHERE p.owner_id=?"]
-    args = [owner]
+    # 条件单独攒一份，跟"怎么取行"分开 —— 这样同一套条件可以
+    # 既用来取行、又用来数总数。混在一个 list 里靠字符串裁剪去数，
+    # 明天谁往里加一句 JOIN 就会静默算错。
+    where, wargs = ["p.owner_id=?"], [owner]
     if category_id == "0":
-        sql.append("AND p.primary_category_id IS NULL")
+        where.append("p.primary_category_id IS NULL")
     elif category_id is not None:
-        sql.append("AND p.primary_category_id=?")
-        args.append(int(category_id))
+        where.append("p.primary_category_id=?")
+        wargs.append(int(category_id))
     if status:
-        sql.append("AND p.status=?")
-        args.append(status)
+        where.append("p.status=?")
+        wargs.append(status)
     if plot_type:
-        sql.append("AND p.plot_type=?")
-        args.append(plot_type)
+        where.append("p.plot_type=?")
+        wargs.append(plot_type)
+    if usage_hint:
+        # 按「使用场景」精确挑一条标签。
+        #
+        # 【为什么要连引号一起匹配】usage_hint_json 存的是
+        # ["关系升温", "真相揭露"] 这样的 JSON 文本，直接 LIKE '%升温%'
+        # 会把"关系升温"和"关系升温后"这类不同标签混在一起；
+        # 带上两边的引号就等价于"数组里必须有这一项"。
+        # （标签名里出现英文引号是不可能的 —— 她建标签走的是同一套校验。）
+        where.append("p.usage_hint_json LIKE ?")
+        wargs.append('%"' + usage_hint.strip() + '"%')
     if keyword:
-        sql.append("AND (p.title LIKE ? OR p.summary LIKE ?)")
+        # 【为什么连"使用场景"一起搜】浮窗里能按标签点，但她也可能直接
+        # 在搜索框里敲"关系升温"四个字 —— 那正好是一个使用场景标签。
+        # 搜不到的话她会以为库里没有这类零件，而其实只是我们没去那列找。
+        where.append("(p.title LIKE ? OR p.summary LIKE ?"
+                     " OR p.plot_type LIKE ? OR p.usage_hint_json LIKE ?)")
         kw = "%" + keyword.strip() + "%"
-        args.extend([kw, kw])
+        wargs.extend([kw, kw, kw, kw])
+    cond = " AND ".join(where)
 
     order_sql = {
         "category": ("CASE WHEN p.primary_category_id IS NULL THEN 1 ELSE 0 END,"
@@ -641,11 +654,17 @@ def list_plots(owner, category_id=None, status=None, plot_type=None,
         "created": "p.created_at DESC, p.id DESC",
         "title": "p.title",
     }.get(order, "p.id DESC")
-    sql.append("ORDER BY " + order_sql + " LIMIT ? OFFSET ?")
-    args.extend([int(limit), int(offset)])
 
     with db.connect() as conn:
-        rows = conn.execute(" ".join(sql), args).fetchall()
+        rows = conn.execute(
+            "SELECT p.*, c.name AS category_name, c.sort AS category_sort, "
+            "v.version_no AS current_version_no "
+            "FROM plots p "
+            "LEFT JOIN categories c ON c.id = p.primary_category_id "
+            "LEFT JOIN plot_versions v ON v.id = p.current_version_id "
+            "WHERE " + cond +
+            " ORDER BY " + order_sql + " LIMIT ? OFFSET ?",
+            wargs + [int(limit), int(offset)]).fetchall()
         out = []
         for r in rows:
             d = _row_to_plot(r)
@@ -654,15 +673,28 @@ def list_plots(owner, category_id=None, status=None, plot_type=None,
                 "SELECT COUNT(*) AS n FROM plot_cards WHERE plot_id=?",
                 (d["id"],)).fetchone()["n"]
             out.append(d)
-        counts = _category_counts(conn, owner, status, plot_type)
-    return {"plots": out, "counts": counts}
+        counts = _category_counts(conn, owner, status, plot_type, usage_hint)
+        # 符合条件的**总数**（不受 limit / offset 影响）。
+        #
+        # 【为什么必须算出来发下去】素材浮窗按条件从服务端筛，
+        # 但一次只装得下 limit 条。界面上要说清"符合条件的共 N 条、
+        # 窗口里装了前 M 条" —— 不数这个数，她看到 500 条就会以为
+        # 库里只有 500 条，剩下的永远找不到（而且不报错）。
+        total = conn.execute("SELECT COUNT(*) AS n FROM plots p WHERE " + cond,
+                             wargs).fetchone()["n"]
+    return {"plots": out, "counts": counts, "total": total}
 
 
-def _category_counts(conn, owner, status=None, plot_type=None):
+def _category_counts(conn, owner, status=None, plot_type=None, usage_hint=None):
     """每个主类下有多少条零件 —— 界面上段标题里那个数字。
 
     为什么要带上目前生效的筛选条件：她筛了"已确认"之后，
     段标题还写着"外貌 12 条"会很怪（点开只有 3 条）。
+
+    【为什么关键词不算进来】关键词的计数需要给同一列做四次 LIKE，
+    而且它跟"这个类下有多少条"是两个问题（她敲了字是在"找一条"，
+    不是在"看这一类攒了多少"）。所以跟素材分类库那边同一个口径：
+    只跟标签/状态/类型走，不跟关键词走。
     """
     sql = ["SELECT primary_category_id AS cid, COUNT(*) AS n FROM plots "
            "WHERE owner_id=?"]
@@ -673,6 +705,9 @@ def _category_counts(conn, owner, status=None, plot_type=None):
     if plot_type:
         sql.append("AND plot_type=?")
         args.append(plot_type)
+    if usage_hint:
+        sql.append("AND usage_hint_json LIKE ?")
+        args.append('%"' + usage_hint.strip() + '"%')
     sql.append("GROUP BY primary_category_id")
     return {(r["cid"] if r["cid"] is not None else "0"): r["n"]
             for r in conn.execute(" ".join(sql), args).fetchall()}

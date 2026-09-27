@@ -52,6 +52,7 @@ try:
     from backend import chapter_db as cdb
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import memo_db as mdb
     from backend import outline_ai as oai
     from backend import outline_db as odb
     from backend import plots_db as plots
@@ -67,6 +68,7 @@ except ImportError:                                   # pragma: no cover
     from backend import chapter_db as cdb
     from backend import classify_db as cls
     from backend import classification as auto
+    from backend import memo_db as mdb
     from backend import outline_ai as oai
     from backend import outline_db as odb
     from backend import plots_db as plots
@@ -117,6 +119,9 @@ async def lifespan(app: FastAPI):
     cdb.init_chapters()
     # 正文任务同理：不清理的话，服务重启后界面上会永远显示"正在写"。
     cai.reap_orphan_runs()
+    # 备忘录那张表。纯新增空表，没有任何顺序依赖 ——
+    # 它只认 owner_id，不读别的模块的表。
+    mdb.migrate()
     db.purge_expired_sessions()
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
@@ -2214,13 +2219,19 @@ def api_plots(user: dict = Depends(auth.current_user),
               category_id: Optional[str] = Query(None),
               status: Optional[str] = Query(None),
               plot_type: Optional[str] = Query(None),
+              usage_hint: Optional[str] = Query(None),
               keyword: Optional[str] = Query(None),
               order: str = Query("category"),
               limit: int = Query(300, ge=1, le=1000),
               offset: int = Query(0, ge=0)):
-    """零件列表。默认按主分类分段（跟素材分类库一个排法，未分类排最后）。"""
+    """零件列表。默认按主分类分段（跟素材分类库一个排法，未分类排最后）。
+
+    usage_hint 是 2026-09-27 加的：素材浮窗里要能点着「使用场景」这一排
+    标签挑零件，跟素材分类库那边点副标签是同一种用法。
+    """
     return plots.list_plots(user["owner"], category_id=category_id, status=status,
-                            plot_type=plot_type, keyword=keyword, order=order,
+                            plot_type=plot_type, usage_hint=usage_hint,
+                            keyword=keyword, order=order,
                             limit=limit, offset=offset)
 
 
@@ -3213,6 +3224,89 @@ def api_chapter_run_delete(rid: int, user: dict = Depends(auth.current_user)):
     if not cdb.delete_run(user["owner"], rid):
         raise HTTPException(status_code=404, detail="没有这次生成记录")
     return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 备忘录
+#
+# 素材浮窗右边那一栏。她在浮窗里翻素材、把要用的段落粘进来，
+# 一边码字一边对着抄。存**服务端**（不是浏览器）的理由见 memo_db.py 开头。
+#
+# 【为什么不挂在某一章下面】
+# 它是一块"攒参考"的板子，不是某一章的一部分：写到第三章攒了一半，
+# 第四章还得接着用。挂到章上，切章就换一块，那块板子就白攒了。
+# ══════════════════════════════════════════════════════════════════════
+
+class MemoIn(BaseModel):
+    """新建 / 保存一条备忘录。字段不在请求里 = 不改（PATCH 语义）。"""
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+
+@app.get("/api/memos")
+def api_list_memos(with_content: bool = False,
+                   user: dict = Depends(auth.current_user)):
+    """这个账号的备忘录清单。
+
+    默认**不带正文** —— 她会往里粘几万字，列表上只要名字和字数。
+    要正文就单查一条（GET /api/memos/{mid}）。
+
+    【命名两套别搞混】`with_content=False` 时返回的是**每条一条摘要**，
+       keys 是 id/内容长度/时间，没有 content 这个键 ——
+       前端的"当前这条"必须靠单查，**不许**从清单里取 content，
+       否则哪天有人把默认改成 True，前端就会拿到一堆没正文的条目还照画。
+    """
+    return {"memos": mdb.list_memos(user["owner"], with_content)}
+
+
+@app.post("/api/memos")
+def api_create_memo(req: MemoIn, user: dict = Depends(auth.current_user)):
+    """新建一条备忘录。标题可以留空 —— 让她打开就能粘。"""
+    try:
+        m = mdb.create_memo(user["owner"], req.title or "", req.content or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "memo": m, "message": "新备忘录建好了"}
+
+
+@app.get("/api/memos/{mid}")
+def api_get_memo(mid: int, user: dict = Depends(auth.current_user)):
+    """一条备忘录的全文。不是自己的，一律说"没有这条"。"""
+    m = mdb.get_memo(user["owner"], mid)
+    if not m:
+        raise HTTPException(status_code=404, detail="没有这条备忘录")
+    return {"memo": m}
+
+
+@app.patch("/api/memos/{mid}")
+def api_patch_memo(mid: int, req: MemoIn,
+                   user: dict = Depends(auth.current_user)):
+    """保存一条备忘录。只改传进来的字段（PATCH 语义）。
+
+    【空串 = 清空，不是"没改"】她把内容全删了就是全删了。
+    把这两件事混起来的话，她删完一刷新内容又回来了 ——
+    看起来像"保存没生效"，实际是接口把空串当成了"别动"。
+    """
+    m, err = mdb.update_memo(user["owner"], mid, _given(req))
+    if err:
+        # 校验没过 / 找不到 —— 两种都是 400（找不到严格说是 404，
+        # 但前端对这两者的处理完全一样：把这句话念给她听）。
+        raise HTTPException(status_code=400, detail=err)
+    return {"ok": True, "memo": m}
+
+
+@app.delete("/api/memos/{mid}")
+def api_delete_memo(mid: int, user: dict = Depends(auth.current_user)):
+    """删一条备忘录。**没有回收站** —— 前端会先弹确认框，
+    确认框里要念出这条叫什么、多少字。"""
+    m = mdb.get_memo(user["owner"], mid)
+    if not m:
+        raise HTTPException(status_code=404, detail="没有这条备忘录")
+    if not mdb.delete_memo(user["owner"], mid):
+        raise HTTPException(status_code=404, detail="没有这条备忘录")
+    return {"ok": True,
+            "message": "已删除「%s」（%d 字）。"
+                       % (m["display_title"], m["chars"])}
 
 
 # ----------------------------------------------------------------------
