@@ -2014,9 +2014,12 @@
   .cfbar + .cfbar { margin-top: 1px; }
   .cfbar::-webkit-scrollbar { height: 4px; }
   .cfbar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  /* 【宽度按最长的标签定，并且绝不换行】最长的是「使用场景 / 剧情类型」4 个字，
+     42px 装不下 → 会被挤成「使用场 / 景」两行，看着像坏了。
+     固定 46px 是为了让几排的标签右对齐、后面的圆片在视觉上成一列。 */
   .cfbar .lbl {
     flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
-    width: 42px; text-align: right; margin-right: 1px;
+    width: 46px; text-align: right; margin-right: 1px; white-space: nowrap;
   }
   .cfchip {
     flex: 0 0 auto; font-size: 11.5px; padding: 2px 9px; border-radius: 14px;
