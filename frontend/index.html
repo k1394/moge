@@ -694,6 +694,25 @@
     font-size: 13px; color: var(--ink-2); margin: 2px 0 8px;
   }
   .clgroups .ghead b { font-size: 14.5px; color: var(--ink); }
+  /* 说明文字吃掉剩下的宽度，两个按钮自然被挤到右边。
+     不用 margin-left:auto —— 那是靠外边距硬推，换行时就散了。 */
+  .clgroups .ghead > span { flex: 1 1 auto; }
+
+  /* 已处理完的组收成的一条。
+     为什么要收：她原话「我已经点了合并了就直接入库呀，这样我看素材
+     还要一直滑一直滑滑到底下才行」—— 处理完的组每条都带着成员原文，
+     21 条就是 21 屏，把下面的卡片流推到看不见的地方。 */
+  .clgroups .gdone {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--ink-3);
+    background: var(--bg); border: 1px dashed var(--line);
+    border-radius: 7px; padding: 8px 11px; margin: 4px 0 8px;
+    cursor: pointer; user-select: none;
+  }
+  .clgroups .gdone:hover { color: var(--ink-2); border-color: var(--ink-3); }
+  .clgroups .gdone .ar { font-size: 10px; line-height: 1; }
+  .clgroups .gtrunc { font-size: 12px; color: var(--ink-3); margin: 0 0 8px 2px; }
+  .clgroups .gfold { font-size: 12.5px; color: var(--ink-3); line-height: 1.75; }
   .grp {
     background: var(--card); border: 1px solid var(--line);
     border-left: 3px solid var(--accent);
@@ -2259,8 +2278,13 @@
           <div class="clfilters" id="clFilters"></div>
           <div class="clbatch" id="clBatch" hidden></div>
           <!-- 逻辑素材组：AI 认出「这几段合起来才算一条完整素材」，等她点头。
-               放在卡片流**上面**是因为它是一件"要她做的事" ——
-               混在几百张卡片里就等于没提。处理完自然消失（全合并/忽略后隐藏）。 -->
+               放在卡片流上面是因为它是一件"要她做的事" ——
+               混在几百张卡片里就等于没提。
+               处理完的组收进下面一条折叠行，不再占版面（她原话：
+               "我已经点了合并了就直接入库呀，这样我看素材还要一直滑
+               一直滑滑到底下才行"）。
+               注意这段注释 2026-09-28 前写的是"处理完自然消失"——
+               那是没实现的愿望，代码里从来只判断过"有没有组"。 -->
           <div class="clgroups" id="clGroups" hidden></div>
           <div id="clCards"></div>
           <div id="clMore" style="margin:14px 0 40px"></div>
@@ -4304,6 +4328,24 @@ function draftWipe(id, after) {
 }
 
 async function api(url, opt) {
+  /* 保险一道：body 传了「纯对象 / 数组」时自动序列化。
+     为什么非加不可：fetch 拿到普通对象会自己做 String()，实际发出去的
+     是字符串 "[object Object]"，还没有 Content-Type。后端收到的是一个
+     字符串而不是对象，报出来的是"字段校验不通过"——
+     从界面上看像后端的接口坏了，源头其实在前端这一行。
+     2026-09-28「生成摘要」就是这么炸的（body: {} 直接交给了 fetch）。
+     只认纯对象和数组：FormData / Blob / URLSearchParams / 字符串
+     都有各自的编码方式，一律不碰。 */
+  if (opt && opt.body) {
+    const proto = Object.getPrototypeOf(opt.body);
+    if (proto === Object.prototype || proto === null || Array.isArray(opt.body)) {
+      opt = Object.assign({}, opt, {
+        headers: Object.assign({ "Content-Type": "application/json" },
+                                 opt.headers || {}),
+        body: JSON.stringify(opt.body)
+      });
+    }
+  }
   const r = await fetch(url, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { data = null; }
@@ -5942,6 +5984,15 @@ const C = {
   ga: { merge: "", review: "" },
   gsum: { done: 0, empty: 0, failed: 0, total: 0 },
   gsumBusy: false,
+  /* 逻辑素材组那块的展开状态。
+     gOpen    —— 整块摊不摊开。摊开会占掉一屏半，而她一旦处理完
+                 这些组，需要的是往下看卡片，不是继续看记录。
+     gDoneOpen—— 里面"已处理"那一坨摊不摊开。
+     gPendSeen—— 上次渲染时"还在等她定"的组数。这个数一变就重新
+                 自动定一次展开状态：新组冒出来要摊开（收着等于没提），
+                 最后一组处理完要收起来（把版面还给卡片流）。
+                 数字没变时听她自己点的开关，不跟她抢。 */
+  gOpen: true, gDoneOpen: false, gPendSeen: null,
   /* 卡片状态的「键 → 中文」映射，也是后端下发的。
      用它来表达"AI 没判成功的那一批卡"（sk.failed），
      这样 JS 里就不用写死「失败」两个字 —— 后端哪天改口径，
@@ -6875,35 +6926,103 @@ function renderGroups() {
   const box = document.getElementById("clGroups");
   if (!box) return;
 
-  const pend = C.gCounts[C.gs.pending] || 0;
+  /* 数字一律走 counts（后端按 owner 全量数的），不从拉回来的数组里数 ——
+     列表是按条数拉的（一次 200），组多了会截断，拿它当总数就会少报。 */
+  const cnt = C.gCounts || {};
+  const pend = cnt[C.gs.pending] || 0;        // 还等着她点头的
+  const nMerge = cnt[C.gs.merged] || 0;
+  const nIgn = cnt[C.gs.ignored] || 0;
+  const nDone = nMerge + nIgn;
+
   fill("clStatGroups", fmtNum(pend));
 
-  if (!C.groups.length) {
+  if (!C.groups.length && !nDone) {
     box.hidden = true;
     box.innerHTML = "";
     return;
   }
   box.hidden = false;
 
+  /* 待办数变了就重新自动定一次展开状态（见 C.gPendSeen 的注释）。
+     她之前点过收起、后来一个组都没处理完就刷新 —— 那也重算：
+     收着的区块里躺着"要她做的事"，是这一页最不该发生的事。 */
+  if (C.gPendSeen !== pend) {
+    C.gPendSeen = pend;
+    C.gOpen = pend > 0;
+  }
+
   // 待确认的排最前面 —— 那是"要她做的事"，已合并/已忽略只是记录。
   const rank = [C.gs.pending, C.gs.merged, C.gs.ignored];
   const list = C.groups.slice().sort((a, b) =>
     rank.indexOf(a.status) - rank.indexOf(b.status) || a.id - b.id);
+  const waits = list.filter(g => g.status === C.gs.pending);
+  const dones = list.filter(g => g.status !== C.gs.pending);
 
-  const head = '<div class="ghead"><b>' +
-    (pend ? "有 " + fmtNum(pend) + " 组素材等着你定" : "逻辑素材组") + "</b>" +
-    "<span>AI 觉得这几段合起来才算一条完整素材。" +
-    "点「合并这一组」才会真的合成一条，随时能撤销。" +
-    summaryHint() + "</span>" +
-    summaryBtn() + "</div>";
+  box.innerHTML = groupHeadHtml(pend) +
+    (C.gOpen
+      ? waits.map(groupCardHtml).join("") + groupDoneHtml(dones, nMerge, nIgn)
+      // 收起来时也得留一句话说明里面有什么，不能只剩个标题 ——
+      // 一片空白会让她以为这些组没了、甚至以为合并白做了。
+      : groupFoldHintHtml(nDone));
 
-  box.innerHTML = head + list.map(groupCardHtml).join("");
-
+  const fb = box.querySelector("button[data-gfold]");
+  if (fb) fb.onclick = () => { C.gOpen = !C.gOpen; renderGroups(); };
+  const db = box.querySelector("[data-gdone]");
+  if (db) db.onclick = () => { C.gDoneOpen = !C.gDoneOpen; renderGroups(); };
   const sb = box.querySelector("button[data-gsum]");
   if (sb) sb.onclick = () => summarizeGroups(sb);
   box.querySelectorAll("button[data-gact]").forEach(b => {
     b.onclick = () => actGroup(Number(b.dataset.gid), b.dataset.gact, b);
   });
+}
+
+function groupHeadHtml(pend) {
+  const what = C.gOpen
+    ? "AI 觉得这几段合起来才算一条完整素材。" +
+      "点「合并这一组」才会真的合成一条，随时能撤销。"
+    : (pend
+        ? "有 " + fmtNum(pend) + " 组还等着你定，点「展开」看看。"
+        // 收起时正好把话说到她心坎上：她那天问的就是
+        // "我已经点了合并了就直接入库呀" —— 这里正面回答：是，进库了。
+        : "这些建议都处理过了 —— 合并出来的卡已经进素材库，" +
+          "忽略的不再提。");
+  return '<div class="ghead"><b>' +
+    (pend ? "有 " + fmtNum(pend) + " 组素材等着你定" : "逻辑素材组") + "</b>" +
+    "<span>" + esc(what) + summaryHint() + "</span>" +
+    '<button class="mini" data-gfold>' + (C.gOpen ? "收起" : "展开") + "</button>" +
+    summaryBtn() + "</div>";
+}
+
+/* 已处理的组（合并过的 / 说不用的）收成一条。
+   她原话：「我已经点了合并了就直接入库呀，这样我看素材还要一直滑
+   一直滑滑到底下才行」—— 这些组确实已经入库了（合并出来的那张卡
+   就躺在下面的卡片流里），但撤销合并、看摘要还得靠这条记录，
+   所以是收起来而不是删掉。 */
+function groupDoneHtml(dones, nMerge, nIgn) {
+  const n = nMerge + nIgn;
+  if (!n) return "";
+  const bar = '<div class="gdone" data-gdone>' +
+    '<span class="ar">' + (C.gDoneOpen ? "▾" : "▸") + "</span>" +
+    "已处理 " + fmtNum(n) + " 组（" + esc(C.gs.merged) + " " + fmtNum(nMerge) +
+    " · " + esc(C.gs.ignored) + " " + fmtNum(nIgn) + "）" +
+    (C.gDoneOpen ? "，点这里收起" : "，点这里摊开看") + "</div>";
+  if (!C.gDoneOpen) return bar;
+  /* 拉回来的条数少于真实条数 = 截断了。截断必须说出来：
+     一份"看起来完整"的清单比少列几条更糟 —— 她会拿它当全部。 */
+  const miss = n - dones.length;
+  const trunc = miss > 0
+    ? '<div class="gtrunc">这里只列出了拉到的一部分（' + fmtNum(dones.length) +
+      " 组），还有 " + fmtNum(miss) + " 组没在这条列表里。</div>"
+    : "";
+  return bar + '<div class="gdonebox">' + trunc +
+    dones.map(groupCardHtml).join("") + "</div>";
+}
+
+function groupFoldHintHtml(nDone) {
+  if (!nDone) return "";
+  return '<div class="gfold">已收起 ' + fmtNum(nDone) +
+    " 组已经处理完的记录。合并出来的卡早就进素材库了，这页往下就能搜到；" +
+    "想看合并的是哪几段、或要撤销合并，点上面的「展开」。</div>";
 }
 
 function groupCardHtml(g) {
@@ -6962,30 +7081,63 @@ function summaryHint() {
   const s = C.gsum || {};
   if (!s.total) return "";
   const left = Math.max(0, (s.empty || 0) + (s.failed || 0));
-  if (!left) return "（" + s.total + " 组合并的都已生成摘要）";
-  return "（" + s.total + " 组已合并，" + left + " 组还没摘要）";
+  /* 「其中」这两个字不能省：前半句说的是"组定下来了"（她做的决定），
+     后半句说的是"摘要还没写"（另一道工序）。直接拼起来会读成
+     "都处理完了、又还有两组没处理"，像是自相矛盾。 */
+  if (!left) return "（" + fmtNum(s.total) + " 组" + esc(C.gs.merged) + "，摘要都写完了）";
+  return "（" + fmtNum(s.total) + " 组" + esc(C.gs.merged) + "，其中 " +
+    fmtNum(left) + " 组还没写摘要）";
 }
 
 function summaryBtn() {
   const s = C.gsum || {};
   const left = Math.max(0, (s.empty || 0) + (s.failed || 0));
-  if (!s.total) return "";   // 没有已合并的组，就没有可摘要的对象
+  /* 两种不显示的情况：
+     ① 一个已合并的组都没有 → 摘要无从谈起；
+     ② 全都生成过了 → 点了只会被回一句"没有需要生成摘要的组"，
+        按钮摆在那儿就是让人空点（这比没有按钮更糟）。 */
+  if (!s.total || !left) return "";
   const busy = C.gsumBusy ? " disabled" : "";
   return '<button class="mini" data-gsum' + busy + ">" +
-    (C.gsumBusy ? "正在生成…" : "生成摘要") + "</button>";
+    (C.gsumBusy ? "正在生成…" : "生成摘要（" + fmtNum(left) + " 组）") + "</button>";
 }
 
 async function summarizeGroups(btn) {
   if (C.gsumBusy) return;
+  const s = C.gsum || {};
+  const left = Math.max(0, (s.empty || 0) + (s.failed || 0));
+  if (!left) return;
+
+  /* 点之前先把代价说清楚。这句不是拦她，是让她知道"点了之后
+     界面半天不动"是正常的 —— 不知道的话她会当成卡死，
+     关掉页面重来，那笔钱照扣。 */
+  if (!confirm("要给 " + left + " 个素材组各写一份摘要。\n\n" +
+      "· 每组单独调一次模型，全部跑完可能要几分钟，" +
+      "这期间别关这个页面\n" +
+      "· 已经有摘要的组会自动跳过，不会重复花钱\n" +
+      "· 摘要只是存起来给大纲生成检索细节用，不会改动你的素材原文" +
+      "\n\n现在开始？")) return;
+
   C.gsumBusy = true;
+  const t0 = Date.now();
   renderGroups();
+  /* 十几组就是十几分钟以内的等待，页面本来一动不动。
+     光写一句"正在生成…"区分不出"在跑"和"卡死"，
+     所以把已经等了多久直接写出来。 */
+  const tick = setInterval(() => {
+    const b = document.querySelector("#clGroups button[data-gsum]");
+    if (b) b.textContent = "正在生成…已等 " +
+      Math.round((Date.now() - t0) / 1000) + " 秒";
+  }, 1000);
+
   try {
-    const r = await api("/api/groups/summarize", { method: "POST", body: {} });
+    const r = await post("/api/groups/summarize", {});
     toast(r.message || "好了");
     await loadGroups();
   } catch (e) {
     toast(e.message, true);
   } finally {
+    clearInterval(tick);
     C.gsumBusy = false;
     renderGroups();
   }

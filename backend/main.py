@@ -1025,7 +1025,7 @@ def api_list_groups(user: dict = Depends(auth.current_user),
 
 
 @app.post("/api/groups/summarize")
-def api_summarize_groups(req: GroupSummarizeIn,
+def api_summarize_groups(req: Optional[GroupSummarizeIn] = None,
                          user: dict = Depends(auth.current_user)):
     """给「已合并」的逻辑素材组生成摘要（手动触发）。
 
@@ -1033,7 +1033,15 @@ def api_summarize_groups(req: GroupSummarizeIn,
     以后大纲生成检索细节时只发摘要、不发原文。
 
     为什么是手动触发不是自动：摘要要花一次模型的钱，节奏得由她控制。
+
+    body 是可选的：这个接口的默认语义本来就是"跑所有还没摘要的已合并组"，
+    不带任何参数是最正常的用法。写成必填的话，客户端只要忘了带 body，
+    就会收到 FastAPI 那句 "Input should be a valid dictionary or object to
+    extract fields from" —— 那句话读起来像这个接口要求某种复杂参数，
+    其实只是"你没发 body"。2026-09-28 前端就踩了这一个（一次误报，
+    害得她以为摘要功能是坏的）。
     """
+    req = req or GroupSummarizeIn()
     res = cls.generate_group_summaries(
         user["owner"], ids=req.ids or None, model_key=req.model_key or None)
     return res

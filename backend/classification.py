@@ -3090,12 +3090,27 @@ def cancel_run(run_id, owner):
                 "message": "已请求取消，正在跑的这一批结束就停。"}
 
 
-def retry_run(material_id, owner, classifier_name=None, model_key=None):
+def retry_run(material_id, owner, classifier_name=None, model_key=None,
+              background=True):
     """重试：只重新处理上一次失败的那些卡片；没有失败的就整份重来。
 
     为什么不干脆整个重来：
         失败往往是"某一批的返回值格式不对"。整份重来会把已经判好的
         几百条重复调用一遍 —— 接上真模型之后那就是白花钱。
+
+    background=True（默认）→ 起后台线程跑，建完就返回。接口走这条。
+    background=False        → 当场跑完再返回。测试走这条。
+
+    【为什么专门给测试留一个开关】
+    这个函数会**起线程**，而那个线程是在 llm.chat / urllib 这些
+    **全局**的东西上跑的。测试里凡是要数"一共发了几次请求"、
+    或者临时把 urlopen 换掉的地方，背后还藏着一个在发请求的线程，
+    计数和它看到的参数就都会被搅乱 ——
+    症状是断言**间歇性地红**（机器忙的时候线程还没跑完就红，
+    空闲时线程已经结束了就绿）。
+    2026-09-28 真出过一次：test_llm_classify.py 末尾那两条
+    "timeout 有没有传到底"的断言，批量跑报 180 / 4 次，单跑却是绿的。
+    排查代价远大于加这个参数。
     """
     last = latest_run(owner, material_id)
     if not last:
@@ -3172,6 +3187,17 @@ def retry_run(material_id, owner, classifier_name=None, model_key=None):
                                      "（只重跑上次失败的部分）" if only else "")))
             run_id = cur.lastrowid
 
+    if not background:
+        # 当场跑完 —— 返回时线程里的活已经结束了，外面可以放心地
+        # 去数请求次数、或者替换 urlopen 做断言。
+        _run_worker(run_id, owner, classifier_name, card_ids)
+        return {"ok": True, "run_id": run_id, "total_items": len(card_ids),
+                "retried_only_failed": bool(only),
+                "classifier": clf.name, "classifier_label": clf.label,
+                "model_key": mk, "model_version": model_version,
+                "background": False,
+                "message": "重试任务已跑完（%d 张卡片）。" % len(card_ids)}
+
     th = threading.Thread(target=_run_worker,
                           args=(run_id, owner, classifier_name, card_ids),
                           daemon=True)
@@ -3180,6 +3206,7 @@ def retry_run(material_id, owner, classifier_name=None, model_key=None):
             "retried_only_failed": bool(only),
             "classifier": clf.name, "classifier_label": clf.label,
             "model_key": mk, "model_version": model_version,
+            "background": True,
             "message": "已创建重试任务（%d 张卡片），后台正在跑。"
                        % len(card_ids)}
 
