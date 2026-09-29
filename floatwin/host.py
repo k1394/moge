@@ -26,20 +26,36 @@
      同理，独占全屏的游戏也会盖住它。
 
   2) 自由拖动 / 缩放 + 记住位置尺寸
-     拖动：先试"原生拖动"（给窗口发 WM_NCLBUTTONDOWN + HTCAPTION，
-           由系统自己拖，跟拖任何窗口的标题栏是同一条路 —— 平滑、
-           会吸附屏幕边缘、多显示器也对）。原生这条拿不到窗口句柄时，
-           退回页内那套 JS 拖（见 index.html 的 chFloatBindDrag）。
-     缩放：右下角手柄走 JS 增量 → api.resize_to()。
+     拖动 / 缩放：**由这个进程自己搬窗口**，网页只负责喊"开始"和"松手"。
+           开始时记下光标位置和窗口矩形，然后每 8ms 干三件事：
+             读光标（GetCursorPos）→ 读鼠标左键还按着没（GetAsyncKeyState）
+             → 按位移 SetWindowPos。左键一松就停，顺手把几何写盘。
+           【为什么不是"发一条标题栏按下的消息让系统自己拖"】
+           那条路（WM_NCLBUTTONDOWN + HTCAPTION）是 Electron 那类框架的
+           标准做法，但它是**跨线程**发的：WebView2 自己抓着鼠标，系统
+           那条拖动循环进不去，于是 SendMessage 正常返回、窗口纹丝不动 ——
+           而调用方以为成功了，连兜底都不走。**静默失败，最难查的一种。**
+           现在这套只看系统光标，跟窗口挪不挪、网页收不收得到 mousemove
+           都没关系，拖快了鼠标跑出窗口也不会丢。
+           全部用**物理像素**（光标和窗口矩形都是物理的），跟缩放比例无关。
      记住：一个后台线程每 0.6 秒读一次 GetWindowRect，变了就写
            data/float_win.json。**不用 pywebview 的 moved/resized 事件** ——
            它每来一个事件就新起一个线程，拖动过程中会瞬间起几百个。
+     边界：**只做"拿得回来"的软夹**（见 _px_keep_reachable / _px_clamp_size）：
+           标题栏必须留一条抓得住、右下角的把手不许跑出屏幕、尺寸有下限。
+           不做硬贴边 —— 多显示器接法千奇百怪，夹太死会变成"拖到边上就卡住"。
 
-  3) 全局快捷键 + 托盘
+  3) 全局快捷键 + 托盘 + 最小化
      快捷键：Win32 RegisterHotKey（默认 Ctrl+Alt+M，写在配置里可改）。
              注册不上（被输入法/QQ/微信占了）会有托盘气泡提示，
-             并且退回"不带防重复"的方式再试一次。
+             并且按候选表逐个往后退，抢到哪个用哪个。
      托盘  ：pystray，菜单里有 显示/隐藏、打开主页面、退出。
+     最小化：标题栏上那个「–」按钮 → ShowWindow(SW_MINIMIZE)。
+             这个窗口带任务栏按钮（WS_EX_APPWINDOW、没有 owner），
+             所以最小化之后可以从任务栏、托盘菜单、或者快捷键叫回来 ——
+             三条路都通，不会出现"最小化完就找不着了"。
+             注意它跟"收起来"（SW_HIDE）不是一回事：收起来是连任务栏
+             都不占，最小化是规规矩矩缩到任务栏。
 
   4) 切应用不丢内容、不打扰被盖住的软件
      内容不丢：隐藏走 ShowWindow(SW_HIDE) —— **窗口留着、页面不动**，
@@ -111,18 +127,25 @@ HOTKEY_FALLBACKS = ["ctrl+alt+m", "ctrl+shift+m", "ctrl+alt+f",
                     "ctrl+shift+f", "ctrl+alt+n", "alt+shift+m"]
 
 # Win32 常量
-SW_HIDE, SW_SHOWNOACTIVATE = 0, 4
-WM_NCLBUTTONDOWN = 0x00A1
-HTCAPTION, HTBOTTOMRIGHT = 2, 17
+SW_HIDE, SW_SHOWNOACTIVATE, SW_SHOW = 0, 4, 5
+SW_MINIMIZE, SW_RESTORE = 6, 9
 WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 1, 2, 4, 8, 0x4000
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0002, 0x0010, 0x0004
 HWND_TOPMOST = -1
 SPI_GETWORKAREA = 0x0030
-MONITOR_DEFAULTTONULL = 0
+MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTONEAREST = 0, 2
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
 CREATE_NO_WINDOW = 0x08000000
+VK_LBUTTON = 0x01
+
+# 拖动 / 缩放的节奏与边界
+DRAG_POLL = 0.008          # 每轮睡多久（秒）。125Hz，跟光标贴得住又不费 CPU。
+DRAG_MAX_SECONDS = 180     # 一次拖动最多持续多久（万一 GetAsyncKeyState 失灵，
+                           # 不至于永远搬下去，那会变成"鼠标不动窗口自己跑"）
+REACH_KEEP_W = 220         # （逻辑像素）标题栏至少留这么宽在屏幕里 —— 唯一的抓手
+REACH_KEEP_H = 28          # 标题栏至少留这么高（也就是"不许整个跑到屏幕上边之外"）
 # 所有出网点都带一个身份串（本地回环也带上，保持一条规矩）
 USER_AGENT = "Moge/1.0 (+local writing tool)"
 
@@ -240,28 +263,128 @@ def _default_geom():
         return (200, 80, W_DEF, H_DEF)
 
 
-def clamp_geom(x, y, w, h):
-    """把窗口夹回"能拿得回来"的范围。
+def _rect_phys(hwnd):
+    """窗口矩形，**物理像素**。拿不到返回 None。
 
-    只保证两件事：标题栏露在屏幕里（标题栏是唯一的拖动把手），
-    以及宽高不小于能用的大小。夹太狠反而难受 —— 她想放哪就放哪。
+    拖动/缩放这条链路一律用物理像素：光标（GetCursorPos）给的是物理像素，
+    SetWindowPos 收的也是物理像素 —— 两边同一把尺子，就不用管缩放是多少，
+    125% / 150% / 两块不同缩放的屏全都自动对。
     """
-    w = max(W_MIN, int(w or W_DEF))
-    h = max(H_MIN, int(h or H_DEF))
-    s = dpi_scale()
+    r = wt.RECT()
+    if not ctypes.windll.user32.GetWindowRect(wt.HWND(hwnd), ctypes.byref(r)):
+        return None
+    return r.left, r.top, r.right - r.left, r.bottom - r.top
+
+
+def _cursor_phys():
+    """光标位置（物理像素）。拿不到返回 None。"""
+    try:
+        p = wt.POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(p)):
+            return int(p.x), int(p.y)
+    except Exception:
+        pass
+    return None
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT),
+                ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+
+
+def _mon_near(x, y, work=True):
+    """离 (x, y) 最近那块屏的矩形（物理像素）。
+
+    work=True 给**工作区**（扣掉任务栏），work=False 给**整块屏**。
+    什么时候用哪个：
+      · 夹标题栏位置 → 工作区。标题栏藏到任务栏底下就等于没有把手。
+      · 夹尺寸上限 → 整块屏。**故意不用工作区**：她的窗口下半截本来就
+        可能停在任务栏那儿（拖动不管这一条），要是按工作区夹，她每拉一下
+        右下角，窗口都会"自己弹矮一截"，像坏了。
+
+    用"最近"而不是"包含"：窗口被拖到两块屏中间时，"包含"会翻脸（返回空），
+    "最近"永远有答案 —— 拖动过程中这个函数每一帧都要有答案。
+    """
     try:
         u = ctypes.windll.user32
-        vx = u.GetSystemMetrics(SM_XVIRTUALSCREEN) / s
-        vy = u.GetSystemMetrics(SM_YVIRTUALSCREEN) / s
-        vw = u.GetSystemMetrics(SM_CXVIRTUALSCREEN) / s
-        vh = u.GetSystemMetrics(SM_CYVIRTUALSCREEN) / s
+        u.MonitorFromPoint.argtypes = [wt.POINT, wt.DWORD]
+        u.MonitorFromPoint.restype = wt.HANDLE
+        h = u.MonitorFromPoint(wt.POINT(int(x), int(y)), MONITOR_DEFAULTTONEAREST)
+        if h:
+            mi = _MONITORINFO()
+            mi.cbSize = ctypes.sizeof(_MONITORINFO)
+            if u.GetMonitorInfoW(wt.HANDLE(h), ctypes.byref(mi)):
+                r = mi.rcWork if work else mi.rcMonitor
+                return r.left, r.top, r.right, r.bottom
     except Exception:
-        return int(x), int(y), w, h
-    w = min(w, max(W_MIN, vw - 40))
-    h = min(h, max(H_MIN, vh - 40))
-    x = max(vx + 4, min(int(x), vx + vw - 220))
-    y = max(vy + 4, min(int(y), vy + vh - 64))
-    return int(x), int(y), w, h
+        pass
+    return None
+
+
+def _px_keep_reachable(x, y, w, h, keep_w, keep_h):
+    """（物理像素）把左上角夹进"标题栏还抓得到"的范围里。
+
+    规则只有两条，都是保命的：
+      · 标题栏至少 keep_w 宽留在某块屏里 —— 它是**唯一**的拖动把手，
+        整条跑到屏幕外 = 这个窗口再也拖不回来了；
+      · 标题栏不许跑到屏幕上边之外 —— 上面没有东西可抓。
+
+    其余随她放：下半截、右边大半个探出屏幕都行。**不做硬贴边** ——
+    多显示器接法千奇百怪，夹太死会变成"拖到边上就卡住"的别扭感。
+    """
+    m = _mon_near(x + w // 2, y + keep_h // 2, work=True)
+    if not m:
+        return int(x), int(y)
+    ml, mt, mr, mb = m
+    lo, hi = ml - w + keep_w, mr - keep_w
+    if lo > hi:                       # 窗口比屏幕还宽：至少把左边对齐
+        lo = hi = ml
+    nx = min(max(int(x), lo), hi)
+    ny = min(max(int(y), mt), max(mt, mb - keep_h))
+    return nx, ny
+
+
+def _px_clamp_size(x, y, w, h, min_w, min_h):
+    """（物理像素）尺寸夹取：有下限，上限跟着"当前那块屏"现算。
+
+    · 下限：再小，内容就挤成一条线了。
+    · 上限：**不写死数字**，按当前屏的工作区算 —— 写死 1920 在她的屏上
+      刚好，换台 4K 就白白浪费一半；而且多屏下"当前屏"还得现判。
+      同时保证窗口右下角不越出屏幕：那个角是缩放的把手，跑出去就抓不到了。
+    """
+    w = max(int(min_w), int(w))
+    h = max(int(min_h), int(h))
+    m = _mon_near(x + w // 2, y + 8, work=False)   # 整块屏，不是工作区（见 _mon_near）
+    if not m:
+        return w, h
+    ml, mt, mr, mb = m
+    return (min(w, max(int(min_w), mr - x)),
+            min(h, max(int(min_h), mb - y)))
+
+
+def clamp_geom(x, y, w, h):
+    """把配置里的几何（**逻辑像素**）夹回"能拿得回来"的范围。
+
+    真正的规则在 _px_keep_reachable / _px_clamp_size 里，这里只做单位换算。
+    **规则只有这一处**：启动读回、拖动、缩放、JS 兜底全走它 ——
+    三处各夹一个样，就会出现"拖动时能放到这儿、重启回来却跳到那儿"。
+    """
+    s = dpi_scale()
+    try:
+        x, y = int(x), int(y)
+        w = max(W_MIN, int(w or W_DEF))
+        h = max(H_MIN, int(h or H_DEF))
+    except Exception:
+        x, y, w, h = _default_geom()
+    pw, ph = int(round(w * s)), int(round(h * s))
+    px, py = int(round(x * s)), int(round(y * s))
+    pw, ph = _px_clamp_size(px, py, pw, ph,
+                            int(round(W_MIN * s)), int(round(H_MIN * s)))
+    px, py = _px_keep_reachable(px, py, pw, ph,
+                                int(round(REACH_KEEP_W * s)),
+                                int(round(REACH_KEEP_H * s)))
+    return (int(round(px / s)), int(round(py / s)),
+            max(W_MIN, int(round(pw / s))), max(H_MIN, int(round(ph / s))))
 
 
 # ----------------------------------------------------------------------
@@ -449,6 +572,9 @@ class FloatHost:
         self._conf_lock = threading.Lock()
         self._last_saved = None
         self._stop = threading.Event()
+        # 拖动/缩放的"停手"信号。预先建好，免得线程里 getattr 兜底。
+        self._drag_stop = threading.Event()
+        self._drag_thread = None
         self.want_w, self.want_h = W_DEF, H_DEF   # 这次要建多大的窗（见 fix_size）
 
     # ---------------- 配置（位置 / 尺寸 / 快捷键 都在这一个文件里）-----
@@ -523,20 +649,29 @@ class FloatHost:
         return bool(ctypes.windll.user32.IsIconic(wt.HWND(h)))
 
     def show(self, activate=False):
+        """让它出现。默认**不抢焦点**（她可能正在别的窗口里打字）。
+
+        最小化过的那份要先"还原"，否则 SW_SHOWNOACTIVATE 在有些 Windows
+        版本上叫不回来。这里用"先 NOACTIVATE、300ms 后还没有就 RESTORE"的
+        写法：绝大多数情况不抢焦点，万一没叫回来也一定会回来 ——
+        **"叫不回来"比"抢一下焦点"严重得多**（那个窗口就找不着了）。
+        """
         h = self.hwnd()
-        if h:
-            u = ctypes.windll.user32
-            if self.is_minimized():
-                u.ShowWindow(wt.HWND(h), 9)      # SW_RESTORE
-            u.ShowWindow(wt.HWND(h),
-                         SW_SHOWNOACTIVATE if not activate else 5)  # 5 = SW_SHOW
-            # 再顶一次，免得它被别的置顶窗口压住
-            u.SetWindowPos(wt.HWND(h), wt.HWND(HWND_TOPMOST), 0, 0, 0, 0,
-                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-        else:
+        if not h:
             self.window.show()
+            return
+        u = ctypes.windll.user32
+        u.ShowWindow(wt.HWND(h),
+                     SW_SHOW if activate else SW_SHOWNOACTIVATE)
+        if self.is_minimized():
+            # 还缩在任务栏里 —— 退一步，用一定会生效的那个
+            u.ShowWindow(wt.HWND(h), SW_RESTORE)
+        # 再顶一次，免得它被别的置顶窗口压住
+        u.SetWindowPos(wt.HWND(h), wt.HWND(HWND_TOPMOST), 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
     def hide(self):
+        """收起来（SW_HIDE）：**窗口和页面都留着**，所以输入框里的字还在。"""
         h = self.hwnd()
         if h:
             ctypes.windll.user32.ShowWindow(wt.HWND(h), SW_HIDE)
@@ -587,29 +722,92 @@ class FloatHost:
         except Exception as e:
             log("存位置失败：", e)
 
-    # ---------------- 原生拖动 / 原生缩放 ----------------
-    def native_drag(self, kind="move"):
-        """给窗口发一条"标题栏被按下"的消息，让系统自己拖。
+    # ---------------- 拖动 / 缩放：自己跟着光标搬窗口 ----------------
+    def drag_begin(self, kind="move"):
+        """网页上按下了"标题栏"或者"右下角把手" —— 开始搬窗口。
 
-        这是所有无边框窗口的标准做法（Electron 的 -webkit-app-region: drag
-        底下干的就是这件事）。成功的话：平滑、会吸附屏幕边缘、多显示器也对。
-        拿不到句柄或调用失败就返回 False，页面上会退回 JS 增量拖动。
+        之后由 _drag_loop 接手：每 8ms 读一次光标和左键状态，按位移搬。
+        网页那边**不需要**再做任何事（它拿到的 screenX 会随着窗口一起动，
+        自己算位移只会越算越偏）；松手也不用急着喊，这个循环自己看得见。
+        一次只能有一个拖动在跑 —— 上一个没停就先把它的停掉。
         """
+        if not self.hwnd():
+            return False
+        self.drag_end()                       # 顺手收掉上一个（正常不会有）
+        self._drag_stop = threading.Event()
+        self._drag_thread = threading.Thread(
+            target=self._drag_loop, args=(kind,), daemon=True,
+            name="moge-drag")
+        self._drag_thread.start()
+        return True
+
+    def drag_end(self):
+        """松手（或者网页要求停）。循环那边下一轮就会自己退出。"""
+        ev = getattr(self, "_drag_stop", None)
+        if ev is not None:
+            ev.set()
+        return True
+
+    def _drag_loop(self, kind):
+        """真正搬窗口的地方。全程物理像素，不碰任何缩放换算。"""
         h = self.hwnd()
-        if not h:
-            return False
-        try:
-            u = ctypes.windll.user32
-            hit = HTBOTTOMRIGHT if kind == "bottomright" else HTCAPTION
-            u.ReleaseCapture()
-            u.SendMessageW(wt.HWND(h), WM_NCLBUTTONDOWN, wt.WPARAM(hit), 0)
-            return True
-        except Exception as e:
-            log("原生拖动失败，改用 JS 拖动：", e)
-            return False
+        u = ctypes.windll.user32
+        win0 = _rect_phys(h) if h else None
+        cur0 = _cursor_phys()
+        if not win0 or not cur0:
+            log("拖动起不来：拿不到窗口矩形或光标位置")
+            return
+        x0, y0, w0, h0 = win0
+        cx0, cy0 = cur0
+        s = dpi_scale(h)                      # 只用来把"最小尺寸"折算成物理像素
+        min_w, min_h = int(round(W_MIN * s)), int(round(H_MIN * s))
+        stop = self._drag_stop
+        t0 = time.time()
+        while not stop.is_set():
+            # 左键松开 = 拖完了。判据是系统级的按键状态，跟窗口/焦点无关。
+            if not (u.GetAsyncKeyState(VK_LBUTTON) & 0x8000):
+                break
+            if time.time() - t0 > DRAG_MAX_SECONDS:
+                log("拖动超过 %d 秒，强制收手" % DRAG_MAX_SECONDS)
+                break
+            cur = _cursor_phys()
+            if not cur:
+                break
+            dx, dy = cur[0] - cx0, cur[1] - cy0
+            try:
+                if kind == "bottomright":
+                    nw, nh = _px_clamp_size(x0, y0, w0 + dx, h0 + dy, min_w, min_h)
+                    u.SetWindowPos(wt.HWND(h), wt.HWND(0), x0, y0, nw, nh,
+                                   SWP_NOZORDER | SWP_NOACTIVATE)
+                else:
+                    nx, ny = _px_keep_reachable(
+                        x0 + dx, y0 + dy, w0, h0,
+                        int(round(REACH_KEEP_W * s)), int(round(REACH_KEEP_H * s)))
+                    u.SetWindowPos(wt.HWND(h), wt.HWND(0), nx, ny, w0, h0,
+                                   SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception as e:
+                log("搬窗口失败：", e)
+                break
+            stop.wait(DRAG_POLL)
+        self.save_geom_now()
+        # 【为什么要把"起了几毫秒、动了多少"记下来】
+        # 拖动这类交互全靠日志留证据 —— 上一版的失败长相就是"函数正常返回、
+        # 窗口纹丝不动"，而日志里什么都没有，只能靠猜。
+        # 按住不到 0.35 秒的多半只是"点了下标题栏"，那些不记，免得刷屏；
+        # 真拖过的**必留一行**，哪怕位移是 0（那就是出事的信号）。
+        end = _rect_phys(h) if h else None
+        held = time.time() - t0
+        if end is None:
+            log("拖动结束（%s）：量不到窗口了" % kind)
+        elif held >= 0.35:
+            log("拖动结束（%s，按住 %.1fs）：%.0f,%.0f %.0fx%.0f → %.0f,%.0f %.0fx%.0f"
+                % (kind, held, x0, y0, w0, h0, end[0], end[1], end[2], end[3]))
 
     def move_to(self, x, y):
-        """JS 增量拖动的落点（这条路一定通，是原生那条的兜底）。"""
+        """JS 兜底的落点（拿不到窗口句柄时才走这条，见 index.html）。
+
+        正常路径是宿主自己搬（_drag_loop），这里只保证"实在不行也能动"。
+        """
         try:
             self.window.move(int(x), int(y))
             return True
@@ -618,20 +816,31 @@ class FloatHost:
             return False
 
     def resize_to(self, w, h):
+        """JS 兜底的尺寸（同上）。夹取规则跟拖动那条**共用同一套**。"""
         try:
-            w = max(W_MIN, int(w))
-            h = max(H_MIN, int(h))
-            self.window.resize(w, h)
-            # 往右下角拉大之后可能顶出屏幕，夹回来（代价是跳一下，
-            # 比"拉完跑到屏幕外拿不回来"好得多）
             x, y = self.window.x, self.window.y
-            if x is not None and y is not None:
-                nx, ny, _, _ = clamp_geom(x, y, w, h)
-                if (nx, ny) != (int(x), int(y)):
-                    self.window.move(nx, ny)
+            if x is None or y is None:
+                return False
+            nx, ny, nw, nh = clamp_geom(x, y, w, h)
+            self.window.resize(nw, nh)
+            if (nx, ny) != (int(x), int(y)):
+                self.window.move(nx, ny)
             return True
         except Exception as e:
             log("缩放窗口失败：", e)
+            return False
+
+    def minimize_win(self):
+        """最小化到任务栏（跟"收起来"不一样，收起来是连任务栏都不占）。"""
+        h = self.hwnd()
+        if not h:
+            return False
+        try:
+            self.save_geom_now()
+            ctypes.windll.user32.ShowWindow(wt.HWND(h), SW_MINIMIZE)
+            return True
+        except Exception as e:
+            log("最小化失败：", e)
             return False
 
     # ---------------- 后端：看一眼、没有就拉起来 ----------------
@@ -1049,8 +1258,19 @@ class Bridge:
         log("页面说：", msg)
         return True
 
-    def drag_start(self, kind="move"):
-        return self._host.native_drag(kind)
+    def drag_begin(self, kind="move"):
+        """网页上按下了标题栏（kind="move"）或右下角把手（"bottomright"）。
+
+        返回 False 表示这条快路走不通（拿不到窗口句柄），网页会退回
+        自己算位移那条慢路（见 index.html 的 chFloatBindDrag）。
+        """
+        return self._host.drag_begin(kind)
+
+    def drag_end(self):
+        return self._host.drag_end()
+
+    def minimize_win(self):
+        return self._host.minimize_win()
 
     def move_to(self, x, y):
         return self._host.move_to(x, y)

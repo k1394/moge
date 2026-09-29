@@ -2073,6 +2073,11 @@
   .cfh .fx:hover { color: var(--ink); background: rgba(0, 0, 0, .05); }
   .cfh .fx.on { color: var(--accent); background: var(--accent-2); }
   #chFloatClose:hover { color: var(--danger); }
+  /* 最小化按钮只在"真的有窗口"的时候才出现。
+     页内浮层（挂在墨阁页面里的那个）和浏览器里直接看 /float，
+     都没有窗口可最小化 —— 摆一个按不动的按钮只会让人以为是坏的。 */
+  .cfh .fmin { display: none; }
+  body.floatonly.has-host .cfh .fmin { display: inline-block; }
 
   /* ---- 主体：左素材 + 右备忘录 ---- */
   .cfmain { flex: 1 1 auto; min-height: 0; display: flex; }
@@ -2987,6 +2992,7 @@
     <span class="fname">素材浮窗</span>
     <span class="fhint" id="chFloatHint">拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住</span>
     <button class="fx" id="chFloatMemoBtn" title="收起右边那一栏备忘录">▤</button>
+    <button class="fx fmin" id="chFloatMinBtn" title="最小化到任务栏">–</button>
     <button class="fx" id="chFloatClose" title="收起来">&times;</button>
   </div>
   <div class="cfmain">
@@ -14800,32 +14806,46 @@ function chFloatApplyMemo() {
       ? "窗口太窄，备忘录栏先收起来了 —— 把窗口往右拉宽，它自己会回来"
       : "拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住" + tail;
   }
+  // 最小化按钮的说明也要带上真快捷键：键是被占用了往后让过的，
+  // 写死一个名字等于教她按一个没用的键。
+  const minBtn = document.getElementById("chFloatMinBtn");
+  if (minBtn) {
+    minBtn.title = CF.hotkey
+      ? "最小化到任务栏 —— 按 " + CF.hotkey + "、或者点任务栏 / 托盘图标，都能叫回来"
+      : "最小化到任务栏 —— 点任务栏上的图标、或者托盘图标，可以叫回来";
+  }
   chMemoPaint();
 }
 
-/* ---- 拖动（标题栏）+ 缩放（右下角） ---- */
+/* ---- 拖动（标题栏）+ 缩放（右下角） ----
+ *
+ * 独立窗口（桌面浮窗）里这两件事**由宿主自己做**，网页只负责喊两声：
+ *     按下 → host.drag_begin("move" / "bottomright")
+ *     松手 → host.drag_end()
+ * 之后宿主每 8ms 读一次系统光标，按位移直接搬真窗口。
+ *
+ * 【为什么位移不算在网页这边】网页能拿到的只有 e.screenX，而窗口一被
+ * 搬动，这个坐标系就跟着动 —— 边搬边算只会越算越偏。宿主读的是绝对
+ * 光标位置，窗口挪不挪跟它没关系。
+ * 附带的好处：拖快了鼠标跑出窗口也不会丢 —— 那时候网页已经收不到
+ * mousemove 了，但宿主看的是全局光标和全局按键状态。
+ *
+ * 页内浮层（挂在墨阁页面里那个 position:fixed 的）没有真窗口，
+ * 还是老办法：直接搬 div。
+ */
 function chFloatBindDrag() {
   const head = document.getElementById("chFloatHead");
   const el = chFloatEl();
   const rz = document.getElementById("chFloatRz");
   if (!head || !el) return;
 
-  /* 拖动有两种做法，优先用系统那套：
-       · 独立窗口（有宿主）：让宿主发一条"标题栏被按下"的消息，
-         之后就是 Windows 自己在拖 —— 平滑、会吸附屏幕边缘、多屏也对。
-         这条不一定通（拿不到窗口句柄时会立刻回 false），
-         这时候再退回下面那套"页内拖动"。
-       · 页内浮层：本来就没有真窗口，只能自己搬 div。 */
+  /* 兜底用：宿主那条快路走不通时（拿不到窗口句柄），
+     改成记"按下时光标在屏幕的哪个位置、窗口在哪"，
+     之后按屏幕上挪了多少叫宿主搬窗口。
+     极少数情况才会走到，但留着 —— 总比"拖不动"强。 */
   function dragFallback(e) {
-    if (FLOAT_ONLY) {
-      // 独立窗口里没有"div 的 left/top"可改，改成记"鼠标在屏幕上挪了多少"，
-      // 再让宿主按这个位移搬真窗口。
-      CF.drag = { sx: e.screenX, sy: e.screenY,
-                  ox: window.screenX, oy: window.screenY };
-      return;
-    }
-    const r = el.getBoundingClientRect();
-    CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    CF.drag = { sx: e.screenX, sy: e.screenY,
+                ox: window.screenX, oy: window.screenY };
   }
   function rzFallback(e) {
     const r = el.getBoundingClientRect();
@@ -14833,22 +14853,23 @@ function chFloatBindDrag() {
   }
 
   head.onmousedown = e => {
-    // 标题栏右边那两个按钮长在标题栏里，别把"点按钮"当成"开始拖"
+    // 标题栏右边那几个按钮长在标题栏里，别把"点按钮"当成"开始拖"
     if (e.target && e.target.closest && e.target.closest(".fx")) return;
     e.preventDefault();                       // 必须在 await 之前，晚了就不生效
     if (FLOAT_ONLY && CF.host) {
-      CF.host.drag_start("move").then(ok => { if (!ok) dragFallback(e); });
+      CF.host.drag_begin("move").then(ok => { if (!ok) dragFallback(e); });
       return;
     }
     if (FLOAT_ONLY) return;                   // 浏览器里看 /float：整块铺满，没什么可拖
-    dragFallback(e);
+    const r = el.getBoundingClientRect();
+    CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
   };
   if (rz) {
     rz.onmousedown = e => {
       e.preventDefault();
       e.stopPropagation();
       if (FLOAT_ONLY && CF.host) {
-        CF.host.drag_start("bottomright").then(ok => { if (!ok) rzFallback(e); });
+        CF.host.drag_begin("bottomright").then(ok => { if (!ok) rzFallback(e); });
         return;
       }
       if (FLOAT_ONLY) return;
@@ -14858,7 +14879,8 @@ function chFloatBindDrag() {
   document.addEventListener("mousemove", e => {
     if (CF.drag) {
       if (FLOAT_ONLY) {
-        // 宿主原生拖动没走通时的兜底：按"屏幕上挪了多少"直接搬窗口
+        // 兜底路径（正常情况下走不到）：宿主自己搬窗口那条没接上，
+        // 只好由网页按"屏幕上挪了多少"叫它搬。
         if (CF.host) {
           CF.host.move_to(CF.drag.ox + (e.screenX - CF.drag.sx),
                           CF.drag.oy + (e.screenY - CF.drag.sy));
@@ -14877,8 +14899,8 @@ function chFloatBindDrag() {
       let w = Math.max(CF_W_MIN, CF.rz.w + (e.clientX - CF.rz.x));
       let h = Math.max(CF_H_MIN, CF.rz.h + (e.clientY - CF.rz.y));
       if (FLOAT_ONLY) {
-        /* 上限交给宿主（它按屏幕大小夹）。
-           这里**不能**用 window.innerWidth 当上限 ——
+        /* 兜底路径（正常情况下走不到）。
+           上限交给宿主 —— 这里**不能**用 window.innerWidth 当上限，
            那是"当前"窗口的宽，拿它当上限等于永远拉不大。 */
         if (CF.host) CF.host.resize_to(w, h);
         return;
@@ -14891,6 +14913,11 @@ function chFloatBindDrag() {
     }
   });
   document.addEventListener("mouseup", () => {
+    /* 独立窗口：再喊一声"松手了"。
+       宿主自己也在看左键状态 —— 而且那条判断才是真正算数的：
+       鼠标拖到窗口外面的时候，这个 mouseup 根本不会来。
+       这一句的作用是让它**立刻**收手、立刻把位置写盘，不用等下一轮。 */
+    if (FLOAT_ONLY && CF.host) { CF.host.drag_end(); }
     if (CF.drag) {
       CF.drag = null;
       if (FLOAT_ONLY) {
@@ -16178,6 +16205,13 @@ chBind("chFloatMemoBtn", "onclick", () => {
   CF.memoOn = !CF.memoOn;
   try { localStorage.setItem(CF_MEMO_KEY, CF.memoOn ? "1" : "0"); } catch (e) { /* 记不住就回默认 */ }
   chFloatApplyMemo();
+});
+/* 最小化：只在桌面浮窗（真窗口）里画得出来 —— 页内浮层没有窗口可缩，
+   CSS 那边会把按钮藏掉，这里再判一次，免得进了浏览器版的 /float 白点一下。 */
+chBind("chFloatMinBtn", "onclick", () => {
+  if (!FLOAT_ONLY || !CF.host || !CF.host.minimize_win) return;
+  chMemoSave(true);                 // 缩进去之前先把备忘录落盘，别丢字
+  CF.host.minimize_win();
 });
 chBind("chMemoNew", "onclick", chMemoNew);
 chBind("chMemoDel", "onclick", chMemoDel);
