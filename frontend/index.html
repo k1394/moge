@@ -906,6 +906,20 @@
     flex: 0 0 auto; font-size: 11.5px; color: var(--ink-3);
     font-family: ui-monospace, Menlo, Consolas, monospace;
   }
+  /* 「还没保存」的标记 —— 紧挨着「保存」按钮放，读起来就是
+     「还没保存 ［保存］」。她 2026-09-29 报的困惑就是这个：
+     在「模型设置」里把模型名改了、以为存下了，可别处显示的还是老模型
+     （那次她其实只点了「试跑」没点「保存」）。屏幕上只要存在
+     "改了却没进去"的状态，就必须有个标记说出来 ——
+     否则她唯一的判断依据就是别处显示的旧值，那看起来像 bug。
+     见 renderModels / paintModelDirty。 */
+  .mdunsaved {
+    flex: 0 0 auto; font-size: 11px; color: #8a4a2c;
+    background: #fbeade; border-radius: 20px; padding: 1px 9px;
+  }
+  .mdrow [data-act="msave"].dirty {
+    box-shadow: 0 0 0 3px rgba(140, 90, 60, .22);
+  }
   /* 删除按钮要"找得到但不抢眼"。
      它每一条都出现，而这是整套面板里最不可能点的动作 ——
      用红字铺满每一行的话，整块界面上最刺眼的东西成了"删配置"，
@@ -5261,12 +5275,12 @@ function paintClsHint(force) {
   let txt;
   if (m.llm_ready) {
     txt = '自动分类现在能用<b>大模型</b>了，已配好 <b>' + usable.length + '</b> 个：' +
-      // 真模型名也写上（例如「通义千问 Plus（阿里云百炼）（qwen3.7-plus）」）。
-      // 她 2026-09-27 问"列表里没有 qwen3.7-plus" —— 光看她自己起的中文标签
-      // 确实看不出来，而两条「中转站」的标签还是一模一样的。
-      esc(usable.map(u => (u.label || u.key) +
-        (u.model && u.model !== (u.label || u.key)
-          ? "（" + u.model + "）" : "")).join("、")) +
+      // 真模型名也写上（「qwen3.7-plus（通义千问 Plus / 阿里云百炼）」）。
+      // 她 2026-09-27 问"列表里没有 qwen3.7-plus"，
+      // 2026-09-29 又说"标上哪个模型，别只给个平台名" —— 光看她自己起的
+      // 中文标签确实看不出来，而两条「中转站」的标签还是一模一样的。
+      // 拼法收敛在 modelOptName 一处，见它的注释。
+      esc(usable.map(modelOptName).join("、")) +
       '。点「自动分类」时可以自己挑用哪个。<br>' +
       '先把一件事说清楚：<b>被分类的素材片段会发到模型服务商那边</b>，' +
       '换来的才是「读得懂句子」的判断。原文只存在你电脑上，分类不会改动它一个字；' +
@@ -8227,6 +8241,47 @@ function modelInherits(m) {
   return !!(pv && (!m.base_url || m.base_url === pv.base_url));
 }
 
+/* 模型行里接草稿的那三栏（字段名 → 输入框 id 前缀）。
+   ★ api_key 故意不在里面：草稿是明文写在浏览器里的。 */
+const MD_FIELD_ID = [["label", "mdlab_"], ["base_url", "mdaddr_"], ["model", "mdmod_"]];
+
+/* 这一行有没有"改了但还没保存"的东西。
+   【为什么非标不可】她 2026-09-29 的那句「为什么我在模型设置把模型改了，
+   还是显示3.7这个模型」—— 屏幕上出现"改了却没进去"的状态时，
+   她唯一能拿来判断的就是别处显示的旧值，而那看起来像 bug。
+   所以只要有三栏里任何一栏跟已存的不一样，就在「保存」旁边亮出标记。
+   返回是否 dirty（试跑自动保存要用这个判断，见 probeAutoSave）。 */
+function paintModelDirty(i, row) {
+  const m = S.models[i];
+  const tag = row.querySelector("[data-unsaved]");
+  const btn = row.querySelector('[data-act="msave"]');
+  if (!m || !tag) return false;
+  const val = f => {
+    const el = row.querySelector('[data-f="' + f + '"]');
+    return el ? String(el.value || "").trim() : "";
+  };
+  const addr = val("base_url");
+  const dirty =
+    val("label") !== String(m.label || m.key || "").trim() ||
+    val("model") !== String(m.model || "").trim() ||
+    /* 地址空着 = "跟着接入点走"，不是改动；只有她真敲了字才算。 */
+    (!!addr && addr !== String(m.base_url || "").trim()) ||
+    (() => {
+      const en = row.querySelector('[data-f="enabled"]');
+      return en ? !!en.checked !== !!m.enabled : false;
+    })();
+  tag.style.display = dirty ? "" : "none";
+  if (btn) btn.classList.toggle("dirty", !!dirty);
+  return dirty;
+}
+
+/* 把一行的三栏草稿清掉（保存成功之后调）。
+   不清的话，草稿会在下次重画时把她刚存进去的值又覆盖回旧的那份。 */
+function dropRowDrafts(key) {
+  const kk = pbSafe(key);
+  MD_FIELD_ID.forEach(pair => draftWipe(pair[1] + kk));
+}
+
 function renderModels() {
   const box = document.getElementById("mdBody");
   if (!S.models.length) {
@@ -8244,19 +8299,24 @@ function renderModels() {
                       : (m.has_key
                          ? "已填 " + esc(m.api_key_masked) + "，留空 = 不改"
                          : "粘贴 API Key");
+    /* 【三栏给固定 id 是为了接草稿】见下面 draftBind 那一段。
+       id 用 pbSafe(m.key) 派生 —— m.key 是内部的短名字，
+       建库时就定死了、永不随模型名改动，所以 id 稳得住。 */
+    const kk = pbSafe(m.key);
     return '<div class="mdrow" data-i="' + i + '">' +
       '<div class="mdhead">' +
-        '<input class="mdlabel" data-f="label" value="' + esc(m.label || m.key) + '">' +
+        '<input class="mdlabel" id="mdlab_' + kk + '" data-f="label" ' +
+          'value="' + esc(m.label || m.key) + '">' +
         modelChips(m) +
         (inh ? '<span class="ptag">跟着 ' + esc(pv.key) + '</span>' : '') +
         '<span class="mdkey">' + esc(m.key) + '</span>' +
       '</div>' +
       '<div class="mdnote">' + esc(m.note || "") + '</div>' +
       '<div class="mdgrid">' +
-        '<label>API 地址<input data-f="base_url" value="' + esc(addr) +
-          '" placeholder="' + esc(addrPh) + '"></label>' +
+        '<label>API 地址<input id="mdaddr_' + kk + '" data-f="base_url" ' +
+          'value="' + esc(addr) + '" placeholder="' + esc(addrPh) + '"></label>' +
         '<label>模型名<span class="mdminline">' +
-          '<input data-f="model" value="' + esc(m.model || "") +
+          '<input id="mdmod_' + kk + '" data-f="model" value="' + esc(m.model || "") +
             '" placeholder="服务商文档里写的那个">' +
           '<button class="mini" type="button" data-act="mlist">拉模型列表</button>' +
         '</span></label>' +
@@ -8267,6 +8327,7 @@ function renderModels() {
         '<label class="mdchk"><input type="checkbox" data-f="enabled"' +
           (m.enabled ? " checked" : "") + '>启用</label>' +
         '<button class="mini" data-act="mtest">测试</button>' +
+        '<span class="mdunsaved" data-unsaved style="display:none">还没保存</span>' +
         '<button class="mini primary" data-act="msave">' +
           (m._draft ? "保存这条" : "保存") + '</button>' +
       '</div>' +
@@ -8282,11 +8343,15 @@ function renderModels() {
            「试跑」是看它**怎么干活** —— 让她填自己的提示词（比如直接把
            分类要求贴进来），把模型吐的字逐字显示出来，顺带量出
            「首字等了多久 / 整段多久 / 多少字 / 有没有被掐断」。
-         这两件事的用途完全不同，合成一个按钮只会两边都不好用。 */
+         这两件事的用途完全不同，合成一个按钮只会两边都不好用。
+         【跑通了会自动把这条存下来】见 probeAutoSave —— 她 2026-09-29
+         就是因为"以为试跑等于改好了"而报了 bug，所以这里把话说在前面。 */
       '<div class="mdrow2">' +
         '<button class="mini" data-act="mprobe">试跑</button>' +
         '<span class="mdhint" data-pbs>还没试过。点它会真发一次请求，' +
-          '把模型吐的字逐字显示出来，并量出首字和总耗时。</span>' +
+          '把模型吐的字逐字显示出来，并量出首字和总耗时。' +
+          '跑通了会自动把这一行的改动（模型名、地址）存进配置；' +
+          '跑不通就什么都不动，你原来的设置留着。</span>' +
       '</div>' +
       '<div class="pbwrap" data-pb style="display:none">' +
         '<div class="pbtool">' +
@@ -8304,6 +8369,27 @@ function renderModels() {
   box.querySelectorAll(".mdrow").forEach(row => {
     const i = Number(row.dataset.i);
     const get = f => row.querySelector('[data-f="' + f + '"]');
+
+    /* 【她刚敲的字不许消失】
+       这块是模型设置页最容易出错的地方：保存任意一行、加模型、动接入点，
+       都会 renderModels() 整块重画，而重画是拿**库里的值**重建 HTML ——
+       她在别的行里刚敲进去、还没保存的字，就这么静默弹回原值。
+       2026-09-29 她报的"我改了模型怎么还是显示老的那个"，
+       机制上就是这条（外加"试跑不保存"，见 probeAutoSave）：
+       界面上看起来改好了，库里一个字没动，而屏幕上没有任何东西提示她。
+       所以三栏接上草稿（重画之后原样回来），并亮出「还没保存」。
+       ★ 密钥那一栏**不接**：草稿是明文存在浏览器 localStorage 里的，
+         密钥绝不能进那儿。它也不需要 —— 重画后占位符照旧写着
+         「已填 sk-…，留空 = 不改」。 */
+    const kk = pbSafe((S.models[i] || {}).key);
+    MD_FIELD_ID.forEach(pair => {
+      if (get(pair[0])) {
+        draftBind(pair[1] + kk, () => paintModelDirty(i, row));
+      }
+    });
+    const en = get("enabled");
+    if (en) en.onchange = () => paintModelDirty(i, row);
+    paintModelDirty(i, row);
 
     row.querySelector('[data-act="mtest"]').onclick = () => testModel(i, row);
     row.querySelector('[data-act="mlist"]').onclick = () => openRowModels(i, row);
@@ -8775,8 +8861,13 @@ async function saveModel(i, row) {
     const url = m._draft ? "/api/models/add" : "/api/models";
     const r = await post(url, body);
     S.models = r.items || S.models;
+    dropRowDrafts(m.key);      // 存进去了，草稿和「还没保存」都该退场
     renderModels();
-    toast(m._draft ? ("已添加 " + body.label) : "设置已保存");
+    /* 把"刚生效的是哪个模型"直接报出来。
+       只写一句「设置已保存」的话，她还得自己回列表里核对 ——
+       而这次的整桩事就是"她以为存好了、其实没有"。 */
+    toast(m._draft ? ("已添加 " + body.label)
+                   : ("已保存 —— " + (body.model || m.model || m.label || m.key)));
     await refreshClsMeta();
   } catch (e) {
     toast(e.message, true);
@@ -8797,6 +8888,7 @@ async function clearModelKey(i, row) {
   try {
     const r = await post("/api/models/clear-key", { key: m.key });
     S.models = r.items || S.models;
+    dropRowDrafts(m.key);
     renderModels();
     toast("密钥已清空");
     await refreshClsMeta();
@@ -8807,6 +8899,7 @@ async function deleteModel(i, row) {
   const m = S.models[i];
   if (m._draft) {                       // 没存过的草稿，直接从界面拿掉即可
     S.models.splice(i, 1);
+    dropRowDrafts(m.key);
     renderModels();
     return;
   }
@@ -8817,6 +8910,7 @@ async function deleteModel(i, row) {
   try {
     const r = await post("/api/models/delete", { key: m.key });
     S.models = r.items || S.models;
+    dropRowDrafts(m.key);
     renderModels();
     toast("已删除");
     await refreshClsMeta();
@@ -8826,7 +8920,9 @@ async function deleteModel(i, row) {
 /* 测试连通：真发一句「在吗」，顺带把用量带回来。
    比"跑完 600 张卡才发现 Key 写错了"省事得多，也省钱。
    **测的是输入框里现在的内容**，不是存过的那份 ——
-   她会先改地址再测，测通了才保存。这个顺序最自然。 */
+   她会先改地址再测，测通了才保存。这个顺序最自然。
+   【测通了也顺手存】跟「试跑」同一条规矩（见 saveRowIfDirty）：
+   她这次踩的坑就是"以为通 = 存好了"。只在她真的动过字段时才写盘。 */
 async function testModel(i, row) {
   const m = S.models[i];
   const btn = row.querySelector('[data-act="mtest"]');
@@ -8838,9 +8934,12 @@ async function testModel(i, row) {
     const r = await post("/api/models/test", body);
     const u = r.usage || {};
     const n = u.total_tokens || u.prompt_tokens;
-    toast("通了 ——" + (r.model || body.model) + " 回了一句「" +
-          (r.reply || "").trim() + "」" + (n ? ("，用掉 " + n + " 个 token") : "") +
-          "。别忘了点「保存」。");
+    const saved = await saveRowIfDirty(i, row, "通了");
+    if (!saved) {
+      toast("通了 ——" + (r.model || body.model) + " 回了一句「" +
+            (r.reply || "").trim() + "」" + (n ? ("，用掉 " + n + " 个 token") : "") +
+            "。别忘了点「保存」。");
+    }
   } catch (e) {
     toast("没通：" + e.message, true);
   } finally {
@@ -9090,6 +9189,12 @@ function probeFinish(p) {
 
   const stat = bits.join(" · ");
   p.stat = stat;
+  /* 【跑通之后那句提示：先把"存好了"说掉】
+     她 2026-09-29 报的是"我在模型设置把模型改了，还是显示3.7这个模型"——
+     查下来她那次改完只点了「试跑」、没点「保存」，因为她以为试跑就等于
+     改好了（同一屏上「测试」的提示里有"别忘了点保存"，「试跑」一个字没提）。
+     修法是让"跑通"本身把配置落定（见 probeAutoSave），
+     那就必须在这里**如实告诉她已经存进去了** —— 存了不说，等于没存。 */
   p.hint = notes.length ? notes.join(" ")
     : "跑通了 —— 这条能用。想比快慢，再去别的模型上跑一次，两个数并排看。";
   if (el.stat) el.stat.textContent = stat;
@@ -9097,8 +9202,96 @@ function probeFinish(p) {
   probeButtons(p.row, false, "再跑一次");
   // 跑过就刷新一次对比表，她不用手动点（这张表就是给"比"用的）
   loadModelStats();
+  // 跑通 = 顺手把这一行的改动存进配置（失败/手动停下时一个字都不动）
+  const ri = (p.row && p.row.dataset) ? Number(p.row.dataset.i) : -1;
+  if (ri >= 0) probeAutoSave(p, ri, p.row);
 }
 
+/* 把这一行「改了但还没保存」的东西真的存下去。存了返回 true。
+   【为什么要有这个函数】
+   她 2026-09-29 的原话：「为什么我在模型设置把模型改了，还是显示3.7这个模型」。
+   查下来：她确实在那条上换了模型名并试跑成功（调用记录里有 MiniMax-M2.1
+   和 glm-5 两次成功的试跑），可配置里一个字都没变 —— 因为试跑/测试都只发
+   请求、不写配置，而她以为跑通就等于改好了。
+   与其再多写一句提示（她这一次就是读漏了提示才撞上的），不如让"跑通"
+   这件事本身把配置落定 —— 她刚敲进输入框的，就是她想要的。
+   （这个取舍是她本人 2026-09-29 选的：「试跑通了就自动存进去」。）
+
+   【什么情况下绝对不存】调用方负责判：失败、被她手动停下、"一个字段都没动"。
+   前两种那会儿输入框里的名字多半是在试一个可能不对的东西，
+   存进去就是把她好好的配置改坏；第三种纯属白写一次盘。
+   【存什么】只发真正有值的字段（readModelRow 那套 PATCH 规矩），
+   所以"地址跟着接入点走"的那条不会被打成空串。 */
+async function saveRowIfDirty(i, row, why) {
+  const m = S.models[i];
+  if (!m || m._draft) return false;              // 草稿行走「保存这条」，不在这
+  if (!paintModelDirty(i, row)) return false;    // 一个字段都没动 → 不写盘
+  const body = readModelRow(i, row);
+  try {
+    const r = await post("/api/models", body);
+    S.models = r.items || S.models;
+    dropRowDrafts(m.key);
+    renderModels();
+    await refreshClsMeta();
+    const nm = body.model || m.model || m.label || m.key;
+    toast((why || "跑通了") + "，这条也存进配置了 —— " + nm);
+    if (S.probe && S.probe.key === m.key && !S.probe.running) {
+      // 试跑那一屏还在，顺手把结论改成"已经存好了"
+      S.probe.hint = "跑通了。刚才改的（" + nm + "）已经存进配置，"
+        + "之后跑分类、内化用的就是它。";
+      const e2 = probeEls();
+      if (e2.hint) e2.hint.textContent = S.probe.hint;
+    }
+    return true;
+  } catch (e) {
+    /* 存不下**不能**说"已保存" —— 那正是这次要修的毛病（界面说她存好了、
+       其实没有）。但试跑/测试本身是成的，两件事分开讲，别让她以为模型坏了。 */
+    toast("这次是通的，但配置没存下来：" + e.message, true);
+    return false;
+  }
+}
+
+/* 试跑跑通之后的那一步。失败、被她手动停下 —— 一个字都不改。 */
+function probeAutoSave(p, i, row) {
+  if (!p || p.err || p.stopped) return Promise.resolve(false);
+  return saveRowIfDirty(i, row, "跑通了");
+}
+
+
+/* ============================================================
+   一个模型在界面上该叫什么 —— 全站只此一处定义
+   ============================================================
+   她 2026-09-29 的原话：「我希望所有能选择模型的地方都标上是哪个模型，
+   而不是一个笼统的平台名（比如百炼）」。
+
+   三层名字里，她要认的是「这次用哪个模型」= model（真发给服务商的名字，
+   比如 qwen3.7-plus）；可只有它也不行 —— 两条中转站的 label 是
+   「中转站 / 其它 OpenAI 兼容服务」，一模一样，光看真名认不出是哪条配置。
+   所以两个都给，**真名在前，她自己起的中文名跟在括号里**：
+
+       qwen3.7-plus（通义千问 Plus / 阿里云百炼）
+       moonshot-v1-8k（Kimi / 月之暗面）
+
+   【为什么 label 里的括号要换成斜杠】她的中文名自带括号
+   （"通义千问 Plus（阿里云百炼）"），外面再套一层就成了双重括号，
+   看着像坏了。把里面的括号换成「 / 」既保住了平台信息，也读得通。
+
+   ★ 以前这个拼法在 6 个地方各写了一套，而她这次报的正是"漏掉的两处"
+   （内化下拉、大纲预览）—— 所以收敛到这里。新加任何"要选模型"的地方，
+   一律调它，别再手拼。 */
+function modelOptName(m) {
+  m = m || {};
+  const label = String(m.label || m.key || "").trim();
+  const real = String(m.model || "").trim();
+  if (!real) return label;                 // 没填模型名 → 只能给中文名
+  if (real === label) return real;         // 两个一样 → 不重复显示
+  const inner = label
+    .replace(/[（(]/g, " / ")               // 中文名里的括号 → 斜杠
+    .replace(/[）)]/g, "")
+    .replace(/\s*\/\s*\/\s*/g, " / ")
+    .trim();
+  return real + "（" + inner + "）";
+}
 
 /* 这一行是哪个模型。
    【三层名字要分清】model_key 是内部短名字（她看不到）、
@@ -9216,16 +9409,15 @@ function openClsRun(mid, act, el) {
       "<br>" + esc(e.desc) + "</span></label>").join("");
 
   const sel = document.getElementById("crModel");
-  /* 【选项里带上真模型名】她 2026-09-27 问"列表里为什么没有 qwen3.7-plus"。
-     它其实在 —— 但下拉框只显示她自己起的中文标签，真名字藏在
+  /* 【选项里带上真模型名，而且真名在前】她 2026-09-27 问"列表里为什么没有
+     qwen3.7-plus"，2026-09-29 又要求"标上是哪个模型，别只给平台名"。
+     它其实在 —— 但下拉框原先只显示她自己起的中文标签，真名字藏在
      「模型设置」页的下一行，光看这里确实找不到。更要命的是两条
      「中转站 / 其它 OpenAI 兼容服务」标签一模一样，本来也分不出谁是谁。
-     所以把真名字一并显示。**选中的值仍然是内部的 key**，没变。 */
+     **选中的值仍然是内部的 key**，没变。拼法见 modelOptName。 */
   sel.innerHTML = usable.length
     ? usable.map(u => '<option value="' + esc(u.key) + '">' +
-        esc(u.label || u.key) +
-        (u.model && u.model !== (u.label || u.key)
-          ? "（" + esc(u.model) + "）" : "") +
+        esc(modelOptName(u)) +
         '</option>').join("")
     : '<option value="">（没有可用的模型）</option>';
   // 默认选谁：重试 → 上次那个；其余 → 默认模型。
@@ -9984,6 +10176,7 @@ document.getElementById("clTagsOk").onclick = async () => {
 
 S.inf = {};          // mid → {state, run, all_card_count, done_before, ...}
 S.infMeta = null;    // /api/infuse-meta（模型清单、批次大小、提示词上限）
+S.infModelKey = "";  // 内化弹层里她上次挑的模型（重画/重开时继续选中它）
 S.infBusy = {};      // mid → true（请求飞行中，按钮先禁掉，防重复提交）
 S.infPick = null;    // 内部化弹层那个文件：{mid, preview}
 S.infWired = false;  // 弹层里的控件只接一次事件，重开不重复接
@@ -10221,10 +10414,14 @@ async function openInfuse(mid) {
   if (!S.infWired) wireInfuse();
   show("mkInfuse");
 
-  // 模型清单只在第一次开的时候拉一次就够（它是配置，不是数据）；
-  // 提示词每次开都重读 —— 上一轮跑完到现在，她可能在别的地方改过。
+  /* 【模型清单每次都要重拉】以前是"只在为空时拉一次"，理由是
+     "它是配置不是数据"。可配置恰恰是她会去改的东西 —— 她刚在
+     「模型设置」里把模型名改了、或者新加了一条，回来打开这个弹层，
+     下拉框里还是旧清单，她只会得出"我改的没生效"这个结论。
+     （她 2026-09-29 报的正是这类困惑。）本机读一份 JSON，很便宜。
+     提示词那一块照旧每次都重读。 */
   try {
-    if (!S.infMeta) S.infMeta = await api("/api/infuse-meta");
+    S.infMeta = await api("/api/infuse-meta");
     paintInfModels();
     await pfLoad("infuse");
     pfPaint("infuse", "ifP", pfOpts("ifP"));
@@ -10284,14 +10481,26 @@ function paintInfModels() {
   const m = S.infMeta || {};
   const usable = m.usable_model_keys || [];
   const models = m.models || [];
+  /* 【选项里必须带真模型名】她 2026-09-29 的原话：「我希望所有能选择模型的
+     地方都标上是哪个模型而不是一个笼统的平台名（比如百炼）」。这一处
+     原先只画了 label，六个选项里有两个「中转站 / 其它 OpenAI 兼容服务」
+     长得一模一样，等于让她盲选。拼法见 modelOptName。 */
   sel.innerHTML = models.map(x =>
     '<option value="' + esc(x.key) + '"' +
     (usable.indexOf(x.key) < 0 ? " disabled" : "") + ">" +
-    esc(x.label || x.model || x.key) +
+    esc(modelOptName(x)) +
     (usable.indexOf(x.key) < 0 ? "（没填 Key）" : "") + "</option>").join("");
-  const firstOk = models.find(x => usable.indexOf(x.key) >= 0);
-  if (firstOk) sel.value = firstOk.key;
-  sel.onchange = () => { paintInfModelNote(); infPaintNote(); };
+  /* 默认选谁：她上次在这挑的那条（还有效就继续用它），否则第一个能用的。
+     以前每次打开都硬跳回第一个 —— 她会以为"我挑的那个丢了"。 */
+  const keep = usable.indexOf(S.infModelKey) >= 0 ? S.infModelKey : "";
+  const firstOk = keep ? null : models.find(x => usable.indexOf(x.key) >= 0);
+  if (keep) sel.value = keep;
+  else if (firstOk) sel.value = firstOk.key;
+  sel.onchange = () => {
+    S.infModelKey = sel.value;
+    paintInfModelNote();
+    infPaintNote();
+  };
   paintInfModelNote();
 }
 
@@ -11581,15 +11790,22 @@ function olPaintModels() {
     olEl("olModelNote").textContent = "";
     return;
   }
-  box.innerHTML = ms.map(m =>
-    '<label' + (m.usable ? "" : ' class="dead"') + '>' +
+  /* 【真名在前，跟全站一致】见 modelOptName。她要认的是"哪个模型"，
+     中文名退到第二行的小字里。还没填真名时就把中文名顶上来。 */
+  box.innerHTML = ms.map(m => {
+    const real = String(m.model || "").trim();
+    const label = String(m.label || m.key || "").trim();
+    return '<label' + (m.usable ? "" : ' class="dead"') + '>' +
       '<input type="checkbox"' + (OL.models[m.key] ? " checked" : "")
         + (m.usable ? "" : " disabled") + '>' +
-      '<span>' + esc(m.label || m.key)
-        + (m.usable ? "" : ' <span class="chip gray">没填 Key</span>') +
-        '<br><span style="color:var(--ink-3);font-size:11.5px">'
-        + esc(m.model || "") + '</span></span>' +
-    '</label>').join("");
+      '<span>' + esc(real || label)
+        + (m.usable ? "" : ' <span class="chip gray">没填 Key</span>')
+        + (real && label && real !== label
+           ? '<br><span style="color:var(--ink-3);font-size:11.5px">'
+             + esc(label) + '</span>'
+           : '') +
+      '</span></label>';
+  }).join("");
   const cbs = box.querySelectorAll("input");
   ms.forEach((m, i) => {
     cbs[i].onchange = () => {
@@ -12010,7 +12226,10 @@ function olPaintPreview(pv) {
     }
   }
   h += '<div class="kv"><b>模型</b><span>'
-    + (pv.models || []).map(m => esc(m.label)
+    /* 真模型名要写出来（见 modelOptName）。她 2026-09-29 的要求：
+       「所有能选择模型的地方都标上是哪个模型而不是一个笼统的平台名」。
+       这一屏就是"发给谁"的交代，只写中文标签等于没交代。 */
+    + (pv.models || []).map(m => esc(modelOptName(m))
       + (m.usable ? "" : '（用不了' + (m.reason ? "：" + esc(m.reason) : "") + '）')
     ).join("、") + '</span></div>';
   h += '<div class="kv"><b>会发出去</b><span>约 ' + fmtNum(pv.send_chars)
@@ -14006,9 +14225,8 @@ function chRenderModel() {
   const usable = ((CH.meta || {}).usable_models) || [];
   const keep = sel.value;
   sel.innerHTML = usable.length
-    ? usable.map(m => '<option value="' + esc(m.key) + '">' + esc(m.label) +
-        (m.model && m.model !== m.label ? "（" + esc(m.model) + "）" : "") +
-        "</option>").join("")
+    ? usable.map(m => '<option value="' + esc(m.key) + '">' +
+        esc(modelOptName(m)) + "</option>").join("")
     : '<option value="">（模型设置里还没有能用的模型）</option>';
   if (keep && usable.some(m => m.key === keep)) sel.value = keep;
   else if (usable.length) sel.selectedIndex = 0;
