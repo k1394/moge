@@ -9,3 +9,11 @@ openpyxl         # 读 .xlsx / .xlsm
 
 # 可选：只有要生成 PDF（比如导出细纲）时才需要
 # fpdf2
+
+# 可选：只有要用「桌面版素材浮窗」（双击 启动素材浮窗.bat）时才需要。
+# 网页版本身不需要这两个 —— 它们只是给那个独立置顶窗口用的：
+#   pywebview 开窗口（底层用 Windows 自带的 WebView2 运行时，不用另下内核）
+#   pystray   放托盘图标（图标是用 Pillow 现画的，Pillow 被上面别的库带进来了）
+# 安装：.venv\Scripts\python.exe -m pip install pywebview pystray
+# pywebview
+# pystray

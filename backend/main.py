@@ -126,6 +126,24 @@ async def lifespan(app: FastAPI):
     cleanup_tmp_dir()
     print("[墨阁] 数据库就绪：", db.DB_PATH)
     print("[墨阁] 已有账号数：", db.count_users())
+    # 【这段中文提示为什么要放在后端打印，而不是写在 启动墨阁.bat 里】
+    # cmd 解析 .bat 文件用的是系统 ANSI 代码页（中文机 = GBK），而我们的 bat
+    # 存的是 UTF-8 —— 中文 echo 会被 GBK 解成乱码，某些字节组合还会把一行
+    # 拆成两条命令，于是她双击之后看到的是
+    #     'xxx' is not recognized as an internal or external command
+    # 这种红字。`chcp 65001` **救不了**这句话：它只管输出显示，不改 cmd
+    # 解析文件字节的方式（2026-09-30 实测确认，之前 启动墨阁.bat 一直在冒这个）。
+    # 所以 bat 一律保持纯 ASCII，中文交给 Python 印 —— Python 走控制台 API，
+    # 中文本来就是对的。
+    print()
+    print("=" * 44)
+    print("  墨阁 · 已经起来了")
+    print("=" * 44)
+    print("  在浏览器打开： http://localhost:8000")
+    print("  这个窗口不要关 —— 它就是墨阁的服务，关掉 = 停止服务。")
+    print("  只监听本机（127.0.0.1），同一个局域网里别的机器访问不到。")
+    print("=" * 44)
+    print()
     yield
 
 
@@ -208,6 +226,30 @@ def home():
     注意：这里不检查登录。页面本身是"空壳"，
     真正有没有登录由页面里的 JS 去问 /api/auth/me 才知道。
     这样页面可以被浏览器缓存，也不用为两种状态准备两个 HTML。
+    """
+    if os.path.isfile(INDEX_HTML):
+        return FileResponse(INDEX_HTML)
+    return HTMLResponse(
+        "<meta charset='utf-8'>"
+        "<div style='font-family:sans-serif;padding:40px'>"
+        "<h1>墨阁已启动</h1>"
+        "<p>但还没有前端页面（frontend/index.html 不存在）。</p>"
+        "</div>"
+    )
+
+
+@app.get("/float", response_class=HTMLResponse)
+def float_page():
+    """素材浮窗的「独立窗口版」：**同一份** index.html。
+
+    页面里的 JS 会自己认出这个路径（FLOAT_ONLY），把左边的功能导航和
+    右边的舞台全藏起来，只留浮窗铺满整块窗口。桌面宿主
+    （floatwin/host.py）开的就是这个地址。
+
+    为什么用同一个文件 + 一条路由，而不是新写一个 float.html：
+    浮窗那套东西（服务端筛选、搜索、备忘录、任务状态机）跟正页是
+    同一份代码。复制第二份出来，两份迟早会分叉 —— 而且症状是
+    "桌面上那个版本搜不出东西"这种不报错的静默错误，最难查。
     """
     if os.path.isfile(INDEX_HTML):
         return FileResponse(INDEX_HTML)

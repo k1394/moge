@@ -2038,6 +2038,24 @@
      收起之后它就不该再占地方。按钮变灰 = 一眼知道去哪找回来。 */
   .chfloat.nomemo .cfright { display: none; }
 
+  /* ---- 独立窗口模式（/float）----
+     桌面浮窗宿主（floatwin/host.py）把这个页面装进一个**无边框置顶窗口**里，
+     这时候"外面那层壳"归操作系统管：边框、圆角、阴影、拖动、缩放全都是
+     真窗口的事，所以这里全部让出去，让 .chfloat 铺满整个窗口。
+     一份代码两处用：浏览器里进 /float 会退化成"铺满页面的浮窗"。 */
+  body.floatonly { background: var(--card); overflow: hidden; }
+  body.floatonly .app { display: none; }
+  body.floatonly .chfloat {
+    left: 0 !important; top: 0 !important;
+    width: 100% !important; height: 100% !important;
+    max-width: none !important; max-height: none !important;
+    border: none; border-radius: 0; box-shadow: none;
+  }
+  /* 没接上宿主（直接在浏览器里看 /float）时，拖动和缩放都不成立 ——
+     光标还留着"能拖"的样子只会误导，右下角那个手柄也一并收掉。 */
+  body.floatonly:not(.has-host) .cfh { cursor: default; }
+  body.floatonly:not(.has-host) .cfrz { display: none; }
+
   .cfh {
     flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
     padding: 9px 10px 9px 12px; background: var(--line-2);
@@ -5019,8 +5037,11 @@ async function doLogout() {
 }
 
 async function boot() {
-  renderNav();
-  goView("library");
+  if (!FLOAT_ONLY) {
+    // 独立窗口里没有导航和舞台，这两句连碰都不用碰
+    renderNav();
+    goView("library");
+  }
 
   // 先问服务几件事：有人注册过吗？有没有还没归属的素材？我现在是谁？
   try {
@@ -14613,6 +14634,8 @@ const CF = {
     plots: { cat: "", type: "", hint: "", kw: "" },
     cards: { cat: "", tag: "", kw: "" },
   },
+  host: null,   // 桌面宿主桥（只有 /float 里、且由 floatwin/host.py 打开时才有）
+  hotkey: "",   // 宿主下发的快捷键名（默认 Ctrl+Alt+M），显示在标题栏那句提示里
 };
 const CF_POS_KEY = "moge_chfloat_pos";
 const CF_SIZE_KEY = "moge_chfloat_size";
@@ -14623,6 +14646,50 @@ const CF_W_MIN = 380, CF_H_MIN = 300;
    注意这**不是**"她手动收的"：窗口拉宽它自己会回来（见 chFloatApplyMemo）。 */
 const CF_W_MEMO_MIN = 620;
 const CF_LIMIT = 500;                  // 一次最多装这么多（后端硬顶 1000）
+
+/* ============================================================
+   独立窗口模式（/float）
+   ============================================================
+   桌面宿主（floatwin/host.py）开的那个置顶窗口，装的就是这个页面。
+   同一份界面、同一份筛选搜索逻辑，一个字都没重写 —— 换掉的只是
+   "外面那层壳"：页内那一层 div 变成了一个真窗口。
+
+   它跟浏览器里的浮窗差三件事：
+     1) 浮窗铺满整个窗口（外面已经没有页面骨架了，也不需要
+        "算位置、夹在可视区里"那一套 —— 那是给页内浮层准备的）；
+     2) 拖动 / 缩放交给真窗口（宿主会用系统那一套来拖，平滑、能吸边）；
+     3) 关掉它 = 把窗口藏起来（窗口留着、页面不动，所以内容一个字不丢），
+        不是像页内版那样把 div 藏掉。
+
+   【为什么不做成第二个 HTML 文件】
+   因为那样就得把 CF 这一整套（筛选、服务端搜索、备忘录、状态机）
+   复制第二份出来。两份迟早会分叉 —— 改了这边忘了那边，
+   而且症状会是"桌面上那个版本搜不出来东西"这种最难查的静默错误。
+   所以是**同一份文件**，靠 body 上的 .floatonly 和一个 /float 路由分流。
+   ------------------------------------------------------------ */
+const FLOAT_ONLY = /^\/float\/?$/.test(location.pathname);
+
+/* 宿主桥。pywebview 会在页面加载完之后往 window.pywebview 上挂 api，
+   并抛一个 pywebviewready 事件。在浏览器里打开 /float 时它永远是 null ——
+   那种情况就当"铺满页面的浮窗"用，只是不能拖不能缩。 */
+let CF_HOST_WAIT = null;
+function cfHostApi() {
+  return (window.pywebview && window.pywebview.api) || null;
+}
+function cfHostWait(ms) {
+  const a = cfHostApi();
+  if (a) return Promise.resolve(a);
+  if (CF_HOST_WAIT) return CF_HOST_WAIT;
+  CF_HOST_WAIT = new Promise(res => {
+    // 浏览器里永远等不到这个事件，所以要有个上限，不能把页面卡在这儿
+    const t = setTimeout(() => res(cfHostApi()), ms || 1500);
+    window.addEventListener("pywebviewready", () => {
+      clearTimeout(t);
+      res(cfHostApi());
+    }, { once: true });
+  });
+  return CF_HOST_WAIT;
+}
 const CF_MEMO_DEBOUNCE = 900;          // 停手多久算"写完了"
 
 function chFloatEl() { return document.getElementById("chFloat"); }
@@ -14638,8 +14705,12 @@ function chFloatOpen() {
   const el = chFloatEl();
   if (!el) return;
   el.hidden = false;
-  chFloatSize();          // 先定大小：位置要夹在可视区里，得先知道多大
-  chFloatPlace();
+  if (!FLOAT_ONLY) {
+    // 页内浮层才需要"算大小、夹进可视区"这一套。
+    // 独立窗口里这块是铺满真窗口的，位置尺寸归操作系统管。
+    chFloatSize();          // 先定大小：位置要夹在可视区里，得先知道多大
+    chFloatPlace();
+  }
   chFloatPaintTabs();
   chFloatApplyMemo();
   chFloatLoad(true);
@@ -14653,6 +14724,14 @@ function chFloatHide() {
      关浮窗是她按的，不能因为存得慢就卡住界面。
      请求发出去之后不会因为窗口隐藏而取消，会自己跑完。 */
   chMemoSave(true);
+  /* 独立窗口里，关闭 = 把**真窗口**藏起来。
+     注意是"藏"不是"关"：窗口留着、页面不动，所以
+     她输入框里打了一半的字、列表滚到哪，下次打开还在。
+     （真的关掉窗口 = 托盘菜单里的"退出"。） */
+  if (FLOAT_ONLY) {
+    if (CF.host) CF.host.hide_win();
+    return;
+  }
   el.hidden = true;
 }
 
@@ -14714,9 +14793,12 @@ function chFloatApplyMemo() {
   }
   const hint = document.getElementById("chFloatHint");
   if (hint) {
+    // 独立窗口里多告诉一句快捷键 —— 把窗口收起来最省事的办法就是它。
+    // 键名由宿主下发（CF.hotkey），前端不写死，改快捷键只需要改一个地方。
+    const tail = (FLOAT_ONLY && CF.hotkey) ? " · " + CF.hotkey + " 收起" : "";
     hint.textContent = (!wide && CF.memoOn)
       ? "窗口太窄，备忘录栏先收起来了 —— 把窗口往右拉宽，它自己会回来"
-      : "拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住";
+      : "拖标题栏移动 · 拖右下角放大缩小 · 位置和大小都会记住" + tail;
   }
   chMemoPaint();
 }
@@ -14728,23 +14810,61 @@ function chFloatBindDrag() {
   const rz = document.getElementById("chFloatRz");
   if (!head || !el) return;
 
+  /* 拖动有两种做法，优先用系统那套：
+       · 独立窗口（有宿主）：让宿主发一条"标题栏被按下"的消息，
+         之后就是 Windows 自己在拖 —— 平滑、会吸附屏幕边缘、多屏也对。
+         这条不一定通（拿不到窗口句柄时会立刻回 false），
+         这时候再退回下面那套"页内拖动"。
+       · 页内浮层：本来就没有真窗口，只能自己搬 div。 */
+  function dragFallback(e) {
+    if (FLOAT_ONLY) {
+      // 独立窗口里没有"div 的 left/top"可改，改成记"鼠标在屏幕上挪了多少"，
+      // 再让宿主按这个位移搬真窗口。
+      CF.drag = { sx: e.screenX, sy: e.screenY,
+                  ox: window.screenX, oy: window.screenY };
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+  }
+  function rzFallback(e) {
+    const r = el.getBoundingClientRect();
+    CF.rz = { w: r.width, h: r.height, x: e.clientX, y: e.clientY };
+  }
+
   head.onmousedown = e => {
     // 标题栏右边那两个按钮长在标题栏里，别把"点按钮"当成"开始拖"
     if (e.target && e.target.closest && e.target.closest(".fx")) return;
-    const r = el.getBoundingClientRect();
-    CF.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    e.preventDefault();
+    e.preventDefault();                       // 必须在 await 之前，晚了就不生效
+    if (FLOAT_ONLY && CF.host) {
+      CF.host.drag_start("move").then(ok => { if (!ok) dragFallback(e); });
+      return;
+    }
+    if (FLOAT_ONLY) return;                   // 浏览器里看 /float：整块铺满，没什么可拖
+    dragFallback(e);
   };
   if (rz) {
     rz.onmousedown = e => {
-      const r = el.getBoundingClientRect();
-      CF.rz = { w: r.width, h: r.height, x: e.clientX, y: e.clientY };
       e.preventDefault();
       e.stopPropagation();
+      if (FLOAT_ONLY && CF.host) {
+        CF.host.drag_start("bottomright").then(ok => { if (!ok) rzFallback(e); });
+        return;
+      }
+      if (FLOAT_ONLY) return;
+      rzFallback(e);
     };
   }
   document.addEventListener("mousemove", e => {
     if (CF.drag) {
+      if (FLOAT_ONLY) {
+        // 宿主原生拖动没走通时的兜底：按"屏幕上挪了多少"直接搬窗口
+        if (CF.host) {
+          CF.host.move_to(CF.drag.ox + (e.screenX - CF.drag.sx),
+                          CF.drag.oy + (e.screenY - CF.drag.sy));
+        }
+        return;
+      }
       const w = el.offsetWidth, h = el.offsetHeight;
       el.style.left = Math.max(4, Math.min(e.clientX - CF.drag.dx,
                                             window.innerWidth - w - 4)) + "px";
@@ -14753,11 +14873,18 @@ function chFloatBindDrag() {
       return;
     }
     if (CF.rz) {
-      // 下限挡住"拉成一个内容全挤成线的窗口"，上限不让它超出屏幕。
-      const w = Math.max(CF_W_MIN,
-        Math.min(CF.rz.w + (e.clientX - CF.rz.x), window.innerWidth - 16));
-      const h = Math.max(CF_H_MIN,
-        Math.min(CF.rz.h + (e.clientY - CF.rz.y), window.innerHeight - 16));
+      // 下限挡住"拉成一个内容全挤成线的窗口"。
+      let w = Math.max(CF_W_MIN, CF.rz.w + (e.clientX - CF.rz.x));
+      let h = Math.max(CF_H_MIN, CF.rz.h + (e.clientY - CF.rz.y));
+      if (FLOAT_ONLY) {
+        /* 上限交给宿主（它按屏幕大小夹）。
+           这里**不能**用 window.innerWidth 当上限 ——
+           那是"当前"窗口的宽，拿它当上限等于永远拉不大。 */
+        if (CF.host) CF.host.resize_to(w, h);
+        return;
+      }
+      w = Math.min(w, window.innerWidth - 16);
+      h = Math.min(h, window.innerHeight - 16);
       el.style.width = w + "px";
       el.style.height = h + "px";
       chFloatApplyMemo();     // 拖窄/拖宽时，备忘录栏的显隐要跟着变
@@ -14766,6 +14893,12 @@ function chFloatBindDrag() {
   document.addEventListener("mouseup", () => {
     if (CF.drag) {
       CF.drag = null;
+      if (FLOAT_ONLY) {
+        // 独立窗口的位置由宿主记（它有个每 0.6 秒看一次的后台线程）。
+        // 手动再喊一声只是让它立刻落盘，不用等下一轮。
+        if (CF.host) CF.host.save_geom();
+        return;
+      }
       const r = el.getBoundingClientRect();
       try {
         localStorage.setItem(CF_POS_KEY,
@@ -14774,6 +14907,10 @@ function chFloatBindDrag() {
     }
     if (CF.rz) {
       CF.rz = null;
+      if (FLOAT_ONLY) {
+        if (CF.host) CF.host.save_geom();
+        return;
+      }
       try {
         localStorage.setItem(CF_SIZE_KEY,
           JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight }));
@@ -16016,13 +16153,19 @@ document.addEventListener("scroll", chCharClosePick, true);
 window.addEventListener("resize", () => {
   chCharClosePick();
   const el = chFloatEl();
-  if (el && !el.hidden) {
-    // 窗口变了，浮窗可能超出可视区 —— 尺寸重新夹一次，位置也夹回来。
-    // （夹尺寸必须排在算位置前面：位置要靠尺寸才能算对不对。）
-    chFloatSize();
-    chFloatPlace();
-    chFloatApplyMemo();     // 浏览器窗口变窄时，备忘录栏该收也得收
+  if (!el || el.hidden) return;
+  if (FLOAT_ONLY) {
+    /* 独立窗口里"窗口多大"就等于那块 div 多大，没有"超出可视区"这回事，
+       也就不需要算位置。但备忘录栏该收还是得收 ——
+       把真窗口拖窄到 620px 以下，它自己让位给左边。 */
+    chFloatApplyMemo();
+    return;
   }
+  // 窗口变了，浮窗可能超出可视区 —— 尺寸重新夹一次，位置也夹回来。
+  // （夹尺寸必须排在算位置前面：位置要靠尺寸才能算对不对。）
+  chFloatSize();
+  chFloatPlace();
+  chFloatApplyMemo();     // 浏览器窗口变窄时，备忘录栏该收也得收
 });
 
 /* 正文创作：素材浮窗 */
@@ -16054,9 +16197,47 @@ chFloatBindDrag();
 /* ---------------- 启动 ---------------- */
 
 function startApp() {
+  if (FLOAT_ONLY) { floatOnlyStart(); return; }
   loadStats();
   loadTags();
   loadList();
+}
+
+/* ---- 独立窗口的起手式（/float）----
+   目标只有一个：让这个页面长得**只有**浮窗本身。
+   页面骨架（左边导航、右边舞台）全藏起来，浮窗铺满整块窗口；
+   标题栏和右下角手柄照旧在那儿，只是那两处的动作交给真窗口去做了。
+
+   【铁律：先把界面立起来，一步都不等】
+   宿主那点信息（快捷键叫什么）只是**锦上添花**。开头那一版是
+   `CF.host = await cfHostWait(...)` 排在最前面，结果桥一旦不答话，
+   界面就永远停在"骨架已藏、浮窗还没画"的状态 —— 一整块白屏，
+   而且页面上没有一个字说明为什么。现在改成：先画界面，
+   再去问宿主，问到就补上提示，问不到也照样能用。 */
+async function floatOnlyStart() {
+  document.body.classList.add("floatonly");
+  document.title = "墨阁素材浮窗";
+  chFloatOpen();                      // ← 先把浮窗画出来，不等任何人
+
+  cfHostWait(1500).then(h => {
+    if (!h) return null;              // 浏览器里看 /float：没有宿主，正常
+    CF.host = h;
+    document.body.classList.add("has-host");
+    try { h.diag("浮窗页面接上宿主了"); } catch (e) { /* 只留痕，不挡事 */ }
+    // 桥也可能"接上了但不答话"，所以给它 2.5 秒的上限：
+    // 超时就当没问过，绝不让它拖着界面
+    return Promise.race([
+      h.state(),
+      new Promise(r => setTimeout(() => r(null), 2500)),
+    ]).then(st => {
+      if (!st) return;
+      CF.hotkey = st.hotkey_label || "";
+      chFloatApplyMemo();             // 提示里那句"XX 收起"要重画一次
+      if (st.hotkey_ok === false) {
+        toast("全局快捷键被别的软件占用了，可以先从托盘菜单里显示 / 隐藏。");
+      }
+    });
+  }).catch(() => { /* 宿主桥出问题不该影响用浮窗 */ });
 }
 
 boot();
