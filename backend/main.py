@@ -637,6 +637,19 @@ class RestoreIn(BaseModel):
     segment_ids: Optional[List[int]] = None
 
 
+class HeadItemIn(BaseModel):
+    """一个小标题要归到哪个类。她确认过的那张对照表里的一行。"""
+    text: str = ""                          # 稿子里的那个词（「外貌」「车」）
+    category_id: Optional[int] = None       # 归到哪个主类；不选就是 None
+    sub_tags: List[str] = []                # 顺手挂上的副标签
+
+
+class HeadApplyIn(BaseModel):
+    """按小标题归类。"""
+    rule: Optional[str] = None              # 还没切分的稿子，先按这个切法切
+    items: List[HeadItemIn] = []            # 她确认过的对照表
+
+
 class CardPatchIn(BaseModel):
     """改单张卡片。没传的字段不动；clear_category=True 表示清空主类。"""
     category_id: Optional[int] = None
@@ -885,6 +898,58 @@ def api_restore_segments(req: RestoreIn, user: dict = Depends(auth.current_user)
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("message", "恢复失败"))
     return res
+
+
+# ---- 按稿子自己的小标题归类（不花一分钱）-----------------------------
+#
+# 她手上有一批稿子是分好类交过来的（外貌 / 好磕 / 车 这样的小标题）。
+# 既然分类她自己都写好了，就不该再花钱让模型重判一遍 —— 这两条接口
+# 把那份分类直接读进库里。**一次模型调用都不发。**
+#
+# preview 只读，给她看一眼"认出了哪些小标题、各自准备归到哪一类"；
+# apply 才真的写。两个分开，是因为认错一个小标题会连累它下面整段素材，
+# 必须让她先看见。
+
+@app.get("/api/materials/{mid}/head-categories/preview")
+def api_heads_preview(mid: int, user: dict = Depends(auth.current_user),
+                      rule: str = Query(
+                          "", description="还没切分过的稿子，按这个切法估算条数")):
+    """预览：这份稿子里认出哪些分类小标题、各管多少条、准备归到哪一类。
+
+    不写任何数据。对不上号的标题（比如「车」）会带着 source=none 回来，
+    等她在那张表里选。
+    """
+    res = cls.heads_preview(mid, user["owner"], rule=(rule or None))
+    if res is None:
+        raise HTTPException(status_code=404, detail="没有这份素材，或者它不属于你")
+    return res
+
+
+@app.post("/api/materials/{mid}/head-categories/apply")
+def api_heads_apply(mid: int, req: Optional[HeadApplyIn] = None,
+                    user: dict = Depends(auth.current_user)):
+    """按小标题归类。
+
+    body 可选：不带参数也能跑（那就全靠已记住的对照表来配）。
+    只补**还没分类**的卡片；已经有分类的一张都不动 ——
+    所以她改了某一行的映射再点一次，只有该变的会变，这个动作可以放心重复点。
+    """
+    req = req or HeadApplyIn()
+    d = _body_dict(req)
+    res = cls.apply_head_categories(
+        mid, user["owner"], d.get("items") or [],
+        rule=d.get("rule"), operator_id=user["id"])
+    if res is None:
+        raise HTTPException(status_code=404, detail="没有这份素材，或者它不属于你")
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "归类失败"))
+    return res
+
+
+@app.get("/api/head-mappings")
+def api_head_mappings(user: dict = Depends(auth.current_user)):
+    """我已经记住的「小标题 → 主类」对照表（跨稿子通用）。"""
+    return {"ok": True, "items": cls.list_head_mappings(user["owner"])}
 
 
 # ---- 卡片：读 ---------------------------------------------------------

@@ -591,6 +591,41 @@
   .clrule.off { opacity: .45; cursor: default; }
   .clrule b { display: block; font-size: 13px; }
   .clrule span { font-size: 11.5px; color: var(--ink-3); }
+  /* 「这份稿子我自己分好类了」那一档。
+     未勾选时只有一行，不占地方；勾上才摊开那张对照表。 */
+  .headbox {
+    margin: 11px 0; padding: 10px 12px;
+    border: 1px dashed var(--line); border-radius: 9px;
+  }
+  .headbox.on { border-style: solid; background: #fbfaf8; }
+  .headtoggle { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+  .headtoggle input { margin: 3px 0 0; flex: 0 0 auto; }
+  .headtoggle span { flex: 1 1 auto; }
+  .headtoggle b { display: block; font-size: 13.5px; }
+  .headtoggle em {
+    display: block; font-style: normal; color: var(--ink-3);
+    font-size: 12.5px; margin-top: 2px; line-height: 1.6;
+  }
+  .headtable { width: 100%; border-collapse: collapse; margin-top: 9px; font-size: 13px; }
+  .headtable th {
+    text-align: left; font-weight: 500; color: var(--ink-3); font-size: 12px;
+    padding: 4px 6px; border-bottom: 1px solid var(--line);
+  }
+  .headtable td { padding: 5px 6px; border-bottom: 1px solid var(--line-2); }
+  .headtable tr:last-child td { border-bottom: none; }
+  .headtable .hn { font-weight: 600; }
+  .headtable .hn em {
+    display: block; font-style: normal; font-weight: 400;
+    font-size: 11.5px; color: var(--ink-3);
+  }
+  .headtable .hc { color: var(--ink-3); white-space: nowrap; }
+  .headtable .hp select { max-width: 200px; }
+  .headtable .ht { line-height: 1.9; }
+  .hsub {
+    display: inline-block; background: var(--line-2); color: var(--ink-2);
+    border-radius: 4px; padding: 1px 6px; margin: 1px 3px 1px 0; font-size: 12px;
+  }
+  .hnone { color: var(--ink-3); }
   .clprev {
     border: 1px solid var(--line); border-radius: 9px; max-height: 300px;
     overflow: auto; background: #fbfaf8;
@@ -5993,6 +6028,17 @@ const C = {
                  最后一组处理完要收起来（把版面还给卡片流）。
                  数字没变时听她自己点的开关，不跟她抢。 */
   gOpen: true, gDoneOpen: false, gPendSeen: null,
+  /* 「这份稿子我自己分好类了」那一档（2026-09-29）。
+     她手上一批稿子每一段都自己标好了类（外貌 / 好磕 / 车 这种小标题）。
+     既然分类她自己都写好了，就没必要再花钱让模型重判一遍 ——
+     勾上这个，界面去认那些小标题、照它归到墨阁的主类上。
+
+     headOn   —— 她勾没勾。勾了才去认、才画那张对照表。
+     headPv   —— 认出来的结果（小标题 + 各多少条 + 建议归到哪一类）。
+     headPick —— 她在下拉框里改过的选择：小标题 → {cid}。
+                 只有她动过的才进这里，没动过的用 headPv 里的建议值。
+     headBusy —— 正在归类（几百张卡要写一会儿，得让她看见在跑）。 */
+  headOn: false, headPv: null, headPick: {}, headBusy: false,
   /* 卡片状态的「键 → 中文」映射，也是后端下发的。
      用它来表达"AI 没判成功的那一批卡"（sk.failed），
      这样 JS 里就不用写死「失败」两个字 —— 后端哪天改口径，
@@ -6691,9 +6737,16 @@ async function openSplit(mid) {
   // 她在总素材库点「切分」，就是奔着"看切成什么样 / 换切法"来的 ——
   // 所以明细直接摊开，不再让她多点一下「切分预览」才看得见规则。
   C.pvOpen = true;
+  // 每次都从"没勾"开始：这份稿子有没有小标题、要不要归类，得看她这一次的选择，
+  // 不能因为上次勾过就替她勾上（那会让她在没打算归类的时候点出一个归类请求）。
+  C.headOn = false;
+  C.headPv = null;
+  C.headPick = {};
   try {
     // 文件清单可能是旧的（她刚在别的页面上传过），每次都重读一遍
     await loadClSources();
+    // 归类那张对照表要用主类和副标签清单。C.ready 时它是空转，不额外发请求。
+    await loadClassify(false);
     const row = C.sources.find(x => x.id === mid) || {};
     C.rule = row.rule || "";
     const t = document.getElementById("spTitle");
@@ -6825,9 +6878,10 @@ function renderClPanel() {
       '预计生成 <b>' + c.will_create_cards + '</b> 张卡片。' +
       (c.noise_hint ? '<br>带「提示」的那些只是看着像标题，<b>没有</b>被排除 —— 短对白是精华，不敢替你删。' : '') +
     '</div>' +
+    clHeadHtml() +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:11px 0">' +
       '<button class="btn primary" id="clApply">' +
-        (row.has_run ? "按这个切法重切" : "确认切分，生成卡片") + '</button>' +
+        clApplyLabel(row) + '</button>' +
       (row.run_id && row.segments_excluded
         ? '<button class="btn" id="clRestore">把 ' + row.segments_excluded +
           ' 条被排除的噪音恢复成卡片</button>'
@@ -6845,7 +6899,12 @@ function renderClPanel() {
     b.onclick = () => { C.rule = b.dataset.rule; refreshPreview(true); };
   });
   const ap = document.getElementById("clApply");
-  if (ap) ap.onclick = applySplit;
+  if (ap) ap.onclick = clHeadReady() ? applyHeads : applySplit;
+  const hcb = document.getElementById("clHeadOn");
+  if (hcb) hcb.onchange = () => toggleHeads(hcb.checked);
+  box.querySelectorAll("[data-hcat]").forEach(s => {
+    s.onchange = () => onHeadCatChange(s.dataset.hcat, s.value);
+  });
   const rs = document.getElementById("clRestore");
   if (rs) rs.onclick = restoreNoise;
   const pc = document.getElementById("clPvClose");
@@ -6892,6 +6951,218 @@ async function restoreNoise() {
     toast((r.message || "已恢复") + "，可撤销");
     await refreshClView();
   } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 按稿子自己的小标题归类 ----------------
+   她手上一批稿子是分好类交过来的：每一段前面有一个小标题（外貌 / 好磕 / 车）。
+   既然分类她自己都写好了，就不该再花钱让模型重判一遍 ——
+   这一档把那份分类直接读进库，**一次模型调用都不发**。
+
+   为什么"对号"这一步非要她过手：
+   她文件里的类名跟墨阁的主类只有一部分对得上（外貌对得上，「车」墨阁根本没有）。
+   配过一次就进后端的对照表，以后同名标题自动带上，不用再点第二遍。 */
+
+function clHeadReady() {
+  return !!(C.headOn && C.headPv && (C.headPv.heads || []).length);
+}
+
+/* 主按钮的文字跟着这一档走 ——
+   勾了"我自己分好类了"，那个按钮就是"归类"，不再是"切分"。
+   两个按钮并排摆着的话，她每次都得先想一下点哪个。 */
+function clApplyLabel(row) {
+  const fallback = row.has_run ? "按这个切法重切" : "确认切分，生成卡片";
+  if (!C.headOn) return fallback;
+  if (!C.headPv) return "正在认小标题…";
+  if (!(C.headPv.heads || []).length) return fallback;
+  return row.has_run ? "按上面的表归类（不花钱）" : "切分并按小标题归类（不花钱）";
+}
+
+function headPickOf(h) {
+  const p = (C.headPick || {})[h.text] || {};
+  return {
+    cid: ("cid" in p) ? p.cid : (h.category_id || null),
+    subs: ("subs" in p) ? p.subs : (h.sub_tags || [])
+  };
+}
+
+function headSubsHtml(subs) {
+  const a = subs || [];
+  if (!a.length) return '<span class="hnone">—</span>';
+  return a.map(t => '<span class="hsub">' + esc(t) + '</span>').join("");
+}
+
+function headTableHtml(pv) {
+  const heads = pv.heads || [];
+  if (!heads.length) {
+    return '<div class="why">这份稿子里没认出小标题行。认的规矩是三条：' +
+      '独占一行、不超过 8 个字、末尾不是句号 —— 你自己写的「外貌」「好磕」' +
+      '都符合。要是有类名不合这三条，说一声我改规矩。</div>';
+  }
+  const rows = heads.map(h => {
+    const p = headPickOf(h);
+    const n = (h.cards_uncat === undefined || h.cards_uncat === null)
+      ? h.cards : h.cards_uncat;
+    return '<tr>' +
+      '<td class="hn">' + esc(h.text) + '<em>第 ' + h.line + ' 行</em></td>' +
+      '<td class="hc">' + fmtNum(n) + ' 条</td>' +
+      '<td class="hp"><select data-hcat="' + esc(h.text) + '">' +
+        '<option value="">（先不选）</option>' +
+        C.cats.map(c => '<option value="' + c.id + '"' +
+          (p.cid === c.id ? " selected" : "") + '>' +
+          esc(c.name) + (c.mine ? "（我建的）" : "") + '</option>').join("") +
+        '<option value="__new__">＋ 新建一个主类…</option>' +
+      '</select></td>' +
+      '<td class="ht">' + headSubsHtml(p.subs) + '</td>' +
+    '</tr>';
+  }).join("");
+  const noPick = heads.filter(h => !headPickOf(h).cid).length;
+  const ruleTip = (C.rule === "number" || pv.rule === "number")
+    ? '切法是「按段号切」—— 分好类的稿子就是靠段号一条条分出来的。'
+    : '这份稿子的切法不是「按段号切」，分条可能对不上号，检查一下上面的切法。';
+  return '<div class="why">' + esc(pv.message || "") + ruleTip + '</div>' +
+    '<table class="headtable"><thead><tr>' +
+      '<th>稿子里的小标题</th><th>有主的</th><th>归到哪一类</th><th>顺手挂的标签</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>' +
+    (noPick
+      ? '<div class="why">还有 <b>' + noPick + '</b> 个没选主类。' +
+        '不选也能归 —— 那几段只挂标签、主类留空，以后随时能补。' +
+        '（选过的我会记住，下次同名的直接对上，不用再点。）</div>'
+      : '<div class="why">都对好了。点下面的按钮就开始归 —— 不调模型、不花钱。</div>');
+}
+
+function clHeadHtml() {
+  const on = !!C.headOn;
+  let box = "";
+  if (on) {
+    if (C.headBusy) {
+      box = '<div class="why"><b>正在归类…</b>' +
+        '几百张卡要写一会儿，别关这个窗口。</div>';
+    } else if (!C.headPv) {
+      box = '<div class="why">正在认稿子里的小标题…</div>';
+    } else {
+      box = headTableHtml(C.headPv);
+    }
+  }
+  return '<div class="headbox' + (on ? " on" : "") + '">' +
+    '<label class="headtoggle">' +
+      '<input type="checkbox" id="clHeadOn"' + (on ? " checked" : "") + '>' +
+      '<span><b>这份稿子我自己分好类了</b>' +
+      '<em>稿子里有「外貌」「好磕」这种小标题的话，直接照它归类 —— ' +
+      '一个模型都不调、不花钱、也不用等。</em></span>' +
+    '</label>' + box + '</div>';
+}
+
+async function toggleHeads(on) {
+  C.headOn = !!on;
+  C.headPv = null;
+  C.headPick = {};
+  /* 勾上之后顺手把切法切到「按段号切」。
+     为什么：分好类的稿子就是靠段号一条条分出来的（1、2、3），
+     要是让它继续用自动判断的结果，很可能判成"按空行切" ——
+     整份稿子变成一张卡，小标题一个都归不上，她还以为是功能坏了。
+     只在「按段号切」确实切得出来时才切（没有段号的文件那个按钮本来就是禁的，
+     硬切出来会是空的）。切了她能看见那个按钮被点亮，也能自己改回去。 */
+  if (C.headOn && C.preview) {
+    const a = (C.preview.alternatives || {})["number"];
+    const cur = C.rule || C.preview.rule;
+    if (a && a.usable !== false && cur !== "number") {
+      C.rule = "number";
+      await refreshPreview(true);
+    } else {
+      renderClPanel();
+    }
+  } else {
+    renderClPanel();
+  }
+  if (!C.headOn) return;
+  await loadHeadPreview();
+}
+
+async function loadHeadPreview() {
+  if (!C.cur || !C.headOn) return;
+  try {
+    const q = C.rule ? "?rule=" + encodeURIComponent(C.rule) : "";
+    const pv = await api("/api/materials/" + C.cur +
+                         "/head-categories/preview" + q);
+    // 我等的这会儿她可能已经取消了勾选 —— 那就别再画出来。
+    if (!C.headOn) return;
+    C.headPv = pv;
+  } catch (e) {
+    C.headPv = null;
+    toast(e.message, true);
+  }
+  renderClPanel();
+}
+
+async function onHeadCatChange(text, v) {
+  C.headPick = C.headPick || {};
+  const p = C.headPick[text] || {};
+  if (v === "__new__") {
+    const name = prompt("新主类叫什么名字？\n\n" +
+      "（像「车」「床戏」这种，取个你以后一眼认得的）", text);
+    if (!name || !name.trim()) { renderClPanel(); return; }
+    const nm = name.trim();
+    try {
+      // 判据先照实写一句：AI 判类时只看这段说明，空着它只能照名字猜。
+      // 她以后在分类管理那一页还能改。
+      const r = await post("/api/categories", {
+        name: nm,
+        description: "我自己稿子里的小标题「" + nm + "」对应的那一类。"
+      });
+      C.cats = r.categories || C.cats;
+      if (r.category && r.category.id) {
+        p.cid = r.category.id;
+        C.headPick[text] = p;
+      }
+      toast(r.message || "加好了");
+    } catch (e) { toast(e.message, true); }
+    renderClPanel();
+    return;
+  }
+  p.cid = v ? Number(v) : null;
+  C.headPick[text] = p;
+  renderClPanel();
+}
+
+async function applyHeads() {
+  const pv = C.headPv;
+  const heads = (pv && pv.heads) || [];
+  if (!heads.length) { toast("这份稿子里没认出小标题", true); return; }
+  const row = C.sources.find(x => x.id === C.cur) || {};
+  const items = heads.map(h => {
+    const p = headPickOf(h);
+    return { text: h.text, category_id: p.cid, sub_tags: p.subs };
+  });
+  const noPick = heads.filter(h => !headPickOf(h).cid).length;
+  const willCat = heads.filter(h => headPickOf(h).cid)
+    .reduce((a, h) => a + (h.cards_uncat || 0), 0);
+  if (!confirm(
+      "要照稿子自己的小标题归类：\n\n" +
+      "· 认出 " + heads.length + " 个小标题" +
+        (willCat ? "，其中 " + willCat + " 条还没分类、这次会归上" : "") + "\n" +
+      (row.has_run ? "" : "· 这份稿子还没切分，会先切分再归类\n") +
+      (noPick ? "· 有 " + noPick + " 个还没选主类，那几段只挂标签\n" : "") +
+      "· 一个模型都不会调用，不花钱\n" +
+      "· 不改你的素材原文\n" +
+      "· 已经分过类的卡片一张都不动\n\n现在开始？")) return;
+  C.headBusy = true;
+  renderClPanel();
+  try {
+    const r = await post("/api/materials/" + C.cur + "/head-categories/apply",
+                         { rule: C.rule || null, items: items });
+    toast(r.message || "归好了");
+    C.headPick = {};
+    await loadClSources();
+    await refreshPreview(false);
+    await loadCards();
+    await loadList();
+    C.headBusy = false;
+    await loadHeadPreview();
+  } catch (e) {
+    C.headBusy = false;
+    toast(e.message, true);
+    renderClPanel();
+  }
 }
 
 /* ---------------- 逻辑素材组 ----------------

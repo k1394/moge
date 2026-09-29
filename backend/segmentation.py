@@ -58,7 +58,26 @@ NORM_VERSION = "v1"
 #   加一种新规则**不动** line / blank 的算法，同一段文字用旧规则切出来
 #   仍然是一模一样的位置 —— 旧数据依然有效，所以不该升版本号。
 #   什么情况才要升：改了 normalize()、或者改了 line/blank 的算法本身。
-RULE_VERSION = "v1"
+#
+# 【2026-09-29 升到 v2：按段号切法动了】
+#   原来 split_by_number 只把"段号行"当边界，于是
+#
+#       1、他生得一双极冷的眼睛…
+#       2、白衬衫的袖口挽到手肘…
+#
+#       神态                        ← 下一段的小标题
+#       1、他垂着眼，指节发白…
+#
+#   第 2 条的正文会变成「白衬衫的袖口挽到手肘…\n\n神态」——
+#   把下一段的小标题粘在了尾巴上。她文件里那种"分好类"的稿子，
+#   每一条的末尾都会多粘两个字（下一个类名），看着很脏。
+#   现在把小标题行也当边界，第 2 条的正文就干净地停在它自己那一行。
+#
+#   为什么这次必须升版本号：**旧记录里的偏移是按老算法算的**。
+#   升了，segment_runs 里一眼能分出"这条 run 是老规矩切的"。
+#   注意已经建好的卡片不受影响 —— 卡片存的是自己的绝对偏移，
+#   跟切分算法无关，不会被重算。
+RULE_VERSION = "v2"
 
 # 校验文本取几个字
 CHECK_CHARS = 8
@@ -300,13 +319,37 @@ def split_by_number(text):
     if not marks:
         return []
 
+    # 边界行有两种：下一个段号行，以及下一段的小标题行。
+    # 【小标题为什么也算边界，2026-09-29】
+    #   原来只认段号行，于是「2、白衬衫的袖口…」这一条的结束位置
+    #   一直延伸到下一条段号之前 —— 中间夹着的那个「神态」标题
+    #   就被并进了它的正文尾巴。她那种分好类的稿子，每条末尾都会
+    #   多粘两个字（下一个类名）。现在标题行一出现，上一条就到此为止。
+    # 【但"标题"必须认准，不许认错】
+    #   边界认错一个，那一行到下一个段号之间的正文就整段丢了。
+    #   所以这里用的不是宽松的 is_head_line，而是 head_row_set
+    #   （"后面紧跟着段号行"的那一档）—— 拿她 12 篇真实稿子核对过。
+    mark_rows = {idx for idx, _num, _cut in marks}
+    head_rows = head_row_set(lines, mark_rows)
+
+    def stop_before(start_row):
+        """从 start_row 之后找第一个边界行，返回它前面那一行的下标。"""
+        for r in range(start_row + 1, len(lines)):
+            if r in mark_rows or r in head_rows:
+                return r - 1
+        return len(lines) - 1
+
     # 先把每条的行范围圈出来：头部一条（如果有）+ 每个段号一条
     bounds = []
     if marks[0][0] > 0:
-        bounds.append({"num": None, "from": 0, "to": marks[0][0] - 1, "cut": None})
-    for k, (idx, num, cut) in enumerate(marks):
-        to = (marks[k + 1][0] - 1) if k + 1 < len(marks) else len(lines) - 1
-        bounds.append({"num": num, "from": idx, "to": to, "cut": cut})
+        # 头部这条（书名行、作者行）也要在第一个小标题前停下 ——
+        # 否则"外貌"这两个字会被算进头部，那条卡片上就顶着一个类名。
+        to = stop_before(-1)
+        if to >= 0:
+            bounds.append({"num": None, "from": 0, "to": to, "cut": None})
+    for idx, num, cut in marks:
+        bounds.append({"num": num, "from": idx, "to": stop_before(idx),
+                       "cut": cut})
 
     segs = []
     for b in bounds:
@@ -337,6 +380,189 @@ def split_by_number(text):
     for i, s in enumerate(segs):
         s["seq"] = i + 1
     return segs
+
+
+# ----------------------------------------------------------------------
+# 二·五、找"小标题"（她自己分好类的那种稿子）
+# ----------------------------------------------------------------------
+#
+# 她手上有一批稿子长这样：
+#
+#     共 58 条原文摘录          ← 头部说明
+#     外貌                      ← 小标题
+#     1、他生得一双极冷的眼睛…
+#     2、白衬衫的袖口挽到手肘…
+#     神态                      ← 小标题
+#     1、他垂着眼，指节发白…
+#
+# 这个小标题**就是她的分类**。既然她自己都分好了，再花钱让模型重判一遍
+# 纯属白花 —— 这一段函数就是为了"直接读她自己写的那份分类"。
+#
+# 2026-09-29 拿她库里 10 份真实文件校准过（万人迷症候群 1~5、
+# 冥府之路、剧情偏离 1~4），认出来的正是她写的那些类名，没有一个误判：
+#   外貌 / 神态 / 搞笑 / 好磕 / 拉扯 / 心动 / 难过 / 牛逼 / 打斗 /
+#   床戏 / 好词好句 / 设定 / 车 / 难过、动心
+
+# 一行最多几个字，还算得上"小标题"。
+# 她写的那些最长的 6 个字（好词好句 / 难过、动心），放到 8 留点余量；
+# 再长就该是正文了。
+HEAD_MAX_CHARS = 8
+
+# 末字是这些 → 不是标题。她的摘录几乎每句都以这些收尾。
+HEAD_END_BAD = "。，！？；：、…—·）】》”』」"
+
+# 中间夹着这些 → 不是标题。
+# 引号和省略号是她摘录里对话最明显的特征（“我没有家了……”）；
+# 书名号 / 方头括号是标题行或系统提示的写法（【裘远爱意值+1】）。
+#
+# ⚠️ 刻意**不**禁内部的顿号 —— 她的标题里真的带顿号
+#    （「难过、动心」是一整行，不是两行），禁了就会把它整个漏掉。
+#
+# 【书名号为什么必须禁，2026-09-29】她的类名里从来不带《》，
+#   但**书名行**会 —— 而短书名行（《某书》摘录）正好也"短、没句末标点"，
+#   要是它正好紧挨着第一个段号行，就会被认成类名，
+#   连带把"段号之前的书名行"切成两张卡。禁掉书名号一刀解决。
+HEAD_ANY_BAD = "“”‘’「」『』【】…—\"'《》"
+
+
+def is_head_line(raw):
+    """这一行像不像她自己写的分类小标题。
+
+    纯判断，不碰数据库、不联网。判据三条，全在上面那些常量里：
+      一、一整行就是个短词（不超过 HEAD_MAX_CHARS 个字）
+      二、末字不是句末标点 —— 标题不会以「。」收尾
+      三、中间不夹引号 / 省略号 / 书名号 —— 那是摘录正文或书名行
+    另外带数字的不算，挡住「共 58 条原文摘录」这种头部说明。
+
+    注意：这个判据是**宽**的（候选）。真正算数的是 head_row_set ——
+    还得满足「后面紧跟着一个段号行」，见那里的说明。
+
+    为什么不顺手去掉末尾的冒号再判（「外貌：」这种写法）：
+      试过了，「他说：」也会被削成「他说」进而误判成标题。
+      宁可漏（她在界面上能补），不可错（错一条会把整段素材归错类）。
+    """
+    s = (raw or "").strip()
+    if not s or len(s) > HEAD_MAX_CHARS:
+        return False
+    if NUMBER_MARKER.match(s):
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False
+    if s[-1] in HEAD_END_BAD:
+        return False
+    if any(ch in HEAD_ANY_BAD for ch in s):
+        return False
+    return True
+
+
+def _next_code_row_map(lines):
+    """每一行的"后面第一个非空行"是谁（没有就 None）。一趟扫完，别逐行往后找。"""
+    n = len(lines)
+    nxt = [None] * n
+    cur = None
+    for r in range(n - 1, -1, -1):
+        nxt[r] = cur
+        if lines[r][0].strip():
+            cur = r
+    return nxt
+
+
+def head_row_set(lines, mark_rows):
+    """行下标集合：这份稿子里**真的**是小标题的那些行。
+
+    判据比 is_head_line 严一档 —— 短、没有句末标点，而且**后面紧跟着一个段号行**。
+
+    【为什么非要再严这一档，2026-09-29 拿她真实稿子量出来的】
+      她稿子的正文本身就是分行的，于是 is_head_line 光看"短、没句末标点"
+      根本不够用：其中一篇里，「可」「徐」这种正文短句、
+      「这事发生了不算」这种半句，全被认成小标题 —— 那些都是正文。
+      而小标题行在按段号切里是**边界**：认错一个，那一行到下一个段号
+      之间的正文会**整段丢掉**（实测那一篇丢了 4327 字，等于白切）。
+
+      她真实稿子的结构是这样的（库里 12 篇都核对过）：
+
+          外貌            ← 类名，独占一行
+          1、旧城的雨下了一夜。   ← 紧跟着就是段号行
+          阿岚心情好，也安静地等待。
+          神态            ← 下一个类名
+          2、小乙垂着眼。
+
+      类名后面**一定**跟一个段号行 —— 因为类名就是给接下来那几条起的。
+      正文里那种"碰巧很短的一行"后面跟的是正文，不是段号。这一条把误判降到 0。
+
+    【注释里的例子一律用中性占位（旧城 / 阿岚 / 小乙 / 某书）】
+      别写真实书名和角色名：这个文件在公开仓库的白名单里，
+      tools/check_private_words.py 会拦下来（2026-09-29 真的拦过一次，3 处）。
+    """
+    nxt = _next_code_row_map(lines)
+    out = set()
+    for r in range(len(lines)):
+        if not is_head_line(lines[r][0]):
+            continue
+        nr = nxt[r]
+        if nr is not None and nr in mark_rows:
+            out.add(r)
+    return out
+
+
+def find_heads(text):
+    """找出一份稿子里所有"小标题行"，并圈出每个标题管到哪儿。
+
+    返回 [{"seq", "text", "line", "start", "end", "next_start", "next_line"}, ...]
+        text        标题原文（「外貌」）
+        line        它在本稿第几行（从 1 开始，给她对照手头文稿用）
+        start/end   这一行在原文里的起止位置
+        next_start  下一个标题的起点 —— 也就是"这个标题管辖的正文到此为止"；
+                    最后一个标题的 next_start = 全文长度
+
+    【为什么记 next_start】
+      判断一张卡片归哪个类，只要比位置：卡片起点落在
+      [head.start, head.next_start) 里，就是这一类的。
+      比位置而不是比行号 —— cards 表里只存了偏移，没有行号。
+
+    【标题行本身不会变成卡片】
+      它没有行首段号，`split_by_number` 不会把它切出来。正好：
+      标题是"标签"，不是"素材"，不该混进卡片流里等她删。
+
+    【只认"后面紧跟着段号行"的那些，见 head_row_set】
+      不然正文里随便一个短句都会当成标题，而且会连带把正文切丢。
+    """
+    text = text or ""
+    lines = lines_with_span(text)
+    mark_rows = {idx for idx, _num, _cut in find_number_markers(text)}
+    rowset = head_row_set(lines, mark_rows)
+    out = []
+    for idx, (raw, start, _end) in enumerate(lines):
+        if idx not in rowset:
+            continue
+        core = _core_span(raw, start)
+        if not core:
+            continue
+        out.append({"text": raw.strip(), "line": idx + 1,
+                    "start": core[0], "end": core[1]})
+    for i, h in enumerate(out):
+        h["seq"] = i + 1
+        if i + 1 < len(out):
+            h["next_start"] = out[i + 1]["start"]
+            h["next_line"] = out[i + 1]["line"]
+        else:
+            h["next_start"] = len(text)
+            h["next_line"] = None
+    return out
+
+
+def head_of(heads, offset):
+    """一个位置（偏移）落在哪个标题下面。没有就返回 None。
+
+    用在"这条卡片该归哪一类"上。offset 取卡片起点。
+    """
+    found = None
+    for h in heads or []:
+        if h["start"] <= offset < h["next_start"]:
+            found = h
+        elif h["start"] > offset:
+            break                      # 标题是按顺序排的，不用再往后看
+    return found
 
 
 RULES = {

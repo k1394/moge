@@ -492,6 +492,35 @@ CREATE TABLE IF NOT EXISTS card_groups (
     updated_at          TEXT    NOT NULL
 );
 
+-- 「小标题 → 主类」的对照表（2026-09-29，给"她自己分好类的那种稿子"用）
+--
+-- 【它解决什么问题】
+--   她手上有一批稿子，每一条都自己标好了类（外貌 / 好磕 / 车 …）。
+--   这些小标题跟墨阁的主类**只有一部分对得上**：外貌、神态、打斗对得上，
+--   「车」「床戏」「设定」墨阁根本没有这个类。
+--   所以第一次遇到「车」得她选一次；选完记在这儿，
+--   以后任何一份稿子里再出现「车」，自动就对上了 —— 不用再点。
+--
+-- 【粒度是"词"，不是"文件"】
+--   source_mappings 是文件级的（某个来源集合 → 某个主类）。
+--   这张表是词级的：不管哪份稿子，小标题写着「车」就归到同一个类。
+--   两者不冲突，各管各的。
+--
+-- 【head_text 存原文那个词，不做归一化】
+--   find_heads 已经 strip 过了。但「难过」和「难过、动心」是两个不同的键 ——
+--   这是有意的：她文件里真把「难过、动心」写成一行，那就是独立的一个类名，
+--   她把这两个键各配一次就好，不该由代码替她合并。
+CREATE TABLE IF NOT EXISTS head_mappings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id      TEXT    NOT NULL,
+    head_text     TEXT    NOT NULL,
+    category_id   INTEGER DEFAULT NULL,
+    sub_tags_json TEXT    NOT NULL DEFAULT '[]',
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT    NOT NULL,
+    UNIQUE (owner_id, head_text)
+);
+
 CREATE INDEX IF NOT EXISTS idx_segrun_mat   ON segment_runs(material_id, is_current);
 CREATE INDEX IF NOT EXISTS idx_seg_run      ON segments(run_id);
 CREATE INDEX IF NOT EXISTS idx_seg_mat      ON segments(material_id);
@@ -502,6 +531,7 @@ CREATE INDEX IF NOT EXISTS idx_cardtags_tag ON card_tags(sub_tag_id);
 CREATE INDEX IF NOT EXISTS idx_subtags_own  ON sub_tags(owner_id);
 CREATE INDEX IF NOT EXISTS idx_changes_own  ON card_changes(owner_id, id);
 CREATE INDEX IF NOT EXISTS idx_groups_mat   ON card_groups(owner_id, material_id, status);
+CREATE INDEX IF NOT EXISTS idx_headmap_own  ON head_mappings(owner_id, head_text);
 """
 
 
@@ -1322,6 +1352,366 @@ def apply_split(material_id, owner, rule=None, force=False):
                       n_cards, [], {}, {},
                       summary=summary["message"])
         return summary
+
+
+# ----------------------------------------------------------------------
+# 小标题归类：她自己分好类的那种稿子，直接把她的分类读进来
+# ----------------------------------------------------------------------
+#
+# 【为什么值得单独做这一条】
+#   一份 600 张卡的素材，走「自动分类」要按 25 张一批发二十几次模型请求，
+#   每一批都得把 11 类判据重发一遍。可她稿子里的小标题**本来就是分类** ——
+#   直接读下来，一分钱不花、一秒不用等。
+#
+# 【为什么不干脆全自动】
+#   她文件里的类名跟墨阁的主类只有一部分对得上：
+#     对得上     外貌 / 神态 / 打斗 / 难过
+#     名字不同   搞笑（墨阁叫「搞笑情节」）、好磕 / 拉扯 / 心动（都归「暧昧拉扯」）
+#     墨阁没有   车 / 床戏 / 设定 / 好词好句 / 牛逼
+#   所以"对号"这一步得过一次她的手。**配过的会存进 head_mappings**，
+#   下次同名标题自动带上，不用再点第二遍。
+#
+# 【为什么只补没分类的卡】
+#   这个动作必须幂等。她改了一个映射再点一次，只有新归上的会变，
+#   已经归好的不会被翻来覆去 —— 也不会把她后来手工改过的分类冲掉。
+
+def _json_list(s):
+    """库里存的是 JSON 字符串，出门前解回数组。坏数据返回空数组。"""
+    if not s:
+        return []
+    try:
+        v = json.loads(s)
+    except Exception:
+        return []
+    return v if isinstance(v, list) else []
+
+
+def _cat_name(cats, cid):
+    for c in cats or []:
+        if c["id"] == cid:
+            return c["name"]
+    return ""
+
+
+def _guess_head(cats, tags, saved, text):
+    """给一个小标题猜主类和副标签。
+
+    猜错了不要紧 —— 界面上每一个都能改，而且改完就记住了。
+    返回 (category_id, category_name, sub_tags, source)：
+        saved  她以前配过，直接用她的
+        auto   跟某个主类同名
+        guess  名字对得上（「搞笑」→「搞笑情节」）或只有一类常用这个标签
+        none   没猜着，等她选
+    """
+    sv = saved.get(text)
+    if sv and sv.get("category_id"):
+        name = _cat_name(cats, sv["category_id"])
+        if name:
+            return (sv["category_id"], name, list(sv.get("sub_tags") or []), "saved")
+
+    for c in cats or []:
+        if c["name"] == text:
+            return (c["id"], c["name"], [], "auto")
+
+    # 名字互相包含，且只有一个候选才猜 —— 两个候选就该由她定，代码不替她掷骰子。
+    cand = [c for c in (cats or [])
+            if text and (text in c["name"] or c["name"] in text)]
+    if len(cand) == 1:
+        return (cand[0]["id"], cand[0]["name"], [], "guess")
+
+    # 主类猜不着了。但这个词本身可能就是副标签（「好磕」「心动」「好词好句」），
+    # 那就先把标签挂上；再看有没有唯一一个主类"常用这个标签"。
+    subs = [text] if text in (tags or set()) else []
+    owner_cats = [c for c in (cats or [])
+                  if text in (c.get("suggested_tags") or [])]
+    if len(owner_cats) == 1:
+        return (owner_cats[0]["id"], owner_cats[0]["name"], subs, "guess")
+    return (None, "", subs, "none")
+
+
+def heads_preview(material_id, owner, rule=None):
+    """这份稿子里有哪些小标题、各管着多少条卡片、准备归到哪一类。
+
+    这是"先给她看一眼再动手"的那一步：所有东西都只是建议，
+    真正写库要等 apply_head_categories。
+    """
+    with db.connect() as conn:
+        m = _material_row(conn, material_id, owner)
+        if not m:
+            return None
+        content = m["content"] or ""
+        run = conn.execute(
+            "SELECT * FROM segment_runs WHERE material_id=? AND is_current=1",
+            (material_id,)).fetchone()
+        saved = {}
+        for r in conn.execute(
+                "SELECT head_text, category_id, sub_tags_json FROM head_mappings "
+                "WHERE owner_id=?", (owner,)):
+            saved[r["head_text"]] = {"category_id": r["category_id"],
+                                     "sub_tags": _json_list(r["sub_tags_json"])}
+
+    heads = sg.find_heads(content)
+    cats = list_categories(owner)
+    tags = {t["name"] for t in list_sub_tags(owner, active_only=True)}
+
+    # 还没切分过的话，现切一遍只为**数个数**，不落库 ——
+    # 否则界面上一排 0，看着像"这份稿子没有内容"。
+    estimated = False
+    rows = []
+    if run:
+        with db.connect() as conn:
+            for c in conn.execute(
+                    "SELECT start_offset, primary_category_id FROM cards "
+                    "WHERE owner_id=? AND material_id=? AND status<>? "
+                    "ORDER BY start_offset",
+                    (owner, material_id, sg.STATUS_EXCLUDED)).fetchall():
+                rows.append((c["start_offset"], c["primary_category_id"]))
+    else:
+        use_rule = rule if rule in sg.RULES else sg.auto_rule(content)["rule"]
+        for s in sg.build_segments(content, use_rule, with_text=False):
+            if s["noise_level"] == "high":
+                continue
+            rows.append((s["start"], None))
+        estimated = True
+
+    counts = {h["seq"]: {"cards": 0, "uncat": 0} for h in heads}
+    unassigned = unassigned_uncat = 0
+    for off, cid in rows:
+        h = sg.head_of(heads, off)
+        if not h:
+            unassigned += 1
+            if cid is None:
+                unassigned_uncat += 1
+            continue
+        counts[h["seq"]]["cards"] += 1
+        if cid is None:
+            counts[h["seq"]]["uncat"] += 1
+
+    out = []
+    for h in heads:
+        cid, name, subs, src = _guess_head(cats, tags, saved, h["text"])
+        out.append({
+            "seq": h["seq"], "text": h["text"], "line": h["line"],
+            "category_id": cid, "category_name": name,
+            "sub_tags": subs, "source": src,
+            "cards": counts[h["seq"]]["cards"],
+            "cards_uncat": counts[h["seq"]]["uncat"],
+        })
+
+    if not heads:
+        msg = "这份稿子里没找到小标题行（独占一行、很短、不带句号的那种）。"
+    elif estimated:
+        msg = ("找到 %d 个小标题。这份稿子还没切分，下面是按「%s」估的条数，"
+               "确认后会先切分再归类。" % (len(heads), sg.RULES[
+                   rule if rule in sg.RULES else sg.auto_rule(content)["rule"]]["name"]))
+    else:
+        msg = "找到 %d 个小标题。" % len(heads)
+
+    return {
+        "ok": True, "material_id": material_id, "title": m["title"],
+        "has_run": bool(run), "estimated": estimated,
+        "rule": (run["rule"] if run else (rule if rule in sg.RULES
+                                          else sg.auto_rule(content)["rule"])),
+        "heads": out,
+        "unassigned": unassigned, "unassigned_uncat": unassigned_uncat,
+        "cards_total": len(rows),
+        "message": msg,
+    }
+
+
+def _tail_trim(content, start, end, head_texts):
+    """卡片末尾如果粘着一个"类名"（下一段的小标题），把它切掉。
+
+    【为什么会有这个尾巴】
+      2026-09-29 之前，按段号切的结束位置一直延伸到下一条段号之前，
+      中间夹着的那个小标题（「神态」「车」）就被并进了上一条的正文。
+      算法已经修了（见 segmentation.RULE_VERSION = v2），
+      但**她库里已经建好的卡片是按老算法切的**，尾巴还留在那儿。
+
+    【为什么敢裁】
+      条件很严，两条都要满足：
+        · 卡片正文的**最后一个非空行**正好是一个小标题行；
+        · 而且那个词**确实是这份稿子里的类名**（head_texts）。
+      第二条是 2026-09-29 补的：光用宽松的 is_head_line 判，
+      正文里那种短句（一行就一个字的，或者「雨停了」这种没句末标点的）
+      也会被当成类名裁掉 —— 那也是她的字。
+      正文中间夹着类名行（比如头部那条包含书名行 + 第一个类名）**不裁**——
+      那种情况末尾不是类名，够不着这条判据。
+      而且裁的是偏移、不是字：正文仍然是从原文现算的，没有改她一个字。
+
+    【为什么要裁】
+      这条卡马上要按小标题归类。要是尾巴上还挂着下一个类名，
+      她点开一张「外貌」的卡，正文末尾写着「神态」两个字 ——
+      看着像功能没做干净。
+    """
+    piece = content[start:end]
+    lines = piece.split("\n")
+    i = len(lines) - 1
+    while i >= 0 and not lines[i].strip():
+        i -= 1
+    if i < 0 or lines[i].strip() not in head_texts:
+        return end
+    keep = "\n".join(lines[:i]).rstrip()
+    if not keep:
+        return end              # 整条就是一个类名？那不敢动，宁可留着
+    return start + len(keep)
+
+
+def apply_head_categories(material_id, owner, items, rule=None, operator_id=None):
+    """按小标题归类：给还没分类的卡片写上主类和副标签。
+
+    items 是她确认过的对照表：[{"text": "外貌", "category_id": 451,
+                                "sub_tags": ["好磕"]}, ...]
+    只有 text 能跟稿子里的小标题对上的才会生效。
+
+    没切分过的稿子会**先切分再归类**（切分不花钱，也不用她再点一次）。
+    """
+    items = items or []
+    with db.connect() as conn:
+        m = _material_row(conn, material_id, owner)
+        if not m:
+            return None
+        run = conn.execute(
+            "SELECT id FROM segment_runs WHERE material_id=? AND is_current=1",
+            (material_id,)).fetchone()
+    content = m["content"] or ""
+
+    if not run:
+        sp = apply_split(material_id, owner, rule=rule)
+        if not sp:
+            return {"ok": False, "message": "没找到这份素材。"}
+        if not sp.get("ok"):
+            return sp
+
+    heads = sg.find_heads(content)
+    head_texts = {h["text"] for h in heads}
+    cats = list_categories(owner)
+    valid = {c["id"] for c in cats}
+
+    by_text, plan = {}, {}
+    for it in items:
+        t = (it.get("text") or "").strip()
+        if not t:
+            continue
+        cid = it.get("category_id")
+        try:
+            cid = int(cid) if cid not in (None, "", 0) else None
+        except (TypeError, ValueError):
+            cid = None
+        if cid is not None and cid not in valid:
+            cid = None          # 类被删了 / 停用了 —— 当作没选，不硬写进去
+        subs = [(s or "").strip() for s in (it.get("sub_tags") or [])]
+        subs = [s for s in subs if s]
+        by_text[t] = (cid, subs)
+
+    # 她可能只改了其中一行就点保存 —— 没给的那些用**已经记住的**配置补上。
+    # 这也是"什么都不带也能点"的意思：全靠记住的那份对照表来配。
+    for m in list_head_mappings(owner):
+        cid = m["category_id"]
+        if cid is not None and cid not in valid:
+            cid = None
+        by_text.setdefault(m["text"], (cid, [s for s in m["sub_tags"] if s]))
+    for h in heads:
+        if h["text"] in by_text:
+            plan[h["seq"]] = by_text[h["text"]]
+
+    n_done = n_tagged = n_skip = n_none = 0
+    done_ids = []
+    trim_ids = []          # 尾巴上粘着旧类名、被顺手修干净的卡片
+    with db.connect() as conn:
+        cards = conn.execute(
+            "SELECT c.id, c.start_offset, c.end_offset, c.primary_category_id, "
+            "  (SELECT COUNT(*) FROM card_tags ct"
+            "   JOIN sub_tags st ON st.id = ct.sub_tag_id"
+            "   WHERE ct.card_id = c.id AND ct.source = ?) AS inh_tags "
+            "FROM cards c "
+            "WHERE c.owner_id=? AND c.material_id=? AND c.status<>? "
+            "ORDER BY c.start_offset",
+            (sg.SOURCE_INHERITED, owner, material_id,
+             sg.STATUS_EXCLUDED)).fetchall()
+        ts = now_str()
+
+        for c in cards:
+            # 「已经有分类」和「只挂过标签、还没定主类」都算处理过了 ——
+            # 否则那个没主类的标题每次点都会再挂一遍标签，
+            # 统计里也就永远多出「1 张只挂上了标签」，看着像有变化其实没有。
+            if c["primary_category_id"] is not None or c["inh_tags"]:
+                n_skip += 1         # 不动它（幂等的关键）
+                continue
+            h = sg.head_of(heads, c["start_offset"])
+            cid, subs = plan.get(h["seq"], (None, [])) if h else (None, [])
+            if cid is None:
+                # 没定主类：把副标签挂上也算没白读一遍稿子，
+                # 但状态**不动** —— 免得出现"已确认、却没主类"这种自相矛盾。
+                if subs:
+                    _set_card_tags(conn, owner, c["id"], subs,
+                                   source=sg.SOURCE_INHERITED, confirmed=1)
+                    n_tagged += 1
+                else:
+                    n_none += 1
+                continue
+            # 顺手修掉尾巴上粘着的旧类名（见 _tail_trim 的注释）。
+            # 只对"这次真的归上类"的卡做 —— 跟归类同一批，她看到的效果是一致的。
+            new_end = _tail_trim(content, c["start_offset"], c["end_offset"],
+                                 head_texts)
+            if new_end != c["end_offset"]:
+                conn.execute(
+                    "UPDATE cards SET end_offset=?, updated_at=? WHERE id=?",
+                    (new_end, ts, c["id"]))
+                trim_ids.append(c["id"])
+
+            conn.execute(
+                "UPDATE cards SET primary_category_id=?, source=?, status=?, "
+                "updated_at=? WHERE id=?",
+                (cid, sg.SOURCE_INHERITED, sg.STATUS_CONFIRMED, ts, c["id"]))
+            if subs:
+                _set_card_tags(conn, owner, c["id"], subs,
+                               source=sg.SOURCE_INHERITED, confirmed=1)
+            n_done += 1
+            done_ids.append(c["id"])
+
+        # 把这次的对照表记下来 —— 这是"下次不用再点"的全部依据。
+        for t, (cid, subs) in by_text.items():
+            conn.execute(
+                """INSERT INTO head_mappings
+                   (owner_id, head_text, category_id, sub_tags_json,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(owner_id, head_text) DO UPDATE SET
+                     category_id=excluded.category_id,
+                     sub_tags_json=excluded.sub_tags_json,
+                     updated_at=excluded.updated_at""",
+                (owner, t, cid, json.dumps(subs, ensure_ascii=False), ts, ts))
+
+        summary = ("按稿子自己的小标题归类：%d 张归上主类，%d 张只挂上了标签，"
+                   "%d 张已有分类没动，%d 张没归上。"
+                   % (n_done, n_tagged, n_skip, n_none))
+        if trim_ids:
+            summary += "顺带修掉 %d 张卡片尾巴上粘着的类名。" % len(trim_ids)
+        if n_done or trim_ids:
+            _write_change(conn, owner, "head_categories", operator_id, material_id,
+                          n_done, done_ids, {}, {}, summary=summary)
+
+    return {
+        "ok": True, "material_id": material_id,
+        "cards": len(cards), "categorized": n_done, "tagged_only": n_tagged,
+        "skipped_categorized": n_skip, "unmatched": n_none,
+        "trimmed": len(trim_ids),
+        "heads": len(heads), "mapped": len(by_text),
+        "message": summary,
+    }
+
+
+def list_head_mappings(owner):
+    """她配过的「小标题 → 主类」清单。给她看"我已经记住了哪些"。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT head_text, category_id, sub_tags_json, updated_at "
+            "FROM head_mappings WHERE owner_id=? ORDER BY head_text",
+            (owner,)).fetchall()
+    return [{"text": r["head_text"], "category_id": r["category_id"],
+             "sub_tags": _json_list(r["sub_tags_json"]),
+             "updated_at": r["updated_at"]} for r in rows]
 
 
 # ----------------------------------------------------------------------
