@@ -1523,6 +1523,17 @@ def api_get_classify_prompt(user: dict = Depends(auth.current_user)):
             "chars": len(content)}
 
 
+# 【为什么 PUT 和 POST 都留着，两个都别删】
+#   前端那三档「补充提示词」（分类 / 内化 / 大纲）的保存是**同一段代码**
+#   走的：pfSaveDefault() → send(url, "PUT", {...})。所以分类这一档
+#   也必须认 PUT —— 另外两档（/api/infuse-prompt、/api/outline-prompt）
+#   当初就写的是 PUT。
+#   2026-09-29 就是漏了这一条：前端发 PUT、这里只注册了 POST，
+#   她点「保存」时界面弹一句裸英文 `Method Not Allowed`（HTTP 405）——
+#   看起来像后端坏了，其实是"路径对了、方法没注册"。
+#   为什么 POST 也不删：测试一直在用 POST，删掉只是白添风险。
+#   两个方法进的是同一个函数，语义完全一样（整份覆盖）。
+@app.put("/api/classify-prompt")
 @app.post("/api/classify-prompt")
 def api_set_classify_prompt(req: PromptIn,
                             user: dict = Depends(auth.current_user)):

@@ -11,20 +11,26 @@ if errorlevel 1 (
     exit /b
 )
 
-echo [1/3] data safety check
+echo [1/4] data safety check
 python "G:\docker\tools\data_safety_check.py"
 
 echo.
 echo ---------------------------------------------
-echo [2/3] private words check (files going public)
+echo [2/4] private words check (files going public)
 echo ---------------------------------------------
 python "G:\docker\tools\check_private_words.py"
 
 echo.
 echo ---------------------------------------------
-echo [3/3] UI text check (no markdown stars shown to user)
+echo [3/4] UI text check (no markdown stars shown to user)
 echo ---------------------------------------------
 python "G:\docker\tools\check_ui_text.py"
+
+echo.
+echo ---------------------------------------------
+echo [4/4] API method check (frontend vs backend, 405 hunter)
+echo ---------------------------------------------
+python "G:\docker\tools\check_api_methods.py"
 
 echo.
 echo ---------------------------------------------
