@@ -341,6 +341,11 @@ CREATE TABLE IF NOT EXISTS cards (
     summary_version     TEXT    NOT NULL DEFAULT '',
     summary_status      TEXT    NOT NULL DEFAULT '',
     summary_at          TEXT    NOT NULL DEFAULT '',
+    -- ---- 粘贴导入的编号（2026-10-07）----
+    -- 只有"粘贴导入"进来的卡才有值，其余是 NULL。
+    -- 有值时它就是界面上显示的那个 #N（见 _decorate），
+    -- 让"接着上一批往下排"这件事成立。详见 migrate() 里的说明。
+    paste_seq           INTEGER DEFAULT NULL,
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
 );
@@ -683,6 +688,24 @@ def migrate(verbose=False):
                     conn.execute("ALTER TABLE %s ADD COLUMN %s %s"
                                  % (table, col, decl))
                     report["added_columns"].append("%s.%s" % (table, col))
+
+        # ---- 粘贴导入的「接着排」编号（2026-10-07）----
+        #
+        # 为什么单独存一列，而不复用卡片自己的序号：
+        #   界面上的 #N 是**算出来**的 —— "同一份素材里，排在我前面的有几张"
+        #   （见 list_cards 里那句 seq_no）。这个算法对她手上"一份文件切成
+        #   几百张卡"的用法是对的，但粘贴导入没有"一份文件"这回事：
+        #   每粘一次就是一份新素材，算出来永远是 #1 #2 #3。
+        #   她要的是"这个分类下已经攒到 230 了，接着从 231 排"。
+        #
+        # 所以：粘贴进来的卡片在入库那一刻就把编号**定死**写在这列里，
+        #   不参与"现算"。别的卡片这一列是 NULL，行为一个字不变 ——
+        #   这也是为什么它必须是"加一列"而不是"改算法"：
+        #   改算法会把她现有几百张卡的编号全部重排。
+        cols = _columns(conn, "cards")
+        if "paste_seq" not in cols:
+            conn.execute("ALTER TABLE cards ADD COLUMN paste_seq INTEGER DEFAULT NULL")
+            report["added_columns"].append("cards.paste_seq")
 
         # ---- 播种主类（当前版本 = v2）----
         # 已有同名的不覆盖 description？不，要覆盖 ——
@@ -1755,9 +1778,29 @@ def _set_card_tags(conn, owner, card_id, names, source="human", confirmed=1):
             "VALUES (?,?,?,?)", (card_id, tid, source, confirmed))
 
 
+def _like_escape(s):
+    """把用户输入里的 % 和 _ 转义掉，再交给 LIKE。
+
+    不转义的话，她搜一个「%」就会命中全部卡片，
+    搜「a_b」会把「axb」也捞出来 —— 结果看着像"搜错了"，
+    但界面不会报错，也无从解释。ESCAPE '\\' 在 SQL 里配套写着。
+    """
+    return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _decorate(conn, row, content, cat_names):
     """把一行 cards 补成前端要的形状（正文、标签、校验结果都在这里算）。"""
     d = dict(row)
+    # 「粘贴导入」进来的卡：编号是入库那一刻定死的（paste_seq），
+    # 不按"同一份素材里排我前面有几张"现算 —— 每粘一次都是一份新素材，
+    # 现算的话永远是 #1，她要的"接着上一批往下排"就不成立。
+    # 别的卡 paste_seq 是 NULL，走原来的算法，显示一个数都不变。
+    if d.get("paste_seq") and "seq_no" in d:
+        d["seq_no"] = d["paste_seq"]
+    # 「这条是粘贴进来的吗」—— 界面上要给它一个来源角标。
+    # 判据是 paste_seq 有没有值，不是 source 字段：source 表达的是
+    # "谁定的分类"（AI / 人工），跟"怎么进来的"是两件事。
+    d["is_paste"] = bool(d.get("paste_seq"))
     d["text"] = content[d["start_offset"]:d["end_offset"]]
     d["chars"] = len(d["text"])
     d["category_name"] = cat_names.get(d["primary_category_id"], "")
@@ -1806,6 +1849,27 @@ def list_cards(owner, material_id=None, category_id=None, sub_tag=None,
                         ON st.id = ct.sub_tag_id
                         WHERE ct.card_id = c.id AND st.name = ?)""")
         params.append(sub_tag)
+
+    # ---- 关键词（2026-10-07，「素材检索」并进素材分类页）----
+    #
+    # 【为什么这个参数以前是死的】
+    #   它一直在签名里、接口也一直在收，但从来没进过 where ——
+    #   也就是"传了没反应，还不报错"。界面上那时候没有搜索框，
+    #   所以没人发现；这次把搜索框做进分类页，它必须真的生效。
+    #
+    # 【为什么用 substr 而不是把正文存一份到 cards】
+    #   卡片正文的唯一定义处就是 materials.content[起点:终点]（现算），
+    #   另行冗余一份迟早会跟原文分叉。SQLite 的 substr 起点从 1 数、
+    #   长度按字符算，跟 Python 的 content[start:end] 逐字对应。
+    #
+    # 【为什么用子查询而不是连 materials】
+    #   下面还有好几条 COUNT 只 FROM cards c，没有这个 join 别名。
+    kw = (keyword or "").strip()
+    if kw:
+        where.append("(SELECT substr(x.content, c.start_offset + 1,"
+                     " c.end_offset - c.start_offset) FROM materials x"
+                     " WHERE x.id = c.material_id) LIKE ? ESCAPE '\\'")
+        params.append("%" + _like_escape(kw) + "%")
 
     # 先留一份**不含主类筛选**的条件，用来算「每个主类各装了多少张」。
     # 为什么：她点了「外貌」之后，如果计数也跟着筛，其他类全变成 0 ——
@@ -1917,6 +1981,204 @@ def list_cards(owner, material_id=None, category_id=None, sub_tag=None,
 
     return {"total": total, "items": items,
             "offset": offset, "limit": limit, "cat_counts": counts}
+
+
+# ----------------------------------------------------------------------
+# 粘贴导入（2026-10-07）
+# ----------------------------------------------------------------------
+#
+# 她的原话：「用户可以选择某一素材分类项目，然后在该地方直接黏贴点确认，
+#           素材直接放入相应素材库的分类。（用户素材是 1.xxx 2.xxx，
+#           需要识别并接上素材库，比如素材库该分类下已经有 230 个素材了，
+#           直接接到 231 下面）」
+#
+# 为什么落成"每次粘贴 = 新的一份素材"：
+#   卡片不存正文，只存「在哪份素材的第几个字到第几个字」——
+#   这是整套校验机制（正文对不上就报警）的地基。粘贴进来的文字
+#   必须有一个落脚的地方，所以给它建一份素材。
+#   它的 source_path 是「（粘贴导入）」，在总素材库里一眼认得出来。
+#
+# 为什么编号要单独存（cards.paste_seq）：
+#   见 migrate() 里那段说明 —— 现算的 #N 是"同一份素材里排第几"，
+#   粘贴导入每粘一次都是一份新素材，现算永远是 #1。
+
+PASTE_SOURCE_PATH = "（粘贴导入）"
+
+
+def next_paste_no(conn, owner, category_id):
+    """这个主类下，下一批粘贴该从几号接着排。
+
+    取「现有卡数」和「现有最大粘贴编号」里大的那个，再 +1。两个都得看：
+
+      · 只看卡数：她删过卡之后卡数变小，已经发出去的编号比卡数大，
+        下一批就会跟老的那批**重号**。
+      · 只看最大编号：她库里原来那批是"切分"出来的，paste_seq 都是 NULL，
+        这一分类下攒了 230 张，那粘贴就该从 231 起 —— 这正是她要的。
+
+    排除掉「已排除」的卡：那些是合并掉/她不要的，不该占编号。
+    """
+    cat = norm_cat(category_id)
+    if cat is None:
+        where = "owner_id=? AND primary_category_id IS NULL"
+        p = [owner]
+    else:
+        where = "owner_id=? AND primary_category_id=?"
+        p = [owner, cat]
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, COALESCE(MAX(paste_seq), 0) AS mx FROM cards"
+        " WHERE " + where + " AND status<>?",
+        p + [sg.STATUS_EXCLUDED]).fetchone()
+    return max(int(row["n"] or 0), int(row["mx"] or 0)) + 1
+
+
+def norm_cat(category_id):
+    """把前端传来的主类 id 统一成 int 或 None（None = 未分类）。
+
+    显式传 ""/0/"0" 都当"未分类"—— 界面上「未分类」就是 value="0"。
+    接口层也要用它：预览接口得先知道"这次要放进哪一类"，
+    才能算出"下一个编号是几"。所以它是公开的（不带下划线）。
+    """
+    if category_id in (None, "", 0, "0"):
+        return None
+    try:
+        return int(category_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _paste_title(conn, cat, owner):
+    """给这次粘贴建的那份素材起个名字：粘贴导入 · 人物 · 10-07 13:45"""
+    name = "未分类"
+    if cat is not None:
+        r = conn.execute("SELECT name FROM categories WHERE id=?",
+                         (cat,)).fetchone()
+        if r:
+            name = r["name"]
+    return "粘贴导入 · %s · %s" % (name, now_str()[5:16])
+
+
+def paste_cards(owner, category_id, text, operator_id=None, skip=None):
+    """把一段粘贴的文本切成一条条卡片，直接放进指定主类。
+
+    返回：
+      {"ok": True, "count": n, "from": 起始编号, "to": 结束编号,
+       "card_ids": [...], "material_id": ..., "skipped": 跳过几条,
+       "message": "…"}
+
+    「跳过」有两个来路，都要**明说跳过了几条**，不能让她以为
+    "我粘了 5 条怎么只进来 3 条"：
+      · skip 参数 —— 她在确认表里手动去掉的那几条（下标）；
+      · 内容指纹撞上 —— 这段文字库里已经有了，那几条也已经建过。
+
+    【为什么是 skip 下标而不是让她改文本】
+      界面上的做法是"在结果表里点 ✕ 去掉一条"。要是把去掉的条目
+      重新拼成一段文本再发过来，入库的正文就不是她粘的那一坨了 ——
+      编号会被重写、空行会没掉，"原文定位"点回去看到的东西
+      跟她粘的不是同一份。所以：文本原样过来，去掉哪几条另说。
+    """
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not raw.strip():
+        return {"ok": False, "count": 0, "message": "粘贴框是空的，没什么可导入的"}
+
+    parsed = sg.parse_paste(raw)
+    items = parsed["items"]
+    # 去掉她在确认表里点掉的那几条。下标越界一律忽略 ——
+    # 那是界面上的陈旧状态，不该让它把整次导入搞崩。
+    if skip:
+        drop = set()
+        for x in skip:
+            try:
+                drop.add(int(x))
+            except (TypeError, ValueError):
+                continue
+        items = [it for i, it in enumerate(items) if i not in drop]
+    dropped = len(parsed["items"]) - len(items)
+
+    if not items:
+        return {"ok": False, "count": 0,
+                "message": "没认出任何一条素材 —— 检查一下是不是只有编号、没有正文"}
+
+    cat = norm_cat(category_id)
+
+    with db.connect() as conn:
+        if cat is not None:
+            ok = conn.execute(
+                "SELECT 1 FROM categories WHERE id=? AND active=1"
+                " AND (owner_id='' OR owner_id=?)",
+                (cat, owner)).fetchone()
+            if not ok:
+                return {"ok": False, "count": 0,
+                        "message": "没有这个主类，可能刚被停用了。刷新一下再试"}
+
+        title = _paste_title(conn, cat, owner)
+        saved = db.save_material(title=title, text=raw,
+                                 ext=".txt", source_path=PASTE_SOURCE_PATH,
+                                 note="粘贴导入", owner=owner)
+        mid = saved["id"]
+
+        # 同一段文字再粘一次（save_material 认出内容已有）时，
+        # 已经建过的那几条不重复建 —— 否则库里会出现两张一模一样的卡。
+        old_spans = set()
+        if saved.get("status") == "same":
+            old_spans = {(r["start_offset"], r["end_offset"]) for r in conn.execute(
+                "SELECT start_offset, end_offset FROM cards"
+                " WHERE owner_id=? AND material_id=?", (owner, mid)).fetchall()}
+
+        start_no = next_paste_no(conn, owner, cat)
+        ts = now_str()
+        ids, skipped = [], 0
+        for it in items:
+            if (it["start"], it["end"]) in old_spans:
+                skipped += 1
+                continue
+            # 编号在**建卡那一刻**定死。跳过的那几条不占号，所以
+            # 号是连续发出去的（ids 里的顺序就是号序）。
+            no = start_no + len(ids)
+            cur = conn.execute(
+                """INSERT INTO cards
+                   (owner_id, material_id, start_offset, end_offset,
+                    source_text_hash, segment_id, primary_category_id,
+                    source, status, note, parent_card_id, operation_group_id,
+                    paste_seq, created_at, updated_at)
+                   VALUES (?,?,?,?,?,NULL,?,?,?,?,NULL,'',?,?,?)""",
+                (owner, mid, it["start"], it["end"],
+                 sg.text_hash(raw[it["start"]:it["end"]]),
+                 cat, sg.SOURCE_HUMAN, sg.STATUS_PENDING, "",
+                 no, ts, ts))
+            ids.append(cur.lastrowid)
+
+        if not ids:
+            return {"ok": False, "count": 0, "skipped": skipped,
+                    "material_id": mid,
+                    "message": "这段内容库里已经有了，%d 条一条都没重复建" % skipped}
+
+        # 留一条变更记录，跟别的批量操作一个待遇（能撤销）。
+        #
+        # 撤销时走的是 undo_change 里那条"这次新建出来的卡 → 标成已排除"的路：
+        #   判据是 after 里有、before 里没有。所以这里 after 要列全，
+        #   每个 id 给一个空字段表（粘贴导入不改任何已有字段，
+        #   它只是"多了几张卡"，撤销 = 把这几张收起来）。
+        # 【为什么是"排除"不是"删除"】跟全站一个规矩：不物理删除，
+        #   排除之后还躺在库里，以后能恢复。
+        change_id = _write_change(
+            conn, owner, "paste_import", operator_id, mid,
+            len(ids), ids, {},
+            {str(i): {} for i in ids},
+            sample_result="paste",
+            summary="粘贴导入 %d 条到「%s」" % (len(ids), title))
+
+        msg = "已导入 %d 条，编号 #%d 到 #%d" % (len(ids), start_no,
+                                                start_no + len(ids) - 1)
+        if dropped:
+            msg += "（去掉了你点掉的那 %d 条）" % dropped
+        if skipped:
+            msg += "（其中 %d 条库里已有，没重复建）" % skipped
+        return {"ok": True, "count": len(ids), "skipped": skipped,
+                "dropped": dropped,
+                "from": start_no, "to": start_no + len(ids) - 1,
+                "card_ids": ids, "material_id": mid, "material_title": title,
+                "change_id": change_id,
+                "message": msg}
 
 
 def _duplicate_ids(conn, items):

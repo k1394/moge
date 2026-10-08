@@ -79,6 +79,14 @@ PROMPT_FILE = "outline.txt"
 PROMPT_VERSION = "v1"
 PROMPT_VERSION_GENERIC = "v1-generic"
 
+# 改写对比（2026-10-08 折腰要的）用的另一套模板。
+# 它跟大纲生成是**两件完全不同的事**（一个"写"，一个"看别人怎么写"），
+# 塞进同一个模板只会两边都别扭，所以另开一档、另存一个文件。
+# 三层规矩照旧：常量（公开）/ prompts/rewrite.txt（真货）/ example.rewrite.txt（公开占位）
+PROMPT_FILE_REWRITE = "rewrite.txt"
+PROMPT_VERSION_REWRITE = "rw1"
+PROMPT_VERSION_REWRITE_GENERIC = "rw1-generic"
+
 # 模板里必须存在的槽位。少一个就退回通用模板 + 把警告写进任务备注，
 # 绝不静默丢内容（跟分类/内化同一条规矩）。
 REQUIRED_SLOTS = ("worldview", "characters", "plots", "constraints",
@@ -93,6 +101,22 @@ REQUIRED_SLOTS = ("worldview", "characters", "plots", "constraints",
 # 老模板照样能吃到素材：_system_block 会检测模板里有没有这个槽位，
 # 没有就把素材块追加到 system 末尾（见那边的注释）。
 OPTIONAL_SLOTS = ("reference_cards",)
+
+# 改写对比模板的槽位。**跟大纲那套完全独立** ——
+# 用同一个 _SLOT_RE 拼的话，两边的槽位名会互相认（改写模板里写个
+# {plots} 会被当成大纲的零件块填进去），那种错很隐蔽。
+#
+# 【阶段一加了 align】折腰第 4 条要"逐段对齐要允许不确定、
+# 不能用复杂结果掩盖错误"。只给模型一份汇总统计（{diff}）时，
+# 它看不出"这两段其实是同一段被拆开的"，于是把拆分报成删+加。
+# {align} 是逐段的对齐明细，每行标了"程序认的""这条不确定"。
+# 加它必须同步改 prompts/rewrite.txt 与 prompts/example.rewrite.txt ——
+# 真实模板少一个槽位就静默退回通用模板，只在任务记录里留一行警告。
+REWRITE_SLOTS = ("ai_outline", "user_outline", "align", "diff",
+                 "worldview", "characters")
+
+_REWRITE_SLOT_RE = re.compile(
+    r"\{(" + "|".join(REWRITE_SLOTS) + r")\}")
 
 _SLOT_RE = re.compile(
     r"\{(" + "|".join(REQUIRED_SLOTS + OPTIONAL_SLOTS) + r")\}")
@@ -351,6 +375,213 @@ source_plot_ids 里写上它的 plot_id。没用就别挂 ——
 另外：生成会被分成几步（先规划节点骨架，再分批写节点，最后补高潮结局）。
 每一步的指令会告诉你要输出哪一块，你只输出那一块，字段名按上面的来。
 """
+
+
+# ----------------------------------------------------------------------
+# 改写对比：她交一份成品，让模型看"她把 AI 的那版改成了什么样"
+# ----------------------------------------------------------------------
+#
+# 【这件事为什么值得单开一套提示词】
+# 大纲生成是"写"，成败看她照着能不能动笔。
+# 改写对比是"看"——输入是两份已经写完的东西，输出是**关于她的规律**。
+# 同一个模板干两件事，只会把两边的措辞都写糊。
+#
+# 【最要紧的一条约束】
+# 归纳出来的必须是"她怎么写"的规律，不是"这篇写了什么"的内容。
+# 一旦模型把具体人物、具体桥段写进结论，下次生成就会照着搬 ——
+# 她要的是"AI 学她的手法"，不是"AI 抄她这一篇"。这条在提示词里要说死。
+GENERIC_REWRITE_PROMPT = """你是"墨阁"的写作习惯分析师。
+
+作者用 AI 生成过一版大纲，然后**自己改写了一遍**（或者干脆推倒重写）。
+现在请你对照这两份，找出她**怎么改的**，并总结成可供以后参考的习惯。
+
+【你要学的是什么】
+写作层面的东西：人物目标和行动动机、因果关系、情节推进、
+场景怎么推动故事、信息什么时候揭露、铺垫有没有回收、转折有没有依据、
+结局有没有把主线收完、细纲有没有给出足够具体可写的行动。
+措辞习惯也看，但不是重点。
+
+============================================================
+一、你要输出的东西（只这一段，别的都别写）
+============================================================
+
+一条条**可复用的写作方法**，而不是对这两份大纲的评价。
+每条都要写清三件事：**在什么情况下**、**采取什么方法**、**解决什么问题**。
+再补上**什么时候适用**、**什么时候不适用** ——
+不适用条件不是客套，是防止这条被不分场合地硬套。
+
+判断标准：
+    · 好：「她习惯在高潮前把铺垫拉长，最后一两三段的篇幅明显加厚」
+      → 说的是"怎么做"，下次生成照着做有用
+    · 坏：「这篇的第 4 段写得不错」
+      → 说的是"这一篇"，下次没法用
+
+============================================================
+二、分类：kind
+============================================================
+
+只能填这九个之一：
+新增事件 / 删除事件 / 顺序调整 / 动机改变 / 冲突处理改变 /
+信息揭露时机改变 / 铺垫回收变化 / 结局关系变化 / 仅措辞格式标题
+
+前八个是"改了什么"，最后一个专给"只动了措辞、没动内容"的情况。
+
+============================================================
+三、硬边界（不许越）
+============================================================
+
+1. **绝对不许把具体内容带进结论。**
+   角色名、地名、门派名、专有名词、具体桥段、原句、比喻 ——
+   一个都不许出现在你的总结里。结论只谈手法：
+   删了什么类型的东西、加了什么类型的东西、把什么改成了什么方向、
+   节奏往哪边挪、篇幅怎么重新分配。
+
+2. **不许替她脑补理由、也不许武断评价她。**
+   至于"她为什么删" —— 除非她在备注里写了，否则只能写成
+   **带证据的推测**，而且要写明这是推测。
+   猜出来的动机最容易被当成事实，然后一路错下去。
+
+3. **她的版本不是"更好"的代名词。**
+   她改了不等于她改对了，"跟她不一样"也不等于"AI 错了"。
+   **不许**把"人工稿不同"一律解释成"人工稿更好"。
+
+============================================================
+四、但要敢指出具体问题（有证据才行）
+============================================================
+
+上面第 2、3 条不是让你和稀泥。**原稿哪里不足、她怎么解决的** ——
+这正是最该学的东西，写不出来这套学习就白做了。
+
+有**原文证据**的质量问题，要直接指出来。例如：
+  · 原稿这一段只有结果、没有行动动机，她补了一个触发事件
+  · 原稿结尾没有回应前面的铺垫，她让最后一段把那条线收了
+  · 原稿某段违反角色卡里定的禁忌，她改成别的处理方式
+  · 原稿两段之间缺因果连接，她加了一句过渡
+
+写这类话时必须带上证据：**原稿的哪一段、什么问题、她改成了什么**。
+证据落在 problem / evidence / improved 三个字段里。
+
+· **审美判断**（"这样更抓人"）→ 可以写，但要标出来这是主观判断。
+· **不确定的推测** → 只能写成推测，写进 uncertain 字段。
+
+============================================================
+五、两份大纲
+============================================================
+
+【AI 生成的那一版】
+{ai_outline}
+
+============================================================
+【她自己改写后的成品】
+{user_outline}
+
+============================================================
+六、程序自动做的逐段对齐（辅助线索，可能认错）
+============================================================
+
+下面的对齐是程序按段落顺序自动认出来的，**只是线索，不是结论**。
+程序认段会出错（她改动大、或者段落被合并拆分、大段移位时尤其容易错）。
+它标"不确定"的地方是真的不确定 —— **不要**因为表格里给它配了一行
+就当成事实。**以你读到的两份全文和创作要求为准**；
+对齐结果跟你自己读出来的结论打架时，**信你自己**。
+
+{align}
+
+============================================================
+七、程序算的结构差异统计（辅助线索）
+============================================================
+
+同一件事的另一个角度，只有汇总数字。一样只是线索。
+
+{diff}
+
+============================================================
+八、当时的设定（帮你理解她在什么前提下改的）
+============================================================
+
+【世界观】
+{worldview}
+
+【角色卡】
+{characters}
+
+============================================================
+九、输出格式：只输出一个合法 JSON 对象，前后不要任何解释
+============================================================
+
+{
+  "summary": "一句话说清她这次改写最明显的特点（不超过 60 字）",
+  "points": [
+    {
+      "kind": "这条属于哪一类。只能是：新增事件、删除事件、顺序调整、动机改变、冲突处理改变、信息揭露时机改变、铺垫回收变化、结局关系变化、仅措辞格式标题",
+      "point": "她做了什么。用『她习惯…』『她倾向…』这种说法，不许出现具体人名地名。",
+      "problem": "原稿的问题。有原文证据才写，写清是原稿哪一处、缺了什么；没有就填空字符串。",
+      "change": "她这一处的具体做法（说手法，不带具体人名地名）。",
+      "evidence": "你根据什么这么判断 —— 指出是 AI 版第几段 / 她那版第几段之间发生了什么。",
+      "improved": "这个改法解决了什么问题。解决不了就别写、别硬夸。",
+      "method": "以后生成时具体该怎么做。要能直接照着执行，比如『开场不要一次给全背景，留一半到第二段再说』。",
+      "applies_when": "什么时候适用（写清条件）。",
+      "not_when": "什么时候不适用（不加这句这条会被不分场合地硬套）。",
+      "scope": "适用范围。只能填：长期偏好 / 情境适用 / 仅本篇。拿不准就填「仅本篇」。",
+      "confidence": "你这条判断的把握。只能填：充分 / 一般 / 不足。",
+      "uncertain": "有没有拿不准的地方（对齐不确定、或这只是推测）。确定就填空字符串。"
+    }
+  ]
+}
+
+【scope 三个值】
+· 长期偏好 —— 跟具体题材无关、是她一贯的写法，以后每次都该参考。
+· 情境适用 —— 只在某类情境下成立（把情境写进 applies_when）。
+· 仅本篇 —— 只在这一次的设定下成立，换篇就不该套用。
+**拿不准就填「仅本篇」** —— 宁可这条先不外扩，也不能把一次性的改动
+当成她的长期习惯。
+
+【confidence 跟 scope 是两件事】
+scope 说的是"这条以后用在哪"，confidence 说的是"你现在有多确定"。
+一条完全可能是"仅本篇 + 判断充分"，也可能是"长期偏好 + 判断一般"。
+如果你觉得"这条还需要她解释一下才说得清"，
+就把 confidence 填「不足」，并在 uncertain 里写明你想问什么。
+
+· points 最多 8 条，**只写你真有把握的**。
+  两份大纲看下来只看出 3 条，就写 3 条 —— 凑数的结论比没有更坏，
+  它会一路影响以后每一次生成，而且她一直不知道是哪条在捣乱。
+· 实在看不出来（比如两份几乎一样、或者她那版太短），
+  就 points 给空数组 []，并在 summary 里如实写明"这次没有明显的改写规律"。
+· 数组里没有内容就给空数组 []，不要省略字段。
+· 不确定的字段一律给空字符串 ""，不要写"无""暂无""N/A"。
+"""
+
+
+def rewrite_template():
+    """取改写对比要用的模板。返回 (模板文本, 来源, 警告语)。
+
+    跟 prompt_template() 同一套规矩：来源只有 file / builtin，
+    少了槽位就退回内置模板并把缺哪个写进警告 —— 绝不静默丢内容。
+    """
+    path = os.path.join(ROOT_DIR, "prompts", PROMPT_FILE_REWRITE)
+    if not os.path.isfile(path):
+        return GENERIC_REWRITE_PROMPT, "builtin", ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            txt = f.read().strip()
+    except Exception as e:                                  # pragma: no cover
+        return (GENERIC_REWRITE_PROMPT, "builtin",
+                "prompts/%s 读不了（%s），这次用通用模板" % (PROMPT_FILE_REWRITE, e))
+    if not txt:
+        return (GENERIC_REWRITE_PROMPT, "builtin",
+                "prompts/%s 是空的，这次用通用模板" % PROMPT_FILE_REWRITE)
+    lost = [s for s in REWRITE_SLOTS if ("{%s}" % s) not in txt]
+    if lost:
+        return (GENERIC_REWRITE_PROMPT, "builtin",
+                "prompts/%s 少了占位符 %s（那几处内容会被丢掉），"
+                "这次改用通用模板" % (PROMPT_FILE_REWRITE, "、".join(lost)))
+    return txt, "file", ""
+
+
+def rewrite_prompt_version():
+    _, src, _ = rewrite_template()
+    return (PROMPT_VERSION_REWRITE if src == "file"
+            else PROMPT_VERSION_REWRITE_GENERIC)
 
 
 def prompt_template():
@@ -665,18 +896,66 @@ def _constraints_block(hook, design, hook_ai_derived=False):
     return "\n\n".join(parts)
 
 
-def _learning_block(examples):
+def _learning_block(examples, rewrites=None):
+    """两块拼一起，因为它们说的事是同一件：她想要什么样的东西。
+
+    刻意**分成两段**而不是合成一列 ——
+      · 第一块是"别写什么"（她标过不可用的毛病）
+      · 第二块是"要写成什么样"（她改写时表现出来的取向）
+    只给第一块，模型会一直躲着毛病写，却不知道要往哪边靠；
+    只给第二块，它又会照着她喜欢的样子写、同时踩她讨厌的坑。
+    """
+    parts = []
     if not examples:
-        return "（她还没有勾选过可供参考的修改案例。）"
-    parts = ["她以前把这些地方判成「不可用」，写的时候避开同样的毛病："]
-    for e in examples:
-        line = "· %s" % (e.get("problem") or "（没写原因）")
-        if e.get("note"):
-            line += " —— %s" % e["note"]
-        parts.append(line)
-    parts.append("注意：这只是「她不满意什么」的概括，"
-                 "**不要**把任何具体人物、作品或情节搬过来。")
-    return "\n".join(parts)
+        parts.append("【她标过「不可用」的地方】\n（她还没有标过。）")
+    else:
+        lines = ["【她标过「不可用」的地方】写的时候避开同样的毛病："]
+        for e in examples:
+            line = "· %s" % (e.get("problem") or "（没写原因）")
+            if e.get("note"):
+                line += " —— %s" % e["note"]
+            lines.append(line)
+        lines.append("注意：这只是「她不满意什么」的概括，"
+                     "**不要**把任何具体人物、作品或情节搬过来。")
+        parts.append("\n".join(lines))
+
+    rw = [r for r in (rewrites or []) if r.get("points")]
+    if not rw:
+        parts.append("【她的改写取向】\n"
+                     "（她还没交过改写对比，这一块暂时是空的。）")
+    else:
+        lines = ["【她的改写取向】她拿 AI 的稿子自己改写过，"
+                 "下面是**她确认过**的规律。这些说的是「她想要什么」，"
+                 "尽量照做 —— 但**一样不许把任何具体人名、地名、桥段搬过来**，"
+                 "它们只是从那些稿子里归纳出来的写法："]
+        for r in rw:
+            if r.get("summary"):
+                lines.append("· （%s）" % r["summary"])
+            for p in r["points"]:
+                k = p.get("kind") or ""
+                sc = odb.REWRITE_SCOPE_LABELS.get(p.get("scope") or "", "")
+                t = p.get("point") or ""
+                # 【发出来的是哪些字段】method（可复用的做法）优先 ——
+                # 没有 method 才退回 how。做法才是能照着执行的那一句，
+                # "她做了什么"（point）只是这条规则的来历。
+                h = p.get("method") or p.get("how") or ""
+                tag = ("[%s]" % k) if k else ""
+                if sc:
+                    tag = ("%s[%s]" % (tag, sc)) if tag else ("[%s]" % sc)
+                line = "   - " + tag + " " + t
+                if h:
+                    line += "　→ 具体怎么做：%s" % h
+                # 适用情境 / 不适用 —— 需求第 6 条要的是"可复用方法 + 适用条件"，
+                # 少了这两个，模型会把它当"哪篇都得照做"的硬规矩。
+                if p.get("applies_when"):
+                    line += "　（适用：%s）" % p["applies_when"]
+                if p.get("not_when"):
+                    line += "　（不适用：%s）" % p["not_when"]
+                lines.append(line)
+        lines.append("注意：上面这几条**不许压过**当前的设定和这次的具体要求 —— "
+                     "情境不沾边就别硬套。")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def _system_block(ctx):
@@ -701,7 +980,8 @@ def _system_block(ctx):
         constraints=_constraints_block(ctx.get("hook"), ctx.get("design")),
         target_words=_target_words_block(ctx.get("target_words"),
                                          ctx.get("tier") or odb.word_tier(0)),
-        learning_examples=_learning_block(ctx.get("learning") or []),
+        learning_examples=_learning_block(ctx.get("learning") or [],
+                                          ctx.get("rewrites") or []),
         user_prompt=user_block,
     )
     # 老模板里没有 {reference_cards} 槽位时，素材块在上面那一步根本没被
@@ -813,6 +1093,11 @@ def build_ctx(owner, data):
     plan = plan_candidate_plots(owner, data)
     pool_ids = [p["id"] for p in plan["items"]]
     learning = odb.learning_examples(owner, limit=3) if data.get("use_learning", True) else []
+    # 她交过的改写对比（"她会把东西改成什么样"）。跟上面那块共用同一个开关 ——
+    # 界面上那个勾选写的是「参考以前标过的『不可用』」，但它真实的作用是
+    # "这次要不要参考你过去的东西"。两样都归它管，不然屏幕上会多出
+    # 一个说不清差别的开关。
+    rewrites = odb.rewrite_examples(owner, limit=2) if data.get("use_learning", True) else []
 
     user_prompt = (data.get("user_prompt") or "").strip()
 
@@ -862,6 +1147,7 @@ def build_ctx(owner, data):
         "stuck": plan.get("stuck") or [],
         "plot_status_counts": plan.get("status_counts") or {},
         "learning": learning,
+        "rewrites": rewrites,
         "user_prompt": user_prompt,
         "reference_enabled": ref_enabled,
         "reference_limit": ref_limit,
@@ -878,13 +1164,9 @@ def preview_input(owner, data):
     ctx = build_ctx(owner, data)
 
     # ---- 校验 ----
+    # 世界观和角色卡 2026-10-07 起是选填（见 create_run 里的说明），
+    # 所以这里不再为它们报 problem。剩下的都是"真会出错"的项。
     problems = []
-    if not ctx["worldview"]:
-        problems.append({"field": "worldview",
-                         "message": "世界观是必填的。可以直接粘贴，也可以上传 txt。"})
-    if not ctx["characters"]:
-        problems.append({"field": "characters",
-                         "message": "至少要关联一张角色卡。"})
     if ctx["target_words"] < odb.TARGET_WORDS_MIN:
         problems.append({"field": "target_words",
                          "message": "预期字数至少 %d 字。" % odb.TARGET_WORDS_MIN})
@@ -1115,16 +1397,14 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
     """
     data = data or {}
 
-    # ---- 世界观 / 角色卡 / 字数的硬校验，在**建任务之前**做 ----
-    # 放在这儿而不是线程里，是为了让她立刻看到"哪儿没填"，
-    # 而不是等半分钟之后从任务状态里读出"失败"。
+    # ---- 硬校验：只剩字数 ----
+    # 世界观和角色卡 2026-10-07 由折腰拍板改成**选填**：
+    #   原话「世界观跟角色卡改成非必填」。
+    # 两者为空时照样能跑 —— 提示词里对应的只是两块空内容，不会报错；
+    # 代价是那份大纲少了两样最重的输入，质量靠她自己把握。
+    # 仍然放在**建任务之前**（而不是线程里）：她点了就该立刻看到
+    # "哪儿没填"，而不是等半分钟从任务状态里读出"失败"。
     ctx = ctx or build_ctx(owner, data)
-    if not ctx["worldview"]:
-        return {"ok": False, "reason": "no_worldview",
-                "message": "世界观是必填的 —— 粘贴一段或者传个 txt 都行。"}, None
-    if not ctx["characters"]:
-        return {"ok": False, "reason": "no_character",
-                "message": "至少要关联一张角色卡。"}, None
     if ctx["target_words"] < odb.TARGET_WORDS_MIN:
         return {"ok": False, "reason": "bad_words",
                 "message": "预期字数至少 %d 字。" % odb.TARGET_WORDS_MIN}, None
@@ -1249,6 +1529,23 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
                  odb._dumps(ctx["pool_ids"]), RUN_QUEUED, len(ok_keys),
                  send_chars, retry_of_run_id, input_hash, ts))
             run_id = cur.lastrowid
+
+    # ---- 记下"这一次实际采用了哪几条学习条目"（需求第 8 条）----
+    # 【为什么必须落库】从这里开始，同一份输入哈希的 run 可能被缓存命中，
+    # 也可能被重跑；她以后问"我明明接受了 5 条，为什么这次生成没变化"——
+    # 只有这条记录能回答"这次只注入了 2 条"或"那 3 条是仅本篇"。
+    # 记的是**真正会被拼进提示词的那几条**，不是"学习开关是开着的"。
+    # 写失败绝不能拖垮生成（它只是审计信息），所以整段兜住。
+    try:
+        used = []
+        for r in (ctx.get("rewrites") or []):
+            for p in (r.get("points") or []):
+                used.append(p)
+        if used:
+            odb.record_learning_use(owner, run_id, used, batch="plan",
+                                    stage="all")
+    except Exception:                                       # pragma: no cover
+        pass
 
     if background:
         t = threading.Thread(target=_run_worker, args=(run_id, owner),
@@ -2131,6 +2428,343 @@ def delete_finished_runs(owner):
     return len(ids)
 
 
+# ----------------------------------------------------------------------
+# 改写对比：她交一份成品，让模型看"她把 AI 的那版改成了什么样"
+# ----------------------------------------------------------------------
+#
+# 【这一块跟上面那套"生成"最大的不同】
+# 生成是"跑一大堆、挑一份"，改写对比是"一次调用、出一份结论"。
+# 所以这里不需要任务表、不需要候选、不需要并发 ——
+# 一行 outline_rewrites 就是一个活儿，跑完把结论写回那一行。
+#
+# 【为什么同步跑也敢】
+# 这是一次几百字的短回答（不是几千字的大纲），一两分钟就完了。
+# 但界面上仍然走"点一下 → 转圈 → 出结果"这条最简单的路，
+# 不为它单开一套任务状态机 —— 那种复杂度换不来什么。
+
+REWRITE_TIMEOUT = 300       # 一次对比等多久算超时
+REWRITE_MAX_RETRY = 1       # **超时不重试**：服务端可能已经算完，重试就多扣一次钱
+
+
+def pick_rewrite_model(owner, model_key=""):
+    """挑一个用来做对比的模型。
+
+    她指定了就用她指定的；没指定就用默认的那个。
+    挑不到就报错 —— 这里**不能**静默退回一个"能跑就行"的模型：
+    她会以为是自己选的那个在分析，结果换了模型也不知道。
+    """
+    key = (model_key or "").strip()
+    if key:
+        cfg = cls.pick_model(key)
+        return cfg
+    return cls.pick_model(None)
+
+
+def _outline_text_of(obj):
+    """把一份大纲 JSON 摊成可读全文。用数据层现成的渲染 ——
+    前端"复制全文"、这里的对比输入，必须是**同一份文本**，
+    两处各写一份迟早不一样。"""
+    if not isinstance(obj, dict):
+        return ""
+    try:
+        return odb.render_outline_text(obj)
+    except Exception:                                        # pragma: no cover
+        return ""
+
+
+def _diff_block(diff):
+    """把结构差异摊成一段给模型看的文字。
+
+    【为什么还要人话版】模型能读 JSON，但读 JSON 的时候容易
+    把字段名当成结论（把 removed_nodes 里的每个 id 都写成"删了"）。
+    这里顺手翻成中文句子，并**明说这是程序自动认的、可能认错**。
+    """
+    d = diff if isinstance(diff, dict) else {}
+    if not d or not d.get("by_text"):
+        return "（这次的差异没算出来 —— 没有可对比的 AI 原稿。）"
+    L = []
+    if d.get("nodes_before") is not None:
+        L.append("段落数：%s → %s" % (d.get("nodes_before"), d.get("nodes_after")))
+    rm = d.get("removed_nodes") or []
+    if rm:
+        L.append("疑似被她删掉的段落 %d 段：%s"
+                 % (len(rm), "、".join(x.get("node_title") or "（无标题）" for x in rm)))
+    ad = d.get("added_nodes") or []
+    if ad:
+        L.append("疑似她新加的段落 %d 段：%s"
+                 % (len(ad), "、".join(x.get("node_title") or "（无标题）" for x in ad)))
+    ch = d.get("changed_nodes") or []
+    if ch:
+        L.append("疑似被她改过的段落 %d 段：" % len(ch) + "；".join(
+            "%s（像 %.0f%%）" % (x.get("node_title") or "（无标题）",
+                              (x.get("similarity") or 0) * 100) for x in ch))
+    if d.get("reordered"):
+        L.append("段落顺序跟 AI 那版不一样。")
+    L.append("字数：%s → %s" % (d.get("words_before") or 0, d.get("words_after") or 0))
+    L.append("")
+    L.append("（再强调一次：上面这些是程序按段落位置自动认的，"
+             "她改动大时很可能认错。以你读到的两份全文为准。）")
+    return "\n".join(L)
+
+
+def _align_block_of(rec, ai_text, user_text):
+    """给她改动对比用的逐段对齐块（辅助线索，带不确定标记）。
+
+    【为什么要重算，而不是拿 rec["diff"] 凑】
+    rec["diff"] 是按 **node_id** 比出来的 —— 她"把两段合成一段"这种改动
+    在 id 上表现为"新节点的 id 没见过"，于是被报成"删了 2 段 + 加了 1 段"。
+    折腰第 4 条点名不许这么干（"不要为了让表格完整而强行配对"、
+    "支持新增、删除、一对多、多对一以及无法确定对应关系"）。
+    align_events 是按**正文**重算的，认得合并/拆分/移位，认不准的标 uncertain。
+
+    算不出来（没有 AI 原稿、或者正文是那段占位说明）就如实说没有，
+    不能让模型以为"对齐结果是空的 = 她没改"。
+    """
+    if not (ai_text or "").strip() or not (user_text or "").strip():
+        return ("（这条没有 AI 原稿可对齐 —— 她这份是自己写的，"
+                "所以下面没有『哪段改自哪段』的信息，"
+                "请只从她自己那份里归纳她的写法。）")
+    # 占位说明不是真原稿，别拿去对齐
+    if ai_text.startswith("（这一条没有关联到任何一版 AI 原稿"):
+        return ("（这条没有 AI 原稿可对齐 —— 她这份是自己写的，"
+                "所以下面没有『哪段改自哪段』的信息，"
+                "请只从她自己那份里归纳她的写法。）")
+    try:
+        a = odb.text_to_outline_json(ai_text)
+        u = odb.text_to_outline_json(user_text)
+        al = odb.align_events(a, u)
+        return odb.align_block(al)
+    except Exception as e:                                  # pragma: no cover
+        return ("（自动对齐这次算不出来：%s。"
+                "请直接读上面两份全文自己比对。）" % e)
+
+
+def _worldview_block_of(text):
+    t = (text or "").strip()
+    return t if t else "（这次没有世界观。）"
+
+
+def _characters_block_of(chars):
+    if not chars:
+        return "（这次没有角色卡。）"
+    L = []
+    for c in chars:
+        bits = [c.get("name") or ""]
+        for k, label in (("identity", "身份"), ("personality", "性格"),
+                         ("goal", "目标"), ("relation", "关系"),
+                         ("taboo", "禁忌")):
+            v = (c.get(k) or "").strip()
+            if v:
+                bits.append("%s：%s" % (label, v))
+        L.append("· " + "　".join(bits))
+    return "\n".join(L)
+
+
+def analyze_rewrite(owner, rewrite_id, background=False):
+    """跑一次"AI 看她改了什么"。返回结果字典。
+
+    两种跑法：
+      background=False  当场跑完再返回（**测试必须用这条**，
+                        否则断言拿到的是"还没跑完"）
+      background=True   起个线程，立刻返回；结果写回那一行
+    """
+    rec = odb.get_rewrite(owner, rewrite_id)
+    if not rec:
+        return {"ok": False, "reason": "not_found",
+                "message": "没有这一条改写记录。"}
+
+    if background:
+        t = threading.Thread(target=_do_analyze, args=(owner, int(rewrite_id)),
+                             daemon=True)
+        t.start()
+        return {"ok": True, "started": True,
+                "message": "开始对比了。它跑完会把结论写在这一条上。"}
+
+    return _do_analyze(owner, int(rewrite_id))
+
+
+def _do_analyze(owner, rewrite_id):
+    rec = odb.get_rewrite(owner, rewrite_id)
+    if not rec:
+        return {"ok": False, "reason": "not_found",
+                "message": "没有这一条改写记录。"}
+
+    # 先标记"分析中"。失败了一定要改回去 —— 不然界面上会永远转圈，
+    # 她只能靠删掉重建（这就是"卡住没出路"那一类伤）。
+    odb.set_rewrite_summary(owner, rewrite_id, [], "", "",
+                            status=odb.REWRITE_RUNNING)
+
+    def _fail(msg):
+        odb.set_rewrite_summary(owner, rewrite_id, [], "", "",
+                                status=odb.REWRITE_FAILED, error=msg)
+        return {"ok": False, "reason": "failed", "message": msg}
+
+    # ---- 1) AI 原稿：只有挂了候选才有 ----
+    ai_json = {}
+    ai_text = ""
+    world = ""
+    chars = []
+    hook = ""
+    design = ""
+    target_words = 0
+
+    # 设定优先用**这一条 rewrite 上存的快照**（阶段一加的），
+    # 老记录没有快照才退回那次任务的输入快照。
+    #
+    # 【为什么不直接读 run】需求第 4 条要"这条建议是在什么设定下得出的"
+    # 能单独拿出来看。run 会被清理、它的输入也可能被改；
+    # 存在 rewrite 行上的那份才是这条学习记录**自己的**来源。
+    snap = rec.get("snapshot") or {}
+    world = snap.get("worldview") or ""
+    chars = snap.get("characters") or []
+    hook = snap.get("one_sentence_hook") or ""
+    design = snap.get("plot_design") or ""
+    try:
+        target_words = int(snap.get("target_words") or 0)
+    except (TypeError, ValueError):
+        target_words = 0
+
+    if rec.get("candidate_id"):
+        try:
+            cand = get_candidate(int(rec["candidate_id"]), owner)
+        except Exception:
+            cand = None
+        if cand:
+            ai_json = cand.get("content_json") or {}
+            ai_text = cand.get("content_text") or _outline_text_of(ai_json)
+        # 老记录（阶段一之前建的）没有快照，退回 run 的输入。
+        if not world and not chars:
+            try:
+                run = get_run(int(rec["run_id"]), owner) if rec.get("run_id") else None
+            except Exception:
+                run = None
+            inp = (run or {}).get("input") or {}
+            world = inp.get("worldview") or ""
+            chars = inp.get("character_snapshot") or []
+            hook = hook or inp.get("one_sentence_hook") or ""
+            design = design or inp.get("plot_design") or ""
+            if not target_words:
+                try:
+                    target_words = int(inp.get("target_words") or 0)
+                except (TypeError, ValueError):
+                    target_words = 0
+
+    if not ai_text.strip():
+        # 需求第 3 条：独立创作**不许假装是对 AI 原稿的修改**。
+        # 这里明说没原稿，提示词那边也交代了模型别去编"她删掉了什么"。
+        ai_text = ("（这一条没有关联到任何一版 AI 原稿 —— "
+                   "她这份是完全自己写的，没有可对照的原稿。"
+                   "**不要**去说「她删掉了什么」「她新加了什么」，"
+                   "只从她自己这份里归纳她的取向。）")
+
+    # ---- 2) 拼提示词 ----
+    tpl, src, warn = rewrite_template()
+    diff_block = _diff_block(rec.get("diff") or {})
+    # 逐段对齐（阶段一加的）：程序按正文重新算一遍。
+    # 老记录只存了 diff（按 node_id 比的），它认不出"两段被合成一段"，
+    # 所以这里**重新算**，而不是把 diff 换个说法。算不出来就如实说。
+    align_block = _align_block_of(rec, ai_text, rec.get("user_text") or "")
+    slots = {
+        "ai_outline": ai_text,
+        "user_outline": rec.get("user_text") or "",
+        "align": align_block,
+        "diff": diff_block,
+        "worldview": _worldview_block_of(world),
+        "characters": _characters_block_of(chars),
+    }
+
+    def _sub(m):
+        return slots.get(m.group(1), m.group(0))
+    system = _REWRITE_SLOT_RE.sub(_sub, tpl)
+
+    # ---- 当时的创作要求（一句话梗 / 情节设计 / 预期字数）----
+    # 需求第 1 条点名的"原始创作要求"这三样，原来分析时**根本没给模型**，
+    # 于是它没法判断"她这么改是顺着要求来的、还是跑偏了"。
+    req_lines = []
+    if hook.strip():
+        req_lines.append("· 一句话梗：%s" % hook.strip())
+    if design.strip():
+        req_lines.append("· 情节要求：%s" % design.strip())
+    if target_words:
+        req_lines.append("· 预期字数：约 %d 字" % target_words)
+    user = ("请按上面的要求，对照这两份大纲，只输出那个 JSON 对象。")
+    if req_lines:
+        user += "\n\n【当时给 AI 的创作要求（判断她改动意图时参考）】\n" \
+                + "\n".join(req_lines)
+    if rec.get("note"):
+        user += "\n\n【她自己写的一句备注】%s\n" % rec["note"]
+
+    msgs = [{"role": "system", "content": system},
+            {"role": "user", "content": user}]
+
+    # ---- 3) 选模型、发请求 ----
+    try:
+        cfg = pick_rewrite_model(owner, "")
+    except ValueError as e:
+        return _fail(str(e))
+
+    opts = dict(temperature=0.2, timeout=REWRITE_TIMEOUT,
+                max_retry=REWRITE_MAX_RETRY, purpose="rewrite", stream=False)
+    try:
+        out = cls.llm.chat(cfg, msgs, json_mode=True, **opts)
+    except Exception as e:
+        if getattr(e, "status", None) == 400:
+            try:
+                out = cls.llm.chat(cfg, msgs, json_mode=False, **opts)
+            except Exception as e2:
+                return _fail("对比时出错：%s" % e2)
+        else:
+            return _fail("对比时出错：%s" % e)
+
+    raw = (out.get("content") or "").strip()
+    if not raw:
+        return _fail("模型返回了空内容（可能被截断或触发了内容策略）。")
+
+    # ---- 4) 解析 ----
+    try:
+        obj = _extract_json_object(raw)
+    except ValueError as e:
+        return _fail("模型返回的不是合法 JSON：%s" % e)
+
+    points = obj.get("points")
+    if not isinstance(points, list):
+        points = []
+    summary = (obj.get("summary") or "").strip()
+    model_name = out.get("model") or cfg.get("model") or cfg.get("key") or ""
+
+    # 落库要带上"这次用的是哪版提示词"+"人工稿是第几版"（需求第 4 条：
+    # 分析结果 + 分析模型 + 分析版本都得可追溯）。
+    odb.set_rewrite_summary(owner, rewrite_id, points, summary, model_name,
+                            status=odb.REWRITE_DONE,
+                            prompt_version=rewrite_prompt_version(),
+                            user_version=rec.get("user_version") or 1)
+
+    note = ""
+    if warn:
+        note = warn
+    elif src == "builtin":
+        note = ("没有找到 prompts/%s，这次用的是内置通用模板。"
+                % PROMPT_FILE_REWRITE)
+    return {"ok": True, "points": len(points), "summary": summary,
+            "model_name": model_name, "prompt_source": src,
+            "prompt_version": rewrite_prompt_version(), "note": note}
+
+
+def reap_orphan_rewrites(reason="服务重启了"):
+    """服务重启时把"分析中"的改写记录放下来。
+
+    跟 reap_orphan_runs 同一个必要性：状态在库里、线程在内存里。
+    不改回去的话那一条会永远显示"分析中"，她只能删掉重建。
+    """
+    with db.connect() as conn:
+        n = conn.execute(
+            "UPDATE outline_rewrites SET status=?, error=?, updated_at=?"
+            " WHERE status=?",
+            (odb.REWRITE_FAILED, reason + "，这次对比没有跑完。可以再点一次。",
+             now_str(), odb.REWRITE_RUNNING)).rowcount
+    return n
+
+
 def reap_orphan_runs(reason="服务重启了"):
     """服务重启时收尾僵尸任务。
 
@@ -2173,6 +2807,54 @@ def _self_check():                                          # pragma: no cover
     check("通用模板七个槽位一个不少",
           [s for s in REQUIRED_SLOTS if ("{%s}" % s) not in tpl], [])
     check("通用模板一个密钥都没有", "sk-" in tpl, False)
+
+    # ---- 改写对比模板（阶段一C）----
+    rtpl = GENERIC_REWRITE_PROMPT
+    check("改写通用模板六个槽位一个不少",
+          [s for s in REWRITE_SLOTS if ("{%s}" % s) not in rtpl], [])
+    check("改写槽位是六个（加了 align）", len(REWRITE_SLOTS), 6)
+    check("改写通用模板带 align 槽位", "{align}" in rtpl, True)
+    check("改写通用模板一个密钥都没有", "sk-" in rtpl, False)
+    # 需求第 5 条：不许再说"不评价好坏"，得放开"有证据的具体问题"
+    check("改写模板不再写『不要评价好坏』", "不要评价好坏" in rtpl, False)
+    check("改写模板不再写『不评价好坏』", "不评价好坏" in rtpl, False)
+    # 需求第 5 条底线仍在
+    check("改写模板仍禁止脑补她的意图", "脑补理由" in rtpl, True)
+    check("改写模板声明她改了≠更好", "的代名词" in rtpl, True)
+    # 需求第 4 条：程序对齐只是线索、可能不准
+    check("改写模板写明程序对齐可能认错", "可能认错" in rtpl, True)
+    check("改写模板写明以两份全文为准", "以你读到的两份全文" in rtpl, True)
+    # 需求第 6 条：每条要带适用/不适用
+    check("改写模板要求 applies_when", "applies_when" in rtpl, True)
+    check("改写模板要求 not_when", "not_when" in rtpl, True)
+    # 需求第 1 条：scope 与 confidence 必须分开说
+    check("改写模板 scope 只有三值",
+          all(k in rtpl for k in ("长期偏好", "情境适用", "仅本篇")), True)
+    check("改写模板写明 confidence 跟 scope 是两件事",
+          "confidence 跟 scope 是两件事" in rtpl, True)
+    # 兜底方向：拿不准填仅本篇（不能填长期）
+    check("改写模板写明拿不准填仅本篇", "拿不准就填「仅本篇」" in rtpl, True)
+    # 九类变化
+    check("改写模板九类变化齐全",
+          all(k in rtpl for k in ("新增事件", "删除事件", "顺序调整",
+                                  "动机改变", "冲突处理改变",
+                                  "信息揭露时机改变", "铺垫回收变化",
+                                  "结局关系变化", "仅措辞格式标题")), True)
+    # 旧的 kind 取值（节奏/篇幅/删减…）不该再出现
+    check("改写模板不再用旧的 kind 分类",
+          "节奏、篇幅、删减" in rtpl, False)
+    # 8 项证据字段都要在输出格式里点名
+    check("改写模板输出格式含 8 项证据字段",
+          [k for k, _ in odb.REWRITE_PT_FIELDS
+           if ('"%s"' % k) not in rtpl], [])
+    # 空值写法统一（不许模型写"无""暂无"）
+    check("改写模板要求不确定字段给空串",
+          '不要写"无""暂无""N/A"' in rtpl, True)
+
+    # 真实模板（存在时）也要过同一套槽位检查
+    _rt, _rsrc, _rwarn = rewrite_template()
+    check("真实改写模板槽位齐全（缺了就退回通用版）",
+          _rwarn == "" if _rsrc == "file" else True, True)
 
     # 单遍替换：填进去的内容里带 {user_prompt} 也不能被二次替换
     out = _fill_slots("A={worldview} B={user_prompt}",

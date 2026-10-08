@@ -383,6 +383,134 @@ def split_by_number(text):
 
 
 # ----------------------------------------------------------------------
+# 三·五、"粘贴导入"用的解析（2026-10-07）
+# ----------------------------------------------------------------------
+#
+# 她在界面左边直接粘一段，点一下就进某个分类。粘进来的东西长这样：
+#
+#     1.他伸手把那半截刀接了，指腹压着刃口一路摸到尖上。
+#     2.她把手里的伞往他那半边倾了倾，自己左肩立刻湿透了一片。
+#     这一句没编号，跟着上一条走。
+#
+# 规则（她拍板的，界面上也是这么写的）：
+#   · 一行以「数字.」开头 → 算一条新素材
+#   · 没有编号的行       → 并进上一条
+#   · 空行               → 忽略
+#   · 整段一个编号都没有 → 每个非空行各算一条（不然她粘一段没有编号的
+#                          摘录会得到"0 条"，白粘一次）
+#
+# 【为什么单独写一份，不复用 split_by_number】
+#   那个是"切一份完整稿件"用的，它会额外把**小标题行**当边界、
+#   还会特殊处理段号之前的那条头部（书名行、作者行）。
+#   粘贴导入这里没有"稿件"这个概念，硬套它的边界规则只会让
+#   粘进来的东西被莫名其妙地切断。
+#
+# 【纯函数】不碰数据库、不联网，同一段文字永远给同一个结果。
+#   识别（预览）和真正入库走的是**同一个**函数 ——
+#   这样"预览里看到几条，库里就进几条"，不会两边各算一套。
+#
+# 返回：
+#   {
+#     "mode": "numbered" | "lines",
+#     "items": [
+#       {"no": 3 或 None,           # 她自己写的编号，没编号的是 None
+#        "text": "…",               # 去掉行首编号之后的正文
+#        "start": 12, "end": 30,    # 这段在原文里的位置（卡片就按这个区间取原文）
+#        "row_from": 1, "row_to": 2}  # 行号（从 1 数，给她对稿子用）
+#     ]
+#   }
+#
+# 【items[0].no 是 None 是什么意思】
+#   两种：① lines 模式下（整段没编号）每条都没有编号；
+#        ② numbered 模式下，第一个编号之前还夹着正文（书名行之类）——
+#           那条也留着，编号是 None。
+#   界面上把 no 是 None 的显示成「—」，别显示成 0。
+
+# 一整行只有个光杆编号（「3.」「12、」），后面一个字都没有。
+# 她自己没写完的那种，不该变成一张空卡片。
+# ⚠️ 别把这条并进 NUMBER_MARKER —— 那个是 split_by_number（正式切分）在用的，
+#    动它等于动了切法边界，得升 RULE_VERSION 并重跑所有切分验收。
+_BARE_MARKER_ONLY = re.compile(
+    r"^" + _WS + r"*[（(\[]?" + _WS + r"*\d{1,4}" + _WS + r"*"
+    r"[.．。、)）\]］】]" + _WS + r"*$")
+
+
+def parse_paste(text):
+    lines = lines_with_span(text)
+    marks = {}                     # 行下标 → (编号, 正文起点)
+    for idx, (raw, start, _end) in enumerate(lines):
+        m = NUMBER_MARKER.match(raw)
+        if m:
+            marks[idx] = (int(m.group(1)), start + m.end())
+
+    numbered = bool(marks)
+
+    # ---- 一、整段没有编号：每个非空行各算一条 ----
+    if not numbered:
+        items = []
+        for idx, (raw, start, _end) in enumerate(lines):
+            core = _core_span(raw, start)
+            if not core:
+                continue
+            if _BARE_MARKER_ONLY.match(raw):
+                continue           # 光杆编号，丢掉
+            items.append({"no": None, "text": text[core[0]:core[1]],
+                          "start": core[0], "end": core[1],
+                          "row_from": idx + 1, "row_to": idx + 1})
+        return {"mode": "lines", "items": items}
+
+    # ---- 二、有编号：按编号分组，没编号的行并进上一条 ----
+    # 先圈出每条的**行范围**：编号行各自开一条，编号行之间那些没编号的
+    # 非空行归给上一条。空行不改变归属（它只是排版），所以不影响分组。
+    groups = []                    # [{"no":…, "rows": [行下标, …]}]
+    for idx in range(len(lines)):
+        raw = lines[idx][0]
+        if idx in marks:
+            groups.append({"no": marks[idx][0], "rows": [idx]})
+        elif not raw.strip():
+            continue               # 空行忽略
+        elif _BARE_MARKER_ONLY.match(raw):
+            continue               # 光杆编号（「3.」），丢掉，别粘在上一条尾巴上
+        elif groups:
+            groups[-1]["rows"].append(idx)
+        else:
+            # 第一个编号之前还有正文 —— 不能丢（"不许静默截断"）。
+            # 单独算一条，没有编号。
+            groups.append({"no": None, "rows": [idx]})
+
+    items = []
+    for g in groups:
+        rows = g["rows"]
+        # 起点：有编号的从编号后面算（编号不进卡片正文，和"按段号切"一个道理）；
+        # 没有编号的（第一个编号之前那段）从第一个有字的行算起。
+        if g["no"] is not None:
+            start = marks[rows[0]][1]
+        else:
+            first = next((r for r in rows if _core_span(lines[r][0], lines[r][1])),
+                         None)
+            if first is None:
+                continue
+            start = _core_span(lines[first][0], lines[first][1])[0]
+        # 终点：最后一个**有字**的行的末字之后（尾部空行不算进正文）
+        last_core = None
+        last_row = None
+        for r in rows:
+            core = _core_span(lines[r][0], lines[r][1])
+            if core:
+                last_core = core
+                last_row = r
+        if last_core is None or start >= last_core[1]:
+            # 编号后面一个字都没有（比如光写了一行「3.」）—— 丢掉，
+            # 不造空卡片。这种情况极少，属于她自己没写完。
+            continue
+        items.append({"no": g["no"], "text": text[start:last_core[1]],
+                      "start": start, "end": last_core[1],
+                      "row_from": rows[0] + 1, "row_to": last_row + 1})
+
+    return {"mode": "numbered", "items": items}
+
+
+# ----------------------------------------------------------------------
 # 二·五、找"小标题"（她自己分好类的那种稿子）
 # ----------------------------------------------------------------------
 #

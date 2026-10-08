@@ -38,7 +38,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from fastapi import (Depends, FastAPI, File, HTTPException, Query, Request,
                      UploadFile)
@@ -114,6 +114,9 @@ async def lifespan(app: FastAPI):
     # 大纲任务同理：不清理的话，服务重启后界面上那个进度条永远转，
     # 而且新任务会被"已经有一个在跑"挡住，她只能去手工改库。
     oai.reap_orphan_runs()
+    # 改写对比同理。它是一次同步调用，重启时线程没了那一条会永远"分析中" ——
+    # 界面只能转圈，她唯一的出路是删掉重交。
+    oai.reap_orphan_rewrites()
     # 正文创作那两张表（chapters / chapter_runs）。纯新增空表。
     # 必须在 odb.migrate() 之后 —— 组上下文时要读角色卡。
     cdb.init_chapters()
@@ -199,6 +202,29 @@ class PasteIn(BaseModel):
     title: str = ""
     content: str = ""
     tags: List[str] = []
+
+
+class PasteCardsIn(BaseModel):
+    """粘贴导入素材分类库（分类页左栏那张卡）
+
+    category_id 不给 = 放进「未分类」。
+    text 是原样的粘贴内容 —— 前端一个字都不处理，解析全在后端做，
+    这样"预览"和"真入库"走的是同一段代码。
+
+    【为什么 category_id 收 int 也收 str】界面上的「未分类」它的 value
+    就是空串，按 int 收会在 Pydantic 那层炸出 422（英文报错，界面上
+    看着像接口坏了）；而按 str 收又会让别的调用方传数字时炸。
+    两个都收，统一交给 cls.norm_cat 归一 ——
+    它认得 ""/"0"/0/None 四种写法都是"未分类"。
+
+    【为什么这里也给默认值】见 _body_dict 的说明：字段写成必填时，
+    客户端忘了带 body 会收到 FastAPI 那句英文报错，看着像接口坏了。
+    """
+    category_id: Optional[Union[int, str]] = None
+    text: str = ""
+    # 她在确认表里点掉的那几条（下标）。文本原样过来，
+    # 去掉哪几条另说 —— 见 classify_db.paste_cards 里那段说明。
+    skip: List[int] = []
 
 
 class PathIn(BaseModel):
@@ -1007,6 +1033,7 @@ def api_list_cards(
     include_excluded: bool = False,
     verify_error: bool = False,
     duplicate: bool = False,
+    keyword: str = "",
     order: str = "seq",
     limit: int = Query(60, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -1016,7 +1043,10 @@ def api_list_cards(
     筛选项对应界面上的那一排控件：
         按文件 / 按来源 / 按主类（category_id=0 表示"还没分类"）
         / 按副标签 / 按状态 / 是否显示已排除 / 只看看校验失败的
-        / 只看有重复提示的
+        / 只看有重复提示的 / 按关键词搜正文
+
+    【keyword 的来历】以前签名里也有它，但没往数据层传 ——
+    "传了没反应，还不报错"。2026-10-07 把搜索框做进素材分类页时才接上。
     """
     if source_collection:
         # 按来源筛选 = 这个来源名下的所有文件
@@ -1025,16 +1055,99 @@ def api_list_cards(
                               sub_tag=sub_tag or None, status=status or None,
                               include_excluded=include_excluded,
                               only_verify_error=verify_error,
-                              only_duplicate=duplicate, order=order,
-                              limit=limit, offset=offset)
+                              only_duplicate=duplicate, keyword=keyword or None,
+                              order=order, limit=limit, offset=offset)
 
     return cls.list_cards(user["owner"], material_id=material_id,
                           category_id=category_id,
                           sub_tag=sub_tag or None, status=status or None,
                           include_excluded=include_excluded,
                           only_verify_error=verify_error,
-                          only_duplicate=duplicate, order=order,
-                          limit=limit, offset=offset)
+                          only_duplicate=duplicate, keyword=keyword or None,
+                          order=order, limit=limit, offset=offset)
+
+
+# ---- 粘贴导入（2026-10-07）------------------------------------------
+#
+# ⚠️ 这两个都必须在 /api/cards/{cid} 前面注册 —— 见上面那条注释：
+#    固定路径写在 {cid} 后面会被它吃掉（"paste" 当成卡片 id 去转换）。
+
+@app.post("/api/cards/paste/preview")
+def api_cards_paste_preview(req: Optional[PasteCardsIn] = None,
+                            user: dict = Depends(auth.current_user)):
+    """只识别、不入库。
+
+    预览和真正入库走的是**同一个**解析函数（segmentation.parse_paste），
+    所以"预览里看到几条，库里就进几条"，不会两边各算一套。
+    界面上"识别并确认"点了之后弹的那张表，就是这个接口给的。
+    """
+    d = _body_dict(req or PasteCardsIn())
+    raw = (d.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+    cat = cls.norm_cat(d.get("category_id"))
+    if not raw.strip():
+        # 空文本不是"出错"，是界面上一种正经用法：
+        # 分类页左栏那张粘贴卡上要写"下一个编号是几"，它就是用
+        # 空文本问这一趟，不另开一个接口 —— 免得"算编号"这件事
+        # 有两个实现、两个数。
+        with db.connect() as conn:
+            n = cls.next_paste_no(conn, user["owner"], cat)
+        return {"ok": False, "count": 0, "items": [], "mode": "empty",
+                "next_no": n, "will_seq_to": n, "duplicate_count": 0,
+                "message": "粘贴框是空的"}
+
+    parsed = sg.parse_paste(raw)
+    with db.connect() as conn:
+        start_no = cls.next_paste_no(conn, user["owner"], cat)
+        # 命中已有的同一条卡也要先告诉她 —— 她粘重复内容时
+        # 界面上能提前看到"这几条已经有了"，而不是入库后才发现。
+        existing = _existing_paste_spans(conn, user["owner"], raw, parsed["items"])
+
+    items = []
+    for i, it in enumerate(parsed["items"]):
+        items.append({
+            "no": it["no"],
+            "text": it["text"],
+            "line_from": it["row_from"], "line_to": it["row_to"],
+            "will_seq": start_no + i,
+            "exists": bool(existing.get((it["start"], it["end"]))),
+        })
+    return {"ok": True, "count": len(items), "items": items,
+            "next_no": start_no, "mode": parsed["mode"],
+            "will_seq_to": start_no + len(items) - 1 if items else start_no,
+            "duplicate_count": sum(1 for x in items if x["exists"]),
+            "message": "认出 %d 条" % len(items)}
+
+
+@app.post("/api/cards/paste")
+def api_cards_paste(req: Optional[PasteCardsIn] = None,
+                    user: dict = Depends(auth.current_user)):
+    """确认入库：把粘贴的文本切成一条条卡片，直接放进指定主类。"""
+    d = _body_dict(req or PasteCardsIn())
+    res = cls.paste_cards(user["owner"], d.get("category_id"), d.get("text") or "",
+                          operator_id=user["id"], skip=d.get("skip") or [])
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message", "导入失败"))
+    return res
+
+
+def _existing_paste_spans(conn, owner, raw, items):
+    """这段文字里的每一条，库里是不是已经有一张一模一样的卡了。
+
+    判据是「同一份素材 + 同一段区间」—— 素材按内容指纹去重，
+    所以同一段文字只会有一份素材；区间一样就是同一条。
+    """
+    if not items:
+        return {}
+    h = db.content_hash(raw)
+    row = conn.execute(
+        "SELECT id FROM materials WHERE owner_id=? AND content_hash=?",
+        (owner, h)).fetchone()
+    if not row:
+        return {}
+    spans = {(r["start_offset"], r["end_offset"]) for r in conn.execute(
+        "SELECT start_offset, end_offset FROM cards"
+        " WHERE owner_id=? AND material_id=?", (owner, row["id"])).fetchall()}
+    return {k: True for k in spans}
 
 
 @app.get("/api/cards/{cid}")
@@ -2922,6 +3035,64 @@ class OutlineFeedbackIn(BaseModel):
     enabled: bool = False
 
 
+class OutlineRewriteIn(BaseModel):
+    """交一份"我自己写的大纲"，用来跟 AI 那版对比。
+
+    【字段一个都不能省】表单上有几项，这里就得列几项 ——
+    多出来的字段会被静默丢掉（界面上弹"存好了"，库里永远空）。
+    所以：文本、挂哪个候选、挂哪个大纲、挂哪个任务、来源、备注，六样齐。
+
+    user_text 是正文，别写成必填的复杂类型：她粘进来就是一整段字符串。
+    """
+    user_text: str = ""
+    candidate_id: Optional[int] = None
+    # ★ 从大纲库交改写时挂的是 outline_id（不是候选 id）——
+    #   少这一行，界面传了也会被**静默丢掉**，然后那条记录就成了
+    #   "什么都没挂"的孤条，AI 找不到原稿可对照。
+    outline_id: Optional[int] = None
+    run_id: Optional[int] = None
+    source: Optional[str] = None
+    note: Optional[str] = None
+
+
+class OutlineRewritePatchIn(BaseModel):
+    """改一条改写记录的备注 / 开关。"""
+    note: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class OutlineRewritePointIn(BaseModel):
+    """对**一条建议**做一次审核动作（阶段一D）。
+
+    【为什么不能合成一个"改任意字段"的接口】
+    折腰第 1 条点名："确认状态和适用范围必须分开"、"一条建议可同时是
+    已接受＋启用＋仅本篇"。这三个轴是**三个独立的决定**，不是一个下拉框。
+    所以这里用「动作」而不是「目标值」：她说"接受"就传 accept，
+    说"只在这一次用"就传 set_scope + scope=this。
+    每次动作都会在 outline_rewrite_actions 里留一行日志（第 1 条要求
+    「修改后接受」保存为操作记录），这样"她当时怎么决定的"能追溯。
+
+    action 取值见 odb.ALL_REWRITE_ACTION：
+      accept / accept_edited / reject / reopen / enable / disable /
+      set_scope / note
+    """
+    action: str = ""
+    scope: Optional[str] = None        # 适用范围（长期偏好/情境适用/仅本篇）
+    note: Optional[str] = None         # 她补充的一句说明
+    suggest: Optional[str] = None      # 改后接受：她改过的说法
+
+
+class OutlineRewriteBulkIn(BaseModel):
+    """整批做同一个动作（界面上的"全部标为停用"这类）。
+
+    【为什么不给"全部接受"默认键】需求第 8 条：提供批量确认，
+    但**不默认全部启用**。所以这里是个中性工具，界面上"全部接受"
+    那个按钮要多一步确认。
+    """
+    action: str = ""
+    scope: Optional[str] = None
+
+
 def _odb_call(fn, *a, **kw):
     """把数据层抛的 ValueError 翻成 400。
 
@@ -3785,6 +3956,263 @@ def api_toggle_feedback(fid: int, enabled: int = 1,
     if not odb.set_feedback_enabled(user["owner"], fid, bool(enabled)):
         raise HTTPException(status_code=404, detail="没有这条反馈")
     return {"ok": True, "stats": odb.learning_stats(user["owner"])}
+
+
+# ----------------------------------------------------------------------
+# 改写对比：她交一份成品，AI 看"她把 AI 的那版改成了什么样"
+# ----------------------------------------------------------------------
+#
+# 【为什么不做成"逐节点标注"】
+# 折腰 2026-10-08 原话：「我不想一个个在页面上修改」。
+# 她的真实习惯是整篇改写或推倒重来，所以这里只收一整份成品全文，
+# 让 AI 去读，而不是逼她在页面上逐段敲。
+
+@app.get("/api/outline-rewrites")
+def api_list_rewrites(candidate_id: int = Query(0),
+                      limit: int = Query(50, ge=1, le=200),
+                      offset: int = Query(0, ge=0),
+                      user: dict = Depends(auth.current_user)):
+    return {"items": odb.list_rewrites(user["owner"], candidate_id or None,
+                                       limit, offset),
+            "stats": odb.learning_stats(user["owner"])}
+
+
+@app.post("/api/outline-rewrites")
+def api_create_rewrite(req: OutlineRewriteIn,
+                       user: dict = Depends(auth.current_user)):
+    """交一份成品大纲。可以挂在某一版候选上，也可以什么都不挂。
+
+    落库那一刻会**顺手算好结构差异**（纯函数，不联网、不花钱）——
+    这样界面上不用她点一下才看得到"我改了哪些段"。
+    """
+    body = _given(req)
+    rid = _odb_call(odb.create_rewrite, user["owner"], body)
+    if not rid:
+        raise HTTPException(status_code=400,
+                            detail="交不进去。可能是没选到属于你的那一版大纲，"
+                                   "或者正文是空的。")
+    rec = odb.get_rewrite(user["owner"], rid)
+    msg = ("收下了。点「让 AI 看看我改了什么」，它会对着那一版读一遍。"
+           if rec["candidate_id"] else
+           "收下了。这条没挂任何 AI 原稿 —— AI 没有可对照的那一版，"
+           "只会读你这一份本身。")
+    return {"ok": True, "id": rid, "rewrite": rec,
+            "stats": odb.learning_stats(user["owner"]), "message": msg}
+
+
+@app.get("/api/outline-rewrites/{rid}")
+def api_get_rewrite(rid: int, user: dict = Depends(auth.current_user)):
+    rec = odb.get_rewrite(user["owner"], rid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    out = {"rewrite": rec}
+    # 顺带把"对比用的那一版 AI 原稿"也给她 —— 界面上要能并排看。
+    if rec.get("candidate_id"):
+        try:
+            cand = oai.get_candidate(int(rec["candidate_id"]), user["owner"])
+        except Exception:
+            cand = None
+        if cand:
+            out["candidate"] = {
+                "id": cand.get("id"),
+                "model_name": cand.get("model_name"),
+                "content_text": cand.get("content_text") or "",
+            }
+    return out
+
+
+@app.post("/api/outline-rewrites/{rid}/analyze")
+def api_analyze_rewrite(rid: int,
+                        user: dict = Depends(auth.current_user)):
+    """让 AI 读一遍这两份，总结她的改写取向。
+
+    【为什么是后台跑】一次对比要等模型的完整回答（几百字），
+    同步等会让浏览器那边看起来像卡死。所以起线程，立刻返回，
+    她刷新那一条就能看到状态从"分析中"变成"已总结"。
+    """
+    if not odb.get_rewrite(user["owner"], rid):
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    res = oai.analyze_rewrite(user["owner"], rid, background=True)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("message") or "跑不起来")
+    return res
+
+
+@app.patch("/api/outline-rewrites/{rid}")
+def api_patch_rewrite(rid: int, req: OutlineRewritePatchIn,
+                      user: dict = Depends(auth.current_user)):
+    body = _given(req)
+    rec = odb.get_rewrite(user["owner"], rid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    if "enabled" in body:
+        odb.set_rewrite_enabled(user["owner"], rid, bool(body["enabled"]))
+    if "note" in body:
+        odb.set_rewrite_note(user["owner"], rid, body["note"])
+    return {"ok": True, "rewrite": odb.get_rewrite(user["owner"], rid),
+            "stats": odb.learning_stats(user["owner"])}
+
+
+@app.delete("/api/outline-rewrites/{rid}")
+def api_delete_rewrite(rid: int, user: dict = Depends(auth.current_user)):
+    if not odb.delete_rewrite(user["owner"], rid):
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    return {"ok": True, "stats": odb.learning_stats(user["owner"]),
+            "message": "删掉了。以后生成不会再参考它的结论。"}
+
+
+# ----------------------------------------------------------------------
+# 逐条确认：把"她拍板了没有"和"这条用在哪"分开管（阶段一D）
+# ----------------------------------------------------------------------
+#
+# 【为什么要有这三个接口】
+# 折腰第 10 条要求验收时能亲自走完这一段：
+#   接受一条 / 拒绝一条 / 把一条限制为仅本篇
+#   → 生成时看实际采用了哪些 → 停用其中一条 → 确认之后不再调用
+# 光在数据层做出来不算 —— 她点不到就不叫打通。
+
+@app.get("/api/outline-rewrites/{rid}/points")
+def api_list_rewrite_points(rid: int,
+                            history: int = Query(0, ge=0, le=1),
+                            user: dict = Depends(auth.current_user)):
+    """这条改写记录下的建议，一条条列出来（界面主视图）。
+
+    默认只给**最新这一版**的建议 —— 旧版是她重交过之后作废的那批，
+    混在一起她会以为"AI 怎么说了两遍不一样的话"。
+    要看历史传 history=1。
+    """
+    rec = odb.get_rewrite(user["owner"], rid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    pts = odb.list_rewrite_points(user["owner"], rid,
+                                  include_history=bool(history))
+    return {
+        "items": pts,
+        "rewrite": rec,
+        # 界面上要能把三个轴渲染成中文下拉，值只有后端这一个来源
+        "scope_options": [{"value": v, "label": odb.REWRITE_SCOPE_LABELS[v]}
+                          for v in odb.ALL_REWRITE_SCOPE],
+        "review_options": [{"value": v, "label": odb.REWRITE_RV_LABELS[v]}
+                           for v in odb.ALL_REWRITE_REVIEW],
+        "active_options": [{"value": v, "label": odb.REWRITE_ACTIVE_LABELS[v]}
+                           for v in odb.ALL_REWRITE_ACTIVE],
+        "confidence_options": [
+            {"value": v, "label": odb.REWRITE_CONF_LABELS[v]}
+            for v in odb.ALL_REWRITE_CONF],
+        # 生效条件写在响应里，前端不写死规则
+        "live_rule": "审核=已接受 且 使用=启用 且 适用范围∈(长期偏好, 情境适用)",
+    }
+
+
+@app.post("/api/outline-rewrite-points/{pid}/review")
+def api_review_rewrite_point(pid: int, req: OutlineRewritePointIn,
+                             user: dict = Depends(auth.current_user)):
+    """对一条建议做一次审核动作。**这是唯一改这三个轴的入口。**"""
+    body = _given(req)
+    action = (body.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=400, detail="没说要做哪个动作。")
+    pt = _odb_call(odb.review_point, user["owner"], pid, action,
+                   body.get("note"), body.get("suggest"), body.get("scope"))
+    if not pt:
+        raise HTTPException(status_code=404, detail="没有这一条建议")
+    return {"ok": True, "point": pt,
+            "message": _review_message(action, pt),
+            "stats": odb.learning_stats(user["owner"])}
+
+
+def _review_message(action, pt):
+    """按动作回一句她说得通的话 —— **不能让她以为"点了就生效"**。
+
+    这是折腰第 3 条"默认待确认、不自动启用"在文案上的落点：
+    接受了但限成仅本篇时，必须明说"这条不会进别的作品"，
+    否则她会以为接受了就等于以后都用。
+    """
+    live = pt.get("live")
+    if action == odb.REWRITE_ACT_ACCEPT:
+        if live:
+            return "接受了。以后生成会参考这一条。"
+        if pt.get("scope") == odb.REWRITE_SCOPE_THIS:
+            return ("接受了，但适用范围是「仅本篇」—— "
+                    "只在这一篇里用，别的作品不会参考它。")
+        return "接受了。"
+    if action == odb.REWRITE_ACT_ACCEPT_EDITED:
+        return ("接受了你改过的说法。以后生成按你改后的这条来"
+                if live else
+                "接受了你改过的说法（适用范围是「仅本篇」，只在这一篇里用）。")
+    if action == odb.REWRITE_ACT_REJECT:
+        return "拒绝了。这一条不会再进生成。"
+    if action == odb.REWRITE_ACT_REOPEN:
+        return "打回「待确认」了。它现在不生效。"
+    if action == odb.REWRITE_ACT_ENABLE:
+        return ("重新启用了。它现在会进生成。" if live
+                else "重新启用了 —— 但它还没被接受，所以现在仍不生效。")
+    if action == odb.REWRITE_ACT_DISABLE:
+        return "停用了。以后生成不会再参考它。"
+    if action == odb.REWRITE_ACT_SCOPE:
+        lab = odb.REWRITE_SCOPE_LABELS.get(pt.get("scope"), pt.get("scope"))
+        return ("适用范围改成「%s」。%s"
+                % (lab, "它现在会进生成。" if live
+                   else "它现在不会进生成。"))
+    return "记下了。"
+
+
+@app.post("/api/outline-rewrites/{rid}/points/bulk")
+def api_bulk_rewrite_points(rid: int, req: OutlineRewriteBulkIn,
+                            user: dict = Depends(auth.current_user)):
+    """整批做同一个动作（"全部标为停用"这类）。"""
+    body = _given(req)
+    action = (body.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=400, detail="没说要做哪个动作。")
+    if not odb.get_rewrite(user["owner"], rid):
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    n = _odb_call(odb.bulk_set_points, user["owner"], rid, action,
+                  body.get("scope"))
+    return {"ok": True, "count": n,
+            "items": odb.list_rewrite_points(user["owner"], rid),
+            "message": "整批处理了 %d 条。" % n,
+            "stats": odb.learning_stats(user["owner"])}
+
+
+@app.get("/api/outline-rewrites/{rid}/actions")
+def api_list_rewrite_actions(rid: int,
+                            limit: int = Query(100, ge=1, le=500),
+                            user: dict = Depends(auth.current_user)):
+    """这条改写记录上的审核动作日志（她什么时候决定了什么）。"""
+    if not odb.get_rewrite(user["owner"], rid):
+        raise HTTPException(status_code=404, detail="没有这一条改写记录")
+    return {"items": odb.list_rewrite_actions(user["owner"], rid, limit)}
+
+
+@app.get("/api/learning-uses")
+def api_learning_uses(run_id: int = Query(0, ge=0),
+                      stage: str = Query(""),
+                      user: dict = Depends(auth.current_user)):
+    """某次生成**实际采用了哪些学习条目**（需求第 8 条）。
+
+    【为什么不能只记"学习开关已打开"】
+    她以后一定会问"我明明接受了 5 条，这次生成怎么没变化"。
+    有这个记录才能回答"因为这次只注入了 2 条"或者
+    "因为那 3 条是仅本篇、这次的任务不是那一篇"。
+    """
+    if not run_id:
+        raise HTTPException(status_code=400, detail="要给一个生成任务的编号。")
+    return {"items": odb.learning_uses_of_run(user["owner"], run_id,
+                                              stage or None),
+            "run_id": run_id, "stage": stage or "all"}
+
+
+@app.get("/api/rewrite-points/live")
+def api_live_rewrite_points(rid: int = Query(0, ge=0),
+                            limit: int = Query(50, ge=1, le=200),
+                            user: dict = Depends(auth.current_user)):
+    """现在**真正会进生成**的那些建议（不看单条记录，看全局）。
+
+    她最常问的一句是"现在到底有哪些在起作用"，这个接口直接答。
+    """
+    return {"items": odb.rewrite_points_using(user["owner"], rid or None,
+                                              limit)}
 
 
 # ----------------------------------------------------------------------

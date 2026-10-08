@@ -16,23 +16,41 @@
   :root {
     --bg:      #f6f5f2;
     --card:    #ffffff;
+    --panel-2: #faf9f6;   /* 次级面：工具条 / 表头 / 空态底 */
     --line:    #e5e2dc;
     --line-2:  #f0eee9;
+    --line-3:  #d9d5cd;   /* 输入框 / 次级描边 */
     --ink:     #26231f;
     --ink-2:   #6b665e;
     --ink-3:   #9c968c;
+    --ink-4:   #b3aca0;   /* 极弱：占位 / 计数 */
     --accent:  #8c5a3c;
+    --accent-dim:#7a4c33; /* 赭石按下 / 悬停 */
     --accent-2:#f0e7e0;
+    --accent-line:#e0d0c2;
+    --ok:      #4f7a5a;
+    --ok-2:    #eaf1ea;
+    --warn:    #a87a26;
+    --warn-2:  #faf2e2;
     --danger:  #a8443a;
+    --danger-2:#f8ecea;
+    --info:    #4a6b86;
+    --info-2:  #ecf1f5;
     --radius:  10px;
-    --nav-w:   214px;   /* 左导航宽度，只在这里改一处 */
+    --r-sm:    6px;
+    --nav-w:   232px;   /* 左导航宽度，只在这里改一处 */
     --pad:     26px;    /* 右侧内容左右留白 */
+    --shadow-1:0 1px 2px rgba(40,32,24,.05);
+    --shadow-2:0 6px 20px rgba(40,32,24,.10), 0 2px 6px rgba(40,32,24,.06);
+    /* 等宽：只给"这是编号/原文片段，别拿它当句子读"的地方用
+       （粘贴导入的下一个编号、识别结果里那串 #231）。 */
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.65 "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font: 14px/1.75 "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     overflow: hidden;     /* 滚动交给右舞台，页面本身不动 */
   }
@@ -84,19 +102,63 @@
   }
   .navitem:hover { background: var(--line-2); color: var(--ink); }
   .navitem:hover .ic { color: var(--ink-2); }
-  .navitem.on { background: var(--ink); color: #fff; font-weight: 600; }
-  .navitem.on .ic { color: #fff; }
+  /* 选中态：浅底 + 一道赭石左条。不用整块深色 ——
+     深色块一排下来像「按了什么开关」，而且和右侧内容抢眼睛。
+     左条用 inset 阴影画，不改 padding，文字不会因为选中而挪位。 */
+  .navitem.on {
+    background: var(--card); color: var(--ink); font-weight: 600;
+    box-shadow: var(--shadow-1), inset 2px 0 0 var(--accent);
+  }
+  .navitem.on:hover { background: var(--card); }
+  .navitem.on .ic { color: var(--accent); }
   .badge {
     flex: 0 0 auto; font-size: 11px; color: var(--ink-3);
     background: var(--line-2); border-radius: 20px; padding: 0 7px;
   }
-  .navitem.on .badge { background: rgba(255,255,255,.2); color: #fff; }
+  .navitem.on .badge { background: var(--accent-2); color: var(--accent); }
+  /* 按钮里也用到同一个徽标（大纲页头部的「人设卡 8」）——
+     inline 元素直接吃垂直 padding 会被行高裁掉，这里给它撑开。 */
+  .btn .badge { margin-left: 7px; display: inline-block; line-height: 16px; }
   .soon {
-    flex: 0 0 auto; font-size: 10px; color: var(--ink-3);
-    border: 1px dashed var(--line); border-radius: 20px; padding: 0 6px;
+    flex: 0 0 auto; font-size: 10px; color: var(--ink-4);
+    border: 1px dashed var(--line-3); border-radius: 20px; padding: 0 6px;
   }
-  /* 选中项是深色底，虚线圈要跟着换成浅色，否则看不见 */
-  .navitem.on .soon { color: rgba(255,255,255,.8); border-color: rgba(255,255,255,.4); }
+  .navitem.on .soon { color: var(--ink-3); border-color: var(--line-3); }
+
+  /* 分组小标题：把「先攒素材、再动笔写」这条动线划出来。
+     它只是一行灰字，不是按钮 —— 别让它长得像能点。 */
+  .ngroup {
+    padding: 13px 11px 4px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 1.4px;
+    color: var(--ink-4);
+  }
+  .ngroup:first-child { padding-top: 5px; }
+
+  /* 子项（大纲生成下挂的三个板块）：一道竖线连回父项，
+     让人一眼看出「这三个是大纲生成里面的」。 */
+  .nsub {
+    display: flex; flex-direction: column; gap: 1px;
+    margin: 1px 0 3px 21px; padding-left: 11px;
+    border-left: 1px solid var(--line);
+  }
+  .nsubitem {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 6px 9px; border: none; border-radius: 7px;
+    background: transparent; color: var(--ink-2); text-align: left;
+    font-size: 12.5px; transition: background .14s, color .14s;
+  }
+  .nsubitem .tx {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .nsubitem:hover { background: var(--line-2); color: var(--ink); }
+  .nsubitem.on {
+    background: var(--card); color: var(--ink); font-weight: 600;
+    box-shadow: var(--shadow-1), inset 2px 0 0 var(--accent);
+  }
+  .nsubitem.on:hover { background: var(--card); }
+  /* 还没做的子项：灰一点，别和能点的抢注意力 */
+  .nsubitem.off { color: var(--ink-4); }
 
   .navfoot { border-top: 1px solid var(--line); padding: 11px 14px; }
   .userbox { display: flex; align-items: center; gap: 9px; }
@@ -138,6 +200,8 @@
     margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .5px;
     flex: 0 0 auto;
   }
+  /* 页标题底下原来还有行说明（.vsub）和它的壳（.vheadl），
+     2026-10-07 一起删了 —— 折腰的要求：界面上不放解释文字，都写进操作手册。 */
   /* 操作区吃掉整条剩余宽度、靠右对齐 —— 这样里面的搜索框和按钮
      永远排在一行，不会因为容器宽度算不准而折行。 */
   .vacts {
@@ -145,39 +209,146 @@
     flex: 1 1 auto; justify-content: flex-end;
   }
 
+  /* ---- 吸顶一整块：功能头 + 统计 + 筛选 ----
+     她 2026-10-07 的原话：「我希望往下滑的时候，这些也固定在页面上不动」——
+     指的就是这几行。它们是「我现在在看什么、还有多少没走流程」的那组把手，
+     滑走之后每看几条卡片就得把页面拉回顶部才能改一次。
+
+     做法：把这几行塞进**同一个** `.vtop`，只让它吸顶（top:0）。
+     为什么不是几行各自吸顶：第二个吸顶元素的 top 得等于第一个的高度，
+     而那个高度会随折行变 —— 两个 top 互相算错就是互相压住。
+     一整块只有一个 top，永远对得上。
+
+     ★ 代价必须说清：这一块有多高，能看见的内容就少多少。
+       所以这里只放「数」和「筛」，不放需要读的说明文字。
+       高度会被下面的吸顶左栏读走（见 `--vtop`），不用手算。 */
+  .vtop {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+  }
+  /* 里面的功能头不再自己吸顶（外层已经钉住了），
+     背景和边框也交给外层 —— 两层都画会多出一条双线。 */
+  .vtop > .vhead {
+    position: static; z-index: auto;
+    background: transparent; backdrop-filter: none;
+    border-bottom: none;
+  }
+  /* 搜索条自带一条下边框；在吸顶块里它上面是功能头、下面是统计条，
+     再画一条会变成"两道线夹一条空隙"。 */
+  .vtop .qbar { margin: 0; border-bottom: none; }
+
+  /* ---- 统计条：同一个容器，两种长相 ----
+     ① 默认（分类 / 内化 / 大纲 / 正文那几页）：一行小字，数字大一号夹在词前面。
+     ② `.cards`（总素材库）：一格一个数。那六个数各自回答一个不同的问题
+        （有几份料 / 写了多少字 / 还有多少没走流程），挨在一起用逗号隔开时
+        她得逐个数着读；分格之后，要找的那个数自己会跳出来。
+     两种共用容器名、靠 `.cards` 分叉 —— 同一件事不留两套类名。
+     （★ 上一轮改 ② 的时候把 ① 那两条样式删掉了，另外三页的统计条
+       悄悄掉了字号和颜色，这一轮补回来。） */
   .statsbar {
     display: flex; align-items: baseline; gap: 26px; flex-wrap: wrap;
-    padding: 13px var(--pad) 0; font-size: 12.5px; color: var(--ink-3);
+    padding: 12px var(--pad) 0; font-size: 12.5px; color: var(--ink-3);
   }
   .statsbar .num {
     font-size: 17px; font-weight: 600; color: var(--ink); margin-right: 5px;
   }
+  .statsbar.cards { align-items: stretch; gap: 9px; }
+  .stat {
+    /* 平分整行（不是按字数各自缩着），一行六个刚好铺满 —— 否则右边空一大截，
+       看着像界面没画完。上限 220px 是防"只剩两三个格子时被拉成两条长条"。 */
+    flex: 1 1 0; min-width: 104px; max-width: 220px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); padding: 8px 13px 9px;
+  }
+  .stat .sv {
+    font-size: 18px; font-weight: 600; line-height: 1.3;
+    color: var(--ink); font-variant-numeric: tabular-nums;
+  }
+  .stat .sl { font-size: 11.5px; color: var(--ink-3); margin-top: 1px; }
+  /* 「有失败项」给她一个可以点的理由：这个数不是 0 的时候要显眼。
+     只改数字颜色、不动整格底色 —— 满屏红框会让她以为哪儿都坏了。 */
+  .stat.act { cursor: pointer; }
+  .stat.act:hover { border-color: var(--line-3); }
+  .stat.warn .sv { color: var(--warn); }
+  .stat.err .sv { color: var(--danger); }
+  .stat.ok .sv { color: var(--ok); }
+  .stat.dim .sv { color: var(--ink-4); }
 
   .vbody {
     display: flex; align-items: flex-start; gap: 20px;
     padding: 16px var(--pad) 60px;
   }
 
-  /* ==================== 素材库：标签栏 + 列表 ==================== */
-  .tagside { width: 178px; flex: 0 0 178px; position: sticky; top: 124px; }
-  .tagside h3 {
-    margin: 0 0 8px 10px; font-size: 11px; font-weight: 600;
-    letter-spacing: 1px; color: var(--ink-3);
+  /* ==================== 素材库：标签栏 + 列表 ====================
+     左栏这一条跟「素材分类」页那条左栏是同一套做法（吸顶 + 整栏不出屏），
+     两页看起来才像同一个软件。 */
+  .tagside {
+    width: 200px; flex: 0 0 200px;
+    /* 吸顶线 = 上面那块 `.vtop` 的实测高度（JS 量出来写进 --vtop）。
+       为什么不写死：`.vtop` 里有说明行、窄屏还会折行，高度不是常数，
+       写死一个值早晚会在某个宽度上错位。118px 只是还没量出来之前的兜底。
+       ★ 必须**正好贴着** `.vtop` 的下沿：留缝的话，滚动时那条缝里会露出
+         底下的卡片（一张卡被切成"上半截看不见、中间一条浮在两根钉住的条
+         之间"），看着像界面坏了。挪动是连续的，不会跳。 */
+    position: sticky; top: var(--vtop, 118px);
+    /* 【跟 .clrail 同一个坑】吸顶元素滑不出"包含块"的内容盒，
+       而 .vbody 底下还压着 60px 内边距 —— 高度上限不把这 60px 算掉，
+       列表滚到底时整栏会被顶上去一截。 */
+    max-height: calc(100vh - var(--vtop, 118px) - 72px);
+    /* 实底色：滚起来之后这个位置下面正是卡片流 / 实时区，
+       透明的话文字会从标签盒的缝里透出来。 */
+    background: var(--bg);
+    display: flex; flex-direction: column; gap: 10px;
   }
-  .taglist { display: flex; flex-direction: column; gap: 2px; max-height: 64vh; overflow: auto; }
+  /* 标签盒：一个白底的分组，标题 + 若干行。
+     以前这里是「h3 一行字 + 一串光板按钮」，看不出"哪个标签占得多" ——
+     加一条细横杠，比例自己会说话。 */
+  .tagbox {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); padding: 7px 8px 8px;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .tagbox.grow { flex: 1 1 auto; min-height: 0; }
+  .tagbox-h {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 6px; padding: 2px 5px 7px;
+    font-size: 11px; font-weight: 600; letter-spacing: .8px; color: var(--ink-3);
+    flex: 0 0 auto;
+  }
+  .tagbox-h .na { font-weight: 400; letter-spacing: 0; color: var(--ink-4); }
+  .taglist {
+    display: flex; flex-direction: column; gap: 2px;
+    overflow: auto; min-height: 0; flex: 1 1 auto;
+  }
   .tag {
-    display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: 6px 10px; border-radius: 8px; border: none; background: transparent;
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 9px; border-radius: 8px; border: none; background: transparent;
     color: var(--ink-2); text-align: left; width: 100%;
   }
   .tag:hover { background: var(--line-2); }
-  .tag.on { background: var(--ink); color: #fff; }
-  .tag i {
-    font-style: normal; font-size: 11px; color: var(--ink-3);
-    background: var(--line-2); border-radius: 20px; padding: 0 7px;
+  .tag.on {
+    background: var(--accent-2); color: var(--accent); font-weight: 600;
   }
-  .tag.on i { background: rgba(255,255,255,.22); color: #fff; }
-  .side .empty-tip, .tagside .empty-tip { font-size: 12px; color: var(--ink-3); padding: 4px 10px; }
+  /* 标签名占满，横杠和计数各占固定宽 —— 行与行之间才对得齐 */
+  .tag .tn {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tag .bar2 {
+    flex: 0 0 30px; height: 3px; border-radius: 2px;
+    background: var(--line); overflow: hidden;
+  }
+  .tag .bar2 b { display: block; height: 100%; background: var(--ink-4); }
+  .tag.on .bar2 { background: var(--accent-line); }
+  .tag.on .bar2 b { background: var(--accent); }
+  .tag i {
+    flex: 0 0 auto; font-style: normal; font-size: 11px; color: var(--ink-3);
+    font-variant-numeric: tabular-nums; min-width: 18px; text-align: right;
+  }
+  .tag.on i { color: var(--accent); }
+  .side .empty-tip, .tagside .empty-tip { font-size: 12px; color: var(--ink-3); padding: 4px 6px; line-height: 1.6; }
 
   .listwrap { flex: 1 1 auto; min-width: 0; }
   .listhead {
@@ -220,8 +391,8 @@
     transition: .15s; white-space: nowrap;
   }
   .btn:hover { border-color: var(--ink-3); color: var(--ink); }
-  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
-  .btn.primary:hover { background: #3d3833; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
   /* 危险动作（删一份大纲）。平时只有边框带一点红，指上去才实心 ——
      它排在「关掉」旁边，实心红会变成整个弹层里最抢眼的东西。 */
   .btn.danger { color: var(--danger); border-color: #e3c9c5; }
@@ -236,6 +407,12 @@
     transition: .15s;
   }
   .card:hover { border-color: #d5d0c8; box-shadow: 0 1px 6px rgba(0,0,0,.04); }
+  /* 从统计格跳过来时闪一下。为什么需要：滚过去之后视口里好几张卡长得一样，
+     没有一个短暂的标记，她还是不知道"刚才是哪一份"。 */
+  .card.flash {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-2);
+  }
   .card .body { flex: 1 1 auto; min-width: 0; }
   .card .title {
     font-weight: 600; cursor: pointer; word-break: break-all;
@@ -256,17 +433,6 @@
   .chip.ok { color: #2c7a4e; background: #e9f4ec; }
 
   /* ---- 自动分类：文档卡片上的状态条 ---- */
-  /* 说明行：必须让"现在用的是本地占位规则、没联网"一直看得见。
-     这行字不是装饰，是诚信问题 —— 不能让人以为这是大模型判的。 */
-  .clshint {
-    font-size: 12px; color: var(--ink-3); line-height: 1.7;
-    margin: -2px 0 12px;
-    /* 文字占满、按钮固定宽 —— 按布局铁律来：
-       灵活的给 flex:1 1 auto，固定的给 flex:0 0 auto，别用 margin-left:auto */
-    display: flex; gap: 12px; align-items: flex-start;
-  }
-  .clshint .clshintxt { flex: 1 1 auto; }
-  .clshint .btn { flex: 0 0 auto; white-space: nowrap; }
   .clsbar, .infbar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
   .clsbar .chip, .infbar .chip { font-size: 11px; }
   .clsbar .why, .infbar .why {
@@ -371,11 +537,18 @@
     display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 5px;
   }
   .field .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 5px; line-height: 1.6; }
-  .field input[type=text], .field input[type=password], .field textarea {
+  .field input[type=text], .field input[type=password], .field textarea,
+  .field select {
     width: 100%; padding: 9px 11px; border: 1px solid var(--line);
-    border-radius: 8px; background: #fbfaf8; outline: none; resize: vertical;
+    /* 框内一律纯白（折腰 2026-10-07 圈着这些框说「框内颜色用白色」）。
+       原来是 #fbfaf8 那种偏米的底色，跟页面的米色背景（--bg）糊在一起，
+       分不出"哪一块是我能填的"。 */
+    border-radius: 8px; background: #fff; outline: none; resize: vertical;
   }
-  .field input:focus, .field textarea:focus { border-color: var(--accent); background: #fff; }
+  .field select { padding: 0 11px; height: 38px; resize: none; }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    border-color: var(--accent); background: #fff;
+  }
   .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
 
   /* ---------- 登录 / 注册 ---------- */
@@ -508,6 +681,8 @@
   .app.mini .navlist { padding: 4px 8px 12px; }
   .app.mini .navitem { justify-content: center; padding: 10px 0; }
   .app.mini .navitem .tx, .app.mini .badge, .app.mini .soon { display: none; }
+  /* 收起态只有图标，分组标题和子项都没有图标可留 —— 一起藏掉 */
+  .app.mini .ngroup, .app.mini .nsub { display: none; }
   .app.mini .navfoot { padding: 11px 8px; }
   .app.mini .userbox { flex-direction: column; gap: 7px; }
   .app.mini .uname { display: none; }
@@ -536,13 +711,18 @@
     .navlist { padding: 4px 8px 12px; }
     .navitem { justify-content: center; padding: 10px 0; }
     .navitem .tx, .badge, .soon { display: none; }
+    .ngroup, .nsub { display: none; }
     .navfoot { padding: 11px 8px; }
     .userbox { flex-direction: column; gap: 7px; }
     .uname { display: none; }
     .vbody { flex-direction: column; }
-    .tagside { width: 100%; flex: none; position: static; }
-    .taglist { flex-direction: row; flex-wrap: wrap; }
+    /* 窄屏：横过来排，吸顶和高度上限一起撤掉，
+       不然 max-height 会把标签挤出屏幕（横排时它不该再管纵向） */
+    .tagside { width: 100%; flex: none; position: static; max-height: none; }
+    .tagbox { display: block; }
+    .taglist { flex-direction: row; flex-wrap: wrap; overflow: visible; }
     .tag { width: auto; }
+    .tag .tn { flex: 0 1 auto; max-width: 160px; }
     .vacts { margin-left: 0; width: 100%; }
     .search { flex: 1 1 100%; max-width: none; }
   }
@@ -663,17 +843,210 @@
   }
   .clcat:hover { border-color: var(--ink-3); }
   .clcat.on {
-    background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600;
+    background: var(--accent-2); border-color: var(--accent); color: var(--accent); font-weight: 600;
   }
   .clcat .n {
     font-size: 11.5px; color: var(--ink-3);
     background: var(--line-2); border-radius: 999px; padding: 0 6px;
   }
-  .clcat.on .n { color: #fff; background: rgba(255, 255, 255, 0.22); }
+  .clcat.on .n { color: var(--accent); background: #fff; }
+
+  /* ==================== 素材分类：左主分类栏 + 顶栏搜索（2026-10-07）====================
+     她的原话：「最左侧是主分类，方便使用者随时切换，然后最顶上
+     是其他功能键，当用户滑动素材时，最顶部跟最左侧的导航栏不变」。
+
+     原来分类是一横排药丸 —— 卡片一多，想换一类得先滚回顶部。
+     现在把它竖过来钉在左边；分类太多时**只滚这一栏**，不让它把
+     底下的粘贴导入卡挤出去（粘导入是"选完类立刻要做的事"，
+     滚没了就等于没有）。
+
+     注意：样式全部收在 `.clrail` 里。剧情内化页的 `#plCatBar`
+     也用 `.clcatbar`/`.clcat`，那边这一轮没动，别被一起改了。 */
+  .clrail {
+    flex: 0 0 214px; width: 214px; align-self: flex-start;
+    /* 吸顶线 = 上面那块 `.vtop` 的实测高度，**正好贴着它的下沿**。
+       留缝会在滚动时露出底下的卡片，见 `.tagside` 的说明。
+       【为什么高度上限还要再减 72】吸顶元素滑不出"包含块"的边界 ——
+       它的底最多只能到 .vbody 的**内容盒**底（少了那 60px 下内边距）。
+       不减的话，滚到页面最底下时整栏会被顶上去一截，看起来像"滑到底会跳一下"。 */
+    position: sticky; top: var(--vtop, 118px);
+    max-height: calc(100vh - var(--vtop, 118px) - 72px);
+    /* 实底色：滚起来之后这个位置下面是卡片流，透明会透出内容 */
+    background: var(--bg);
+    display: flex; flex-direction: column; gap: 12px;
+    /* 一条浅分隔线，把"选分类的那一栏"和"卡片流"分开 ——
+       分开之后"左右两栏"这件事一眼就看得懂。 */
+    border-right: 1px solid var(--line);
+    padding-right: 10px;
+  }
+  .clrailbox { display: flex; flex-direction: column; min-height: 0; }
+  .clrail h3 {
+    margin: 0 0 8px 8px; font-size: 11px; font-weight: 600;
+    letter-spacing: 1px; color: var(--ink-3); flex: 0 0 auto;
+  }
+  .clcatlist {
+    display: flex; flex-direction: column; gap: 1px;
+    overflow-y: auto; min-height: 0;
+  }
+  .clcatlist .clgrp {
+    font-size: 10.5px; color: var(--ink-4); letter-spacing: 1px;
+    font-weight: 600; padding: 10px 8px 4px;
+  }
+  /* 竖排的一格主类。选中态跟左导航同一套语言（白底 + 赭石左条）——
+     "整块填深色"看起来像按钮被按下去，不像"当前在这一类里"。 */
+  .clrail .clcat {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    text-align: left; border: none; border-radius: 8px;
+    background: transparent; padding: 7px 9px;
+    font-size: 13px; color: var(--ink-2); line-height: 1.5;
+  }
+  .clrail .clcat:hover { background: var(--line-2); color: var(--ink); }
+  .clrail .clcat.on {
+    background: var(--card); color: var(--ink); font-weight: 600;
+    box-shadow: var(--shadow-1), inset 2px 0 0 var(--accent);
+  }
+  .clrail .clcat .n {
+    margin-left: auto; font-size: 11px; color: var(--ink-3);
+    background: none; padding: 0;
+  }
+  .clrail .clcat.on .n { color: var(--accent); background: none; }
+  /* 「搜索结果」那一格：搜索态下它是"当前在看的东西"，
+     所以颜色跟别的不一样，免得她以为自己还在「全部」里。 */
+  .clrail .clcat.q { color: var(--accent); }
+  .clrail .clcat.q.on { color: var(--accent); }
+  /* 「＋ 新建主类」在这一栏里不再是个药丸，跟上面那些格子排成一列 */
+  .clrail .clcat.newcat {
+    color: var(--ink-3); font-size: 12.5px; border-radius: 0;
+    border-top: 1px solid var(--line); margin-top: 5px; padding-top: 10px;
+  }
+  .clrail .clcat.newcat:hover { color: var(--accent); background: transparent; }
+
+  /* ---- 顶栏搜索框（原「素材检索」并进这里）---- */
+  .tbsearch {
+    display: flex; align-items: center; gap: 7px;
+    flex: 0 1 250px; min-width: 150px; height: 30px;
+    background: var(--card); border: 1px solid var(--line-3);
+    border-radius: 8px; padding: 0 9px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .tbsearch:focus-within {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2);
+  }
+  .tbsearch input {
+    flex: 1 1 auto; min-width: 0; border: none; background: none; outline: none;
+    font: inherit; font-size: 12.5px; color: var(--ink); padding: 0;
+  }
+  .tbsearch input::placeholder { color: var(--ink-4); }
+  .tbsearch .hk {
+    flex: 0 0 auto; font-size: 10px; color: var(--ink-4);
+    border: 1px solid var(--line-3); border-radius: 3px;
+    padding: 0 4px; line-height: 15px;
+  }
+  .tbsearch.on { border-color: var(--accent); }
+
+  /* ---- 搜索结果条 ----
+     它必须在屏幕上把"现在是在搜东西"说清楚，还要说明白
+     "命中的是哪个范围" —— 不说的话她会以为卡片丢了。 */
+  .qbar {
+    display: none; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 9px var(--pad); background: var(--accent-2);
+    border-bottom: 1px solid var(--accent-line);
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .qbar.on { display: flex; }
+  .qbar .kw { font-weight: 600; color: var(--ink); }
+  .qbar .n { color: var(--accent); font-weight: 600; }
+  .qbar .dim { color: var(--ink-3); }
+  .qbar .lk { margin-left: auto; color: var(--ink-3); font-size: 12px; }
+  .qbar .lk.clr { cursor: pointer; }
+  .qbar .lk.clr:hover { color: var(--danger); }
+  .qbar .lk.act { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  /* ---- 粘贴导入卡（左栏底部）---- */
+  .pastecard {
+    flex: 0 0 auto; border: 1px solid var(--accent-line);
+    border-radius: 12px; background: var(--card); overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  .pastecard .ph {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    padding: 9px 11px; background: var(--accent-2); border: none;
+    text-align: left; font-size: 12.5px; font-weight: 600;
+    color: var(--accent); line-height: 1.5;
+  }
+  .pastecard .ph:hover { background: #eadfd6; }
+  .pastecard .ph .t { flex: 0 0 auto; }
+  /* 收起来时这一行要交代清楚"会放进哪一类、下一个号是几" ——
+     不说的话她就得点开才知道，那"收起来"就成了藏功能。 */
+  .pastecard .ph .sub {
+    flex: 1 1 auto; min-width: 0; font-weight: 400; font-size: 11px;
+    color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; text-align: right;
+  }
+  .pastecard .ph .caret { flex: 0 0 auto; font-size: 10px; color: var(--ink-3); }
+  .pastecard .pb { padding: 10px 11px; }
+  .pastecard .target { font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
+  .pastecard .target b { color: var(--accent); }
+  .pastecard .nextno {
+    display: inline-block; font-family: var(--mono); font-size: 11px;
+    background: var(--accent-2); border: 1px solid var(--accent-line);
+    border-radius: 4px; padding: 2px 6px; color: var(--accent); margin-top: 5px;
+  }
+  .pastecard textarea {
+    font: inherit; font-size: 12.5px; width: 100%; min-height: 74px;
+    margin-top: 8px; padding: 8px 9px; border-radius: 8px;
+    border: 1px solid var(--line-3); background: #fbfaf8;
+    line-height: 1.7; resize: vertical; font-family: var(--mono);
+  }
+  .pastecard textarea:focus { outline: none; border-color: var(--accent); background: #fff; }
+  .pastecard .pfl { font-size: 10.5px; color: var(--ink-4); margin-top: 6px; line-height: 1.6; }
+  .pastecard .pact { display: flex; gap: 6px; margin-top: 9px; }
+  .pastecard .pact .btn { flex: 1 1 auto; justify-content: center; height: 32px; padding: 0 10px; font-size: 12.5px; }
+
+  /* ---- 粘贴导入：识别结果那一张表 ---- */
+  .pvlist { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .pvlist .pvhead {
+    padding: 7px 11px; background: var(--panel-2);
+    border-bottom: 1px solid var(--line-2); font-size: 11.5px; color: var(--ink-3);
+  }
+  .pvlist .pvhead b { color: var(--ok); }
+  .pvlist .pvbody { max-height: 230px; overflow-y: auto; padding: 5px; }
+  .pvrow { display: flex; align-items: flex-start; gap: 8px;
+           padding: 5px 7px; border-radius: 5px; font-size: 12px; }
+  .pvrow:hover { background: var(--panel-2); }
+  .pvrow .pno {
+    font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+    background: var(--accent-2); border: 1px solid var(--accent-line);
+    border-radius: 3px; padding: 1px 5px; flex: 0 0 auto;
+  }
+  .pvrow .pno.gone {
+    color: var(--ink-4); background: var(--line-2); border-color: var(--line);
+    text-decoration: line-through;
+  }
+  .pvrow .ptx { flex: 1 1 auto; min-width: 0; color: var(--ink-2);
+                line-height: 1.7; word-break: break-word; }
+  .pvrow .pdel {
+    flex: 0 0 auto; border: none; background: none; color: var(--ink-4);
+    font-size: 13px; line-height: 1; padding: 2px 4px;
+  }
+  .pvrow .pdel:hover { color: var(--danger); }
 
   .clfilters {
     display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
   }
+  /* 筛选条 + 批量条：跟着上面那块 `.vtop` 一起钉住。
+     为什么不各自吸顶：第二条的 top 得等于第一条的高度（还在变），
+     算错就互相压住。收进同一个块里，只算一次。
+     ★ 吸顶线必须**正好贴着** `.vtop` 下沿：留缝的话，滚动时那条缝里会
+       露出底下的卡片（一截卡浮在两根钉住的条中间），看着像界面坏了。
+     ★ 背景必须是实色：这两条底下就是滚动的卡片流，透出来就糊成一片。 */
+  .clstick {
+    position: sticky; top: var(--vtop, 118px); z-index: 15;
+    background: var(--bg); padding-bottom: 10px;
+  }
+  .clstick .clfilters { margin-bottom: 10px; }
+  /* 批量条的吸顶交给外面这个块了，自己别再吸一次（会跟筛选条重叠） */
+  .clstick .clbatch { position: static; top: auto; margin-bottom: 0; }
   .clfilters select {
     height: 32px; border: 1px solid var(--line); border-radius: 8px;
     background: #fff; padding: 0 8px; font-size: 12.5px; color: var(--ink-2);
@@ -697,9 +1070,10 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .clbatch {
-    position: sticky; top: 62px; z-index: 15;
+    /* 吸顶不在这里做 —— 它跟筛选条一起收在 `.clstick` 里（见上面的说明） */
     display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
-    background: var(--ink); color: #fff; border-radius: var(--radius);
+    background: var(--accent-2); color: var(--ink); border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
     padding: 9px 12px; margin-bottom: 10px;
   }
   .clbatch .cnt { font-size: 13px; font-weight: 600; }
@@ -707,17 +1081,17 @@
     height: 30px; border-radius: 7px; border: none; padding: 0 8px; font-size: 12.5px;
   }
   .clbatch .mini {
-    background: transparent; color: #fff; border-color: rgba(255,255,255,.36);
+    background: transparent; color: var(--ink-2); border-color: var(--accent-line);
   }
-  .clbatch .mini:hover { background: rgba(255,255,255,.14); color: #fff; }
-  .clbatch .undo { border-color: rgba(255,255,255,.6); }
+  .clbatch .mini:hover { background: #fff; color: var(--ink); }
+  .clbatch .undo { border-color: var(--line-3); }
   /* 批量栏里的「内化为剧情零件」要跳出来一点。
      这一排十来个按钮长得一样，它是"换个库"的那种动作（原料 → 成品），
      不是"改这一批属性"，混在里面会被当成又一个批量改状态的按钮。 */
   .clbatch .mini.primary {
-    background: var(--accent); border-color: var(--accent); font-weight: 600;
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
   }
-  .clbatch .mini.primary:hover { background: #7a4d33; color: #fff; }
+  .clbatch .mini.primary:hover { background: var(--accent-dim); color: #fff; }
 
   /* ---- 逻辑素材组 ----
      AI 认出「这几段合起来才算一条完整素材」，摆在这儿等她点头。
@@ -935,8 +1309,7 @@
     display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
     margin: 15px 0 8px; font-size: 13px; font-weight: 600;
   }
-  .mdsechint { font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
-  .mdprov {
+    .mdprov {
     border: 1px solid var(--line); border-radius: 9px;
     background: var(--line-2); padding: 11px 12px; margin-bottom: 9px;
   }
@@ -1005,8 +1378,8 @@
      类目条和卡片挤下去 —— 但它是"想说话的时候得有地方说"，
      所以收起状态那行必须一直可见、且写着一句话说明它是什么。 */
   .clprompt {
-    border: 1px solid var(--line-2); border-radius: 9px;
-    margin-bottom: 11px; background: var(--line-2);
+    border: 1px solid var(--line); border-radius: 9px;
+    margin-bottom: 11px; background: #fff;
   }
   .clphead {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -1019,7 +1392,7 @@
     width: 100%; box-sizing: border-box; resize: vertical;
     font-size: 12.5px; line-height: 1.75;
     border: 1px solid var(--line); border-radius: 7px;
-    padding: 8px 9px; background: var(--bg); color: var(--ink);
+    padding: 8px 9px; background: #fff; color: var(--ink);
     font-family: inherit;
   }
   .clpfoot {
@@ -1041,7 +1414,7 @@
   }
   .clptab:hover { border-color: var(--ink-3); color: var(--ink); }
   .clptab.on {
-    background: var(--ink); border-color: var(--ink); color: var(--bg);
+    background: var(--card); border-color: var(--accent); color: var(--accent); font-weight: 600;
   }
   .clppane { display: block; }
 
@@ -1318,21 +1691,16 @@
   #olDesign { min-height: 84px; }
   /* 草稿说明条：一句话讲清"你填的东西会留着，要清自己清"。
      她上次的困惑正是"填完点一次生成就没了，只能重敲" —— 这句就是答它。 */
-  .drafttip {
-    flex: 0 0 auto; font-size: 12px; color: var(--ink-3);
-    border: 1px dashed var(--line); border-radius: 8px;
-    padding: 7px 10px; line-height: 1.7; margin-bottom: 12px;
-  }
 
   /* ---- 角色卡选择（横向一排小卡） ---- */
   .olchars {
     display: flex; flex-wrap: wrap; gap: 7px;
     min-height: 34px; padding: 7px 8px;
     border: 1px dashed var(--line); border-radius: 8px;
-    background: var(--line-2);
+    background: #fff;
   }
   .olchars:empty::after {
-    content: "还没有关联角色卡。至少挑一张才能生成。";
+    content: "还没有关联角色卡。";
     font-size: 12px; color: var(--ink-3); line-height: 20px;
   }
   .olchar {
@@ -1371,6 +1739,7 @@
   .olpool {
     max-height: 320px; overflow: auto; margin-top: 7px;
     border: 1px solid var(--line-2); border-radius: 8px;
+    background: #fff;
   }
   .olpool .blank {
     padding: 14px 12px; font-size: 12.5px; color: var(--ink-3);
@@ -1760,16 +2129,22 @@
     transition: background .14s;
   }
   .chitem:hover { background: var(--line-2); }
-  .chitem.on { background: var(--ink); color: #fff; }
+  /* 当前章节：白卡 + 赭石左条（不是深色块）。
+     深色块在右侧正文的衬托下像一块补丁，而且它下面的小字全要跟着反白，
+     一改文案就得同步改四处颜色。 */
+  .chitem.on {
+    background: var(--card); color: var(--ink); font-weight: 600;
+    box-shadow: var(--shadow-1), inset 2px 0 0 var(--accent);
+  }
   .chitem .ct {
     font-size: 13.5px; font-weight: 600; color: var(--ink);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chitem.on .ct { color: #fff; }
+  .chitem.on .ct { color: var(--ink); }
   .chitem .cm { font-size: 11px; color: var(--ink-3); }
-  .chitem.on .cm { color: rgba(255,255,255,.75); }
+  .chitem.on .cm { color: var(--ink-3); }
   .chitem .cm .dot { color: var(--accent); }
-  .chitem.on .cm .dot { color: #fff; }
+  .chitem.on .cm .dot { color: var(--accent); }
   .chlistfoot {
     flex: 0 0 auto; border-top: 1px solid var(--line-2); padding: 8px 10px;
     display: flex; gap: 6px;
@@ -1796,9 +2171,7 @@
     color: var(--ink); padding: 0;
   }
   .chsum input:focus { outline: none; }
-  .chsum .cshint { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
-
-  /* 生成中那条状态行。**它不是装饰**：她要看得见"已经等了多少秒"，
+    /* 生成中那条状态行。**它不是装饰**：她要看得见"已经等了多少秒"，
      否则长任务里界面一片安静，她只能怀疑是不是死了。 */
   .chstream {
     display: flex; align-items: center; gap: 10px;
@@ -2280,36 +2653,75 @@
 
     <!-- ---------- 功能一：总素材库 ---------- -->
     <section class="view on" id="view-library">
+      <!-- 吸顶一整块：功能头 + 统计。
+           为什么把它们包在一起：滑卡片的时候她要能一直看见
+           「库里有多少、还有多少没走流程」，也想随时能改筛选/搜索。
+           这一块有多高会影响下面吸顶的左栏，所以整块交给 JS 量高度
+           （写进 --vtop），别在 CSS 里手算。 -->
+      <div class="vtop">
       <header class="vhead">
         <h1 class="vtitle">总素材库</h1>
+        <!-- 「模型设置」原来在统计条下面那条说明行的末尾（那行字 2026-10-07 删了）。
+             挪到这一排跟搜索框挨着 —— 它是设置类入口，该跟其它按钮待在同一层。 -->
         <div class="vacts">
           <input id="search" class="search" type="text" placeholder="搜索标题或正文里的词…">
+          <button class="btn" id="btnModels">模型设置</button>
           <button class="btn primary" id="btnUpload">上传文件</button>
           <button class="btn" id="btnImport">导入文件夹</button>
           <button class="btn" id="btnPaste">粘贴文本</button>
         </div>
       </header>
 
-      <div class="statsbar">
-        <div><span class="num" id="sMat">-</span>份素材</div>
-        <div><span class="num" id="sChar">-</span>字</div>
-        <div><span class="num" id="sTag">-</span>个标签</div>
+      <!-- 统计条（.cards = 一格一个数那一版）。
+           前三个数来自 /api/stats，后三个来自每份素材的分类状态
+           （S.cls，跟卡片上那条状态条同一个来源，不另立口径）。
+           title 里写清每个数是怎么算的 —— 界面上一个可能被误解的数，
+           必须在鼠标停上去的时候能自己解释清楚。 -->
+      <div class="statsbar cards">
+        <div class="stat" title="库里一共有几份素材（一份文件算一条）">
+          <div class="sv" id="sMat">-</div>
+          <div class="sl">份素材</div>
+        </div>
+        <div class="stat" title="所有素材的字数加起来">
+          <div class="sv" id="sChar">-</div>
+          <div class="sl">字</div>
+        </div>
+        <div class="stat" title="自动归出来的标签一共有几个">
+          <div class="sv" id="sTag">-</div>
+          <div class="sl">个标签</div>
+        </div>
+        <div class="stat dim" id="sClsNeverBox"
+             title="还没跑过自动分类、或者上一次被你取消了的文件。点一下跳到第一份。">
+          <div class="sv" id="sClsNever">-</div>
+          <div class="sl">待分类</div>
+        </div>
+        <div class="stat dim" id="sClsRunBox"
+             title="自动分类正在跑的文件。点一下跳到第一份。">
+          <div class="sv" id="sClsRun">-</div>
+          <div class="sl">分类中</div>
+        </div>
+        <div class="stat dim act" id="sClsErrBox"
+             title="有分类失败、或者只跑完一部分的文件。点一下跳到第一份。">
+          <div class="sv" id="sClsErr">-</div>
+          <div class="sl">有失败项</div>
+        </div>
       </div>
 
-      <!-- 这行文案由 paintClsHint() 按"有没有配模型"填。
-           这里只放个占位，免得加载的一瞬间闪一遍过时的说法 -->
-      <div class="clshint" id="clsHint">正在读模型配置…</div>
+      </div>
 
       <!-- 实时输出：任务在跑的时候，模型正在吐的字就近显示在这里。
            为什么不放进每份文件的按钮排里：那一条每 1.5 秒被轮询整个重画一次
            （clsBarInner / infBarInner），实时文字放进去了会被反复擦掉，
-           表现是"闪着闪着就没了"。所以它必须待在轮询摸不到的地方。 -->
+           表现是"闪着闪着就没了"。所以它必须待在轮询摸不到的地方。
+           也不跟着吸顶：它会一直长高，钉住了会把内容区挤没。 -->
       <div id="liveBox"></div>
 
       <div class="vbody">
         <aside class="tagside">
-          <h3>标签</h3>
-          <div class="taglist" id="tagbar"></div>
+          <div class="tagbox grow">
+            <div class="tagbox-h">标签<span class="na" id="tagCnt"></span></div>
+            <div class="taglist" id="tagbar"></div>
+          </div>
         </aside>
         <div class="listwrap">
           <div class="listhead" id="listhead"></div>
@@ -2326,14 +2738,40 @@
          跟"素材怎么用"没关系。文件这一层在「总素材库」里管，
          切分也搬去那边了（每份文件上的「切分」按钮）。 -->
     <section class="view" id="view-classify">
+      <!-- 吸顶一整块：功能头 + 搜索结果条 + 统计。
+           「我现在在看哪一批、命中多少」这几行必须一直看得见 ——
+           滑走之后每换一次筛选都要把页面拉回顶部。
+           高度由 JS 量出来写进 --vtop，下面吸顶的左栏和筛选条都读它。 -->
+      <div class="vtop">
       <header class="vhead">
         <h1 class="vtitle">素材分类</h1>
+        <!-- 搜索框：原来那个独立的「素材检索」功能并到这里（2026-10-07）。
+             为什么放顶栏而不是塞进下面那排筛选器：它问的是"整个库里
+             有没有这条"，跟"这次我要看哪一批"不是同一件事；
+             混在一起她会以为搜索只在那批里找。 -->
+        <div class="tbsearch" id="clSearchBox">
+          <input id="clSearch" type="text" placeholder="搜素材内容（全库）"
+                 aria-label="搜索素材内容">
+          <span class="hk">Enter</span>
+        </div>
         <div class="vacts">
           <button class="btn" id="clMapBtn">来源映射表</button>
           <button class="btn" id="clHistBtn">操作记录</button>
+          <button class="btn primary" id="clPasteTop">粘贴导入</button>
           <button class="btn" id="clReload">刷新</button>
         </div>
       </header>
+
+      <!-- 搜索结果条。只在有搜索词时出现 ——
+           它的职责是把"你现在是在搜东西、命中几条、搜的是哪个范围"
+           一次说清。含糊过去的话，她会以为卡片被筛没了。 -->
+      <div class="qbar" id="clQBar">
+        <span>搜索 <span class="kw" id="clQKw"></span></span>
+        <span>命中 <span class="n" id="clQN">0</span> 条</span>
+        <span class="dim" id="clQWhere"></span>
+        <span class="dim" id="clQPlot"></span>
+        <span class="lk clr" id="clQClear">清空搜索 ✕</span>
+      </div>
 
       <div class="statsbar">
         <div><span class="num" id="clStatCards">-</span>张卡片</div>
@@ -2343,12 +2781,57 @@
         <div><span class="num" id="clStatNoise">-</span>条噪音</div>
         <div><span class="num" id="clStatGroups">-</span>组待确认</div>
       </div>
+      </div>
 
       <div class="vbody">
+        <!-- 左：主分类（吸顶不动）+ 粘贴导入。
+             她要的是"滑动素材时最左边这一栏不变"。 -->
+        <aside class="clrail">
+          <div class="clrailbox">
+            <h3>主分类</h3>
+            <div class="clcatlist" id="clCatBar"></div>
+          </div>
+
+          <!-- 粘贴导入。为什么钉在左栏底部：
+               她说的是"选择某一素材分类项目，然后在该地方直接粘"——
+               贴着分类列表放，选完类眼睛不用挪就能粘。
+               粘完还是走同一张确认弹层（跟顶栏那个按钮一个出口），
+               不另开一套解析，免得多出第二种算法。
+
+               【为什么平时收成一行】她这个库有 11 个主类 + 全部 +
+               未分类 = 13 行，一栏装不下。摊开的话底下那几个类
+               （心理 / 搞笑情节 / 对话台词 / 情节）就被挤到要滚动
+               才看得见 —— 而"随时切换分类"正是这一栏存在的理由。
+               收起来的那一行写清了"放进哪一类、下一个号是几"，
+               点一下就在原地摊开，不用跑去别处。 -->
+          <div class="pastecard" id="clPasteCard">
+            <button class="ph" id="clPasteToggle" aria-expanded="false">
+              <span class="t">粘贴导入</span>
+              <span class="sub" id="clPasteSub">未分类 · 下一个 #1</span>
+              <span class="caret" id="clPasteCaret">▾</span>
+            </button>
+            <div class="pb" id="clPasteBody" hidden>
+              <div class="target" id="clPasteTarget">当前目标分类：<br><b>—</b></div>
+              <div class="nextno" id="clPasteNo">下一个编号 —</div>
+              <textarea id="clPasteTa" spellcheck="false"
+                placeholder="1.他伸手把那半截刀接了，指腹压着刃口一路摸到尖上。&#10;2.她把手里的伞往他那半边倾了倾，自己左肩立刻湿透了一片。"></textarea>
+              <div class="pfl">每行一条，以「数字.」开头<br>没有编号的行并进上一条</div>
+              <div class="pact">
+                <button class="btn primary" id="clPasteGo">识别并确认</button>
+                <button class="btn" id="clPasteClr">清空</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+
         <div class="clmain">
-          <div class="clcatbar" id="clCatBar"></div>
-          <div class="clfilters" id="clFilters"></div>
-          <div class="clbatch" id="clBatch" hidden></div>
+          <!-- 筛选条 + 批量条：这两条要跟上面那块一起钉住 ——
+               「按什么筛」「勾了几条、要改什么」在滑卡片时都得看得见。
+               两条收进同一个吸顶块（只算一次 top），见 .clstick 的说明。 -->
+          <div class="clstick">
+            <div class="clfilters" id="clFilters"></div>
+            <div class="clbatch" id="clBatch" hidden></div>
+          </div>
           <!-- 逻辑素材组：AI 认出「这几段合起来才算一条完整素材」，等她点头。
                放在卡片流上面是因为它是一件"要她做的事" ——
                混在几百张卡片里就等于没提。
@@ -2375,6 +2858,9 @@
          这一轮（第 1 步）只做人工零件：新建 / 编辑 / 版本 / 恢复 / 排除 / 来源定位。
          一个 AI 都不调 —— AI 内化是第 2 步。 -->
     <section class="view" id="view-infuse">
+      <!-- 吸顶一整块（功能头 + 统计），跟素材分类页同一个排法：
+           左栏和筛选条的吸顶线都读这一块的实测高度（--vtop）。 -->
+      <div class="vtop">
       <header class="vhead">
         <h1 class="vtitle">剧情内化</h1>
         <div class="vacts">
@@ -2396,24 +2882,39 @@
         <div><span class="num" id="plStatSrc">-</span>条来源素材</div>
         <div><span class="num" id="plStatNoSrc">-</span>条没挂来源</div>
       </div>
+      </div>
 
       <div class="vbody">
+        <!-- 左：主分类（吸顶不动）。折腰 2026-10-07 的原话：
+             「剧情内化库 ui 完全参照素材分类库」—— 所以这里跟
+             `#view-classify` 用的是同一套 `.clrail` / `.clcatlist`，
+             连样式都没另写一份（两页长得不一样才是真会出错的地方）。 -->
+        <aside class="clrail">
+          <div class="clrailbox">
+            <h3>主分类</h3>
+            <div class="clcatlist" id="plCatBar"></div>
+          </div>
+        </aside>
+
         <div class="clmain">
-          <div class="clcatbar" id="plCatBar"></div>
-          <div class="clfilters" id="plFilters"></div>
-          <!-- 批量确认条。为什么它必须存在：
-               候选池只收「已确认 / 已编辑」的零件，而 AI 批量内化产出的
-               一律是「待确认」。没有这个条，她就得开几十次弹层、点几十次
-               保存，才能让零件进得了大纲生成 —— 而她真正在做的事只是
-               "我扫了一遍，这批能用"。 -->
-          <div class="plbar" id="plBar" hidden>
-            <label class="plall" title="只勾当前列表里还没确认的那些">
-              <input type="checkbox" id="plChkAll"><span id="plChkAllTxt">全选待确认</span>
-            </label>
-            <span class="mdhint" id="plSelNote">已勾 0 条</span>
-            <span class="grow"></span>
-            <button class="mini" id="plClearSel" hidden>取消勾选</button>
-            <button class="mini primary" id="plConfirmSel" disabled>确认勾上的</button>
+          <!-- 筛选条 + 批量条收进同一个吸顶块：滑零件的时候
+               「按什么筛」「勾了几条」都得看得见。见 .clstick 的说明。 -->
+          <div class="clstick">
+            <div class="clfilters" id="plFilters"></div>
+            <!-- 批量确认条。为什么它必须存在：
+                 候选池只收「已确认 / 已编辑」的零件，而 AI 批量内化产出的
+                 一律是「待确认」。没有这个条，她就得开几十次弹层、点几十次
+                 保存，才能让零件进得了大纲生成 —— 而她真正在做的事只是
+                 "我扫了一遍，这批能用"。 -->
+            <div class="plbar" id="plBar" hidden>
+              <label class="plall" title="只勾当前列表里还没确认的那些">
+                <input type="checkbox" id="plChkAll"><span id="plChkAllTxt">全选待确认</span>
+              </label>
+              <span class="mdhint" id="plSelNote">已勾 0 条</span>
+              <span class="grow"></span>
+              <button class="mini" id="plClearSel" hidden>取消勾选</button>
+              <button class="mini primary" id="plConfirmSel" disabled>确认勾上的</button>
+            </div>
           </div>
           <div id="plList"></div>
         </div>
@@ -2435,7 +2936,9 @@
         <h1 class="vtitle">大纲生成</h1>
         <div class="vacts">
           <button class="btn" id="olWorldBtn">世界观库</button>
-          <button class="btn" id="olCharBtn">角色卡</button>
+          <!-- 这个按钮通往【人设卡】页（不再是导航里的一项）。
+               只挑卡、不管卡的动作在下面表单那行的「＋ 关联角色卡」上。 -->
+          <button class="btn" id="olCharBtn">人设卡<span class="badge" id="olCharCnt">-</span></button>
           <button class="btn" id="olPromptBtn">补充提示词</button>
           <button class="btn" id="olWipeText">清空输入</button>
           <button class="btn" id="olReload">刷新</button>
@@ -2455,12 +2958,10 @@
 
             <!-- ============ 左：输入 ============ -->
             <div class="olcol">
-              <div class="drafttip">
-                你填的东西会自己留着 —— 换页、刷新、重新登录都不会丢，
-                只有你自己清掉才算没（把内容整段删掉，或点「清空输入」）。
-              </div>
+              <!-- 这一块原来顶上有一条虚框说明（「你填的东西会自己留着…」），
+                   2026-10-07 折腰截图点名删掉。草稿照旧存，只是不说了。 -->
               <div class="field">
-                <label>世界观 <span class="chip">必填</span></label>
+                <label>世界观 <span class="chip gray">选填</span></label>
                 <textarea id="olWorld" rows="7" spellcheck="false"
                   placeholder="时代地点、门派制度、能力规则、人物身份限制、禁忌与常识……&#10;写什么都会发出去，所以别把整本书粘进来，只写这篇要遵守的设定。"></textarea>
                 <div class="olrow">
@@ -2476,11 +2977,10 @@
               </div>
 
               <div class="field">
-                <label>角色卡 <span class="chip">至少一张</span></label>
+                <label>角色卡 <span class="chip gray">选填</span></label>
                 <div class="olchars" id="olChars"></div>
                 <div class="olrow">
                   <button class="mini primary" id="olCharAdd">＋ 关联角色卡</button>
-                  <span class="mdhint">生成时会写成快照存进大纲 —— 以后改卡不影响老大纲。</span>
                 </div>
               </div>
 
@@ -2488,7 +2988,6 @@
                 <label>一句话梗 <span class="chip gray">选填</span></label>
                 <input id="olHook" type="text" maxlength="500"
                        placeholder="这篇的核心冲突。例如：所有人都以为他来复仇，只有死对头知道他其实在求救。">
-                <div class="mdhint">填了就围绕它写。不填的话 AI 自己推一个，并且会在结果里标出来是它推的。</div>
               </div>
 
               <div class="field">
@@ -2502,12 +3001,13 @@
                   <label>预期字数 <span class="chip">必填</span></label>
                   <input id="olWords" type="number" min="1000" max="200000"
                          step="500" value="8000">
-                  <div class="mdhint" id="olTierNote">字数决定结构规模，不是只显示一个数字。</div>
                 </div>
                 <div class="field">
-                  <label>用哪些模型 <span class="chip gray">可多选</span></label>
-                  <div class="olmodels" id="olModels"></div>
-                  <div class="mdhint" id="olModelNote"></div>
+                  <!-- 2026-10-07 折腰：从一列复选框改成方框下拉，一次只选一个。
+                       原来的多选是"勾几个就并发跑几份候选"，她说不要 ——
+                       一个方框点开就是全部模型，选一个就完事。 -->
+                  <label>用哪个模型</label>
+                  <select id="olModels"></select>
                 </div>
               </div>
             </div>
@@ -2533,17 +3033,12 @@
                   <span class="mdhint" id="olPoolNote"></span>
                 </div>
                 <div class="olpool" id="olPool"></div>
-                <div class="mdhint">
-                  只有「已确认」和「已编辑」的零件能进来 —— AI 内化出来的零件
-                  状态是「待确认」，要在【剧情内化】里确认过才算数。
-                  来自「仅本地」素材的已经自动排除，不会发给任何模型。
-                </div>
               </div>
 
               <div class="field">
                 <!-- 分类素材参考：开关默认关（折腰拍板）。
                      开了才露条数框。上限她填多少用多少，硬顶 30（后端夹）。 -->
-                <label>分类素材参考 <span class="chip gray">治细节不足</span></label>
+                <label>分类素材参考 <span class="chip gray">选填</span></label>
                 <div class="olrow">
                   <label class="switch">
                     <input type="checkbox" id="olUseRef">
@@ -2556,11 +3051,6 @@
                   </label>
                   <span class="grow"></span>
                   <span class="mdhint" id="olRefNote"></span>
-                </div>
-                <div class="mdhint">
-                  从「素材分类」里已经合并、已经生成摘要的逻辑素材组里挑。
-                  AI 只借它们的写作功能（反应、对白、情绪、氛围），禁止照抄原句；
-                  每个节点会记下参考了哪条、借了什么。
                 </div>
               </div>
 
@@ -2598,15 +3088,20 @@
 
           <!-- ============ 出门按钮 ============ -->
           <div class="olgo">
-            <button class="btn" id="olPreviewBtn">看看会发出去什么</button>
             <button class="btn primary" id="olGo">开始生成</button>
+            <!-- 文案 2026-10-08 改过一次：这个开关现在**同时管两类**学习案例
+                 —— 标过的「不可用」+ 你改写后 AI 总结出的取向。
+                 原来只写「不可用」，她看到这条会以为改写学的东西没进来。 -->
             <label class="switch" title="只影响这次生成，不改任何已存的东西">
               <input type="checkbox" id="olUseLearn" checked>
-              <span>参考以前标过的「不可用」</span>
+              <span>参考以前学过的（标过的「不可用」+ 你改写总结出的取向）</span>
             </label>
-            <span class="mdhint" id="olGoNote"></span>
+            <!-- 这一行只说一件事：这次要发出去多少字。
+                 原来是「看看会发出去什么」按钮 + 一大块清单（发哪些东西、
+                 发给谁、拦住没发的是哪几条）—— 折腰 2026-10-07 要求删掉，
+                 只留字数。那串预览里真正花钱前要看的就这一个数。 -->
+            <span class="mdhint" id="olSendNote"></span>
           </div>
-          <div id="olPreview"></div>
 
           <!-- ============ 任务与候选 ============ -->
           <!-- 实时输出：大纲任务在跑的时候，各个模型正在吐的字显示在这里。
@@ -2617,10 +3112,17 @@
           <!-- ============ 大纲库 ============ -->
           <div class="olsec">
             <h3>大纲库</h3>
-            <div class="mdhint">在候选卡上点「把这一版做成大纲」才会进来 ——
-              点下去不是「定稿」，是「打开来改」：改完点「保存改动」才落到这儿。
-              AI 原稿一直留着，随时能比。剧情零件的参考次数也到这步才加。</div>
             <div id="olLib"></div>
+          </div>
+
+          <!-- ============ 我的改写 ============
+               她交过的成品大纲都在这儿 —— 不挂在某一次生成里，
+               所以**从哪一版、什么时候想起**都能回来接着看。
+               以往只有一个入口（候选卡上那个按钮），生成任务被她清掉
+               之后就再也找不到自己交过的东西了。 -->
+          <div class="olsec">
+            <h3>我的改写</h3>
+            <div id="olRwLib"></div>
           </div>
         </div>
       </div>
@@ -2652,12 +3154,6 @@
 
       <div class="vbody">
         <div class="clmain">
-          <div class="drafttip">
-            角色卡是写对话时随时对照的表。填得越全，AI 越不会把人物写得不像 ——
-            但空着也能用，只是那些没填的部分，模型只能自己猜。
-            大纲和正文关联角色卡时存的是<b>当时那份快照</b>，
-            所以你以后改这里，不会影响已经写过的东西。
-          </div>
           <div class="olrow" style="margin:0 0 10px">
             <input type="text" id="pcSearch" placeholder="按名字、身份、性格、关系找"
                    style="flex:1 1 auto;min-width:0;height:34px;border:1px solid var(--line);
@@ -2732,10 +3228,6 @@
           <div class="chsum">
             <input id="chSummary" maxlength="1000"
                    placeholder="本章梗概：一句话说清这章发生了什么">
-            <div class="cshint">
-              梗概不是摘要存档 —— 它是<b>关联章节时用来代替正文的那份东西</b>
-              （只带梗概，省几百上千字的上下文钱），也是你在左边列表里认出这一章的唯一线索。
-            </div>
           </div>
 
           <!-- 生成中的状态行。放在正文框正上方，因为这时候她盯着的是这块。 -->
@@ -2783,10 +3275,7 @@
               </button>
             </div>
             <div class="chpick-panel" id="chPickPanel" hidden>
-              <div class="cpsub">
-                <b>本章角色卡</b>（本章不出场的角色不要选 —— 带错了人，
-                模型会照着你写的性格去写不该出现的人）
-              </div>
+              <div class="cpsub"><b>本章角色卡</b></div>
               <input type="text" class="cpq" id="chCharSearch" placeholder="搜索…">
               <div class="cpbar">
                 <span id="chCharSelCount">已选 0 项</span>
@@ -2875,7 +3364,6 @@
     <header>
       <div class="htitle">
         <h2 id="pcEditTitle">新建角色卡</h2>
-        <p>填得越全，写对话时越不会把它写跑。空着的项，模型只能自己猜。</p>
       </div>
       <button class="x" data-close="mkPcEdit">&times;</button>
     </header>
@@ -2900,7 +3388,6 @@
     <header>
       <div class="htitle">
         <h2 id="chPickTitle">挑一条提示词</h2>
-        <p>点一条就填进上面的框里。填进去之后你还能接着改，改完不影响存好的那一条。</p>
       </div>
       <button class="x" data-close="mkChPick">&times;</button>
     </header>
@@ -2917,8 +3404,6 @@
     <header>
       <div class="htitle">
         <h2>把哪一章接在前面</h2>
-        <p>关联的章节会跟着这次生成一起发给模型，防止它忘了前面写过什么。
-           取正文还是只取梗概，加进去之后还能改。</p>
       </div>
       <button class="x" data-close="mkChRef">&times;</button>
     </header>
@@ -2935,8 +3420,6 @@
     <header>
       <div class="htitle">
         <h2>这一章的生成记录</h2>
-        <p>每一次生成都留着一份：用的哪个模型、首字等了多久、一共花了多久、
-           写出来的原文。生成前的那份正文也在里面，随时能还原。</p>
       </div>
       <button class="x" data-close="mkChHist">&times;</button>
     </header>
@@ -2955,8 +3438,6 @@
     <header>
       <div class="htitle">
         <h2>角色管理</h2>
-        <p>这里列的<b>只是你自己账号下</b>的角色卡，别人看不见、也不会跟你共用。
-           建好之后回到上面那个下拉里就能勾上，写这一章时一起发给模型。</p>
       </div>
       <button class="x" data-close="mkChCharMgr">&times;</button>
     </header>
@@ -3097,20 +3578,12 @@
       <div class="field">
         <label>文件夹或文件路径</label>
         <input type="text" id="impPath" placeholder="D:\素材\分类">
-        <div class="hint">
-          把磁盘上的文件夹路径粘进来。取路径的办法：在资源管理器里进到那个文件夹，
-          点一下顶部的地址栏，路径就会变成可复制的文字，Ctrl+C 复制。
-          <br>这种方式会<b>自动用文件夹名当标签</b>，比一个个上传省事。
-        </div>
       </div>
       <div class="field">
         <label class="check"><input type="checkbox" id="impRec" checked> 子文件夹也一起导入</label>
         <label class="check" style="margin-top:8px">
           <input type="checkbox" id="impLocal"> 标记为「仅本地」
         </label>
-        <div class="hint">
-          勾上「仅本地」的素材，将来在调用云端大模型时会自动跳过，内容不出你的电脑。
-        </div>
       </div>
       <div id="impPreview"></div>
     </div>
@@ -3157,7 +3630,6 @@
     <header>
       <div class="htitle">
         <h2 id="plibTitle">创建提示词</h2>
-        <p>存下来之后，下次在「快捷选项」里能直接挑</p>
       </div>
       <button class="x" data-close="mkPlib">&times;</button>
     </header>
@@ -3249,7 +3721,6 @@
     <header>
       <div class="htitle">
         <h2>来源映射表</h2>
-        <p>来源名是你导入时的文件夹名 / 文件名，它只能「建议」主类，确认了才算数。</p>
       </div>
       <button class="x" data-close="mkClMap">&times;</button>
     </header>
@@ -3267,7 +3738,6 @@
     <header>
       <div class="htitle">
         <h2 id="clSampleTitle">抽样检查</h2>
-        <p>样本刻意不是纯随机：固定包含最长、最短、疑似重复的几条。</p>
       </div>
       <button class="x" data-close="mkClSample">&times;</button>
     </header>
@@ -3296,7 +3766,6 @@
     <header>
       <div class="htitle">
         <h2>操作记录</h2>
-        <p>每一次批量改动都在这里，能一键撤销；撤销只回滚当时改过的字段。</p>
       </div>
       <button class="x" data-close="mkClHist">&times;</button>
     </header>
@@ -3339,7 +3808,6 @@
     <header>
       <div class="htitle">
         <h2>拆分这张卡片</h2>
-        <p>点文字中间那个「✂」，就从那里切开。原卡不会被删，只是标成已排除，随时能撤销。</p>
       </div>
       <button class="x" data-close="mkClSplit">&times;</button>
     </header>
@@ -3360,7 +3828,6 @@
     <header>
       <div class="htitle">
         <h2 id="clTagsTitle">选副标签</h2>
-        <p>副标签回答「我以后为什么用它」。主类只能有一个，副标签可以有很多个。</p>
       </div>
       <button class="x" data-close="mkClTags">&times;</button>
     </header>
@@ -3390,31 +3857,19 @@
     <header>
       <div class="htitle">
         <h2>模型设置</h2>
-        <p>填哪家的 API Key，就能用哪家判素材。填完先「测试」验通不通，再「保存」。</p>
       </div>
       <button class="x" data-close="mkModels">&times;</button>
     </header>
     <div class="content">
       <div class="mdtool">
         <select id="mdAdd"><option value="">＋ 添加一个模型（选服务商）</option></select>
-        <span class="mdhint">
-          充的是第三方的额度（硅基流动、各种中转站）也能用 ——
-          选一个预填好地址，把 Key 粘进去就行，地址和模型名都能自己改。
-        </span>
       </div>
       <!-- 接入点：一个「地址 + 密钥」对，填一次；底下的模型只填名字。
            加这一层的原因（2026-09-26）：她发现"阿里云一个 Key 能调 261 个
            模型"，而按老结构，每多用一个模型就要把同一把 Key 再抄一遍。 -->
-      <div class="mdsec">
-        接入点（地址 + 密钥，填一次）
-        <span class="mdsechint">同一个接入点下的模型共用这把钥匙 ——
-          改一次密钥，底下所有模型一起生效。</span>
-      </div>
+      <div class="mdsec">接入点（地址 + 密钥，填一次）</div>
       <div id="mdProvs"></div>
-      <div class="mdsec">
-        模型
-        <span class="mdsechint">地址和密钥跟着上面的接入点走，这里只需要模型名。</span>
-      </div>
+      <div class="mdsec">模型</div>
       <div id="mdBody"></div>
 
       <!-- 耗时对比。为什么放在模型设置页而不是单独一页：
@@ -3430,21 +3885,8 @@
           <option value="365">一年</option>
         </select>
         的记录）
-        <span class="mdsechint">每发一次请求就记一笔 —— 试跑和真实任务都算。
-          「首字」是模型吐出第一个字等了多久，「总耗时」是整段收完用了多久。
-          没量到首字的那几次不参与平均：把它们当成 0 算进去会把平均拉低，
-          得出「这个模型很快」的错误结论。</span>
       </div>
       <div id="mstBody"></div>
-      <div class="why" style="margin-top:14px">
-        Key 只写在你本机的 <b>data/models.json</b>，界面上永远只显示打码后的样子。
-        data/ 整个目录都在忽略名单里，不会进公开仓库。<br>
-        <b>换 Key</b>：直接在框里粘新的、点保存就覆盖了。<br>
-        <b>撤掉 Key</b>：点那条上的「清空密钥」—— 地址和备注留着，只把钥匙抹掉。
-        删掉整条也行，但那样这些设置得重填。<br>
-        「测试」会往那家服务商发一句「在吗」，确认地址、模型名、Key 三样都对 ——
-        这比跑完 600 张卡才发现填错了省事得多。
-      </div>
     </div>
   </div>
 </div>
@@ -3459,7 +3901,7 @@
     <header>
       <div class="htitle">
         <h2 id="mpTitle">拉取模型列表</h2>
-        <p id="mpSub">向接入点问一次它有哪些模型，勾好要用的加进清单。</p>
+        <p id="mpSub"></p>
       </div>
       <button class="x" data-close="mkProvModels">&times;</button>
     </header>
@@ -3490,7 +3932,6 @@
     <header>
       <div class="htitle">
         <h2 id="crTitle">自动分类</h2>
-        <p>先定这次用谁判。同一份文件换不同模型各跑一次，就能比出哪个分得准。</p>
       </div>
       <button class="x" data-close="mkClRun">&times;</button>
     </header>
@@ -3568,7 +4009,6 @@
     <header>
       <div class="htitle">
         <h2 id="ifTitle">AI 内化</h2>
-        <p>把一条条具体素材提炼成"换个角色名还成立"的剧情零件，落进【剧情内化库】。</p>
       </div>
       <button class="x" data-close="mkInfuse">&times;</button>
     </header>
@@ -3628,7 +4068,7 @@
         <div class="iflim">
           先跑前 <input type="number" id="ifLimit" min="0" max="2000"
                         step="1" value="0"> 张
-          <span class="mdhint">0 = 不限（663 张建议先跑 20 张看看效果）</span>
+          <span class="mdhint">0 = 不限</span>
         </div>
       </div>
 
@@ -3658,7 +4098,6 @@
     <header>
       <div class="htitle">
         <h2>内化的补充提示词</h2>
-        <p>写在这里的话，以后每次内化都会捎上它。跑某一份素材时还能临时改。</p>
       </div>
       <button class="x" data-close="mkInfPrompt">&times;</button>
     </header>
@@ -3693,10 +4132,6 @@
           </div>
         </div>
         <div class="mdhint" id="ipNote"></div>
-        <div class="mdhint">
-          想让某一份素材立刻跑一次内化，点上面那个
-          <b>「AI 批量内化」</b>，挑一份素材就行 —— 那儿能看到这次会送多少张。
-        </div>
       </div>
     </div>
     <footer>
@@ -3721,8 +4156,6 @@
     <header>
       <div class="htitle">
         <h2>AI 批量内化</h2>
-        <p>挑一份素材，AI 会把里面的卡片提炼成"换个角色名还成立"的剧情零件，
-           放进【剧情内化库】。</p>
       </div>
       <button class="x" data-close="mkPickMat">&times;</button>
     </header>
@@ -3747,7 +4180,6 @@
     <header>
       <div class="htitle">
         <h2 id="spTitle">切分</h2>
-        <p>切成一条一条的卡片。切分不改原文一个字，只是标出每条的起止位置，随时可以重切。</p>
       </div>
       <button class="x" data-close="mkSplit">&times;</button>
     </header>
@@ -3769,7 +4201,6 @@
     <header>
       <div class="htitle">
         <h2 id="ccTitle">归类</h2>
-        <p>主类只能有一个，副标签可以多个。归类不改原文，也不动卡片正文。</p>
       </div>
       <button class="x" data-close="mkClCat">&times;</button>
     </header>
@@ -3806,7 +4237,6 @@
     <header>
       <div class="htitle">
         <h2 id="ncTitle">新建主类</h2>
-        <p>只有你自己看得见、用得上。系统自带的那几个仍然是所有人共用的。</p>
       </div>
       <button class="x" data-close="mkNewCat">&times;</button>
     </header>
@@ -3829,10 +4259,6 @@
       <div class="field" id="ncTagsWrap">
         <label>这类常用的小标签 <span class="hint">选填，点一下选中</span></label>
         <div class="nctags" id="ncTags"></div>
-        <div class="hint" style="margin-top:7px">
-          选中只是让它们在该类的小标签列表里排前面，不会替你勾上 ——
-          副标签是你表达"我以后为什么拿这段素材"的地方。
-        </div>
       </div>
 
       <div class="authmsg" id="ncMsg"></div>
@@ -3841,6 +4267,56 @@
       <span style="flex:1"></span>
       <button class="btn" data-close="mkNewCat">取消</button>
       <button class="btn primary" id="ncSave">加进清单</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 弹层：粘贴导入 · 识别并确认 ============
+     为什么要有这张"确认"表，而不是粘完直接入库：
+       粘进来的文字是**原样**切开的，切错一刀就是一条错素材。
+       她的素材密（"1.xxx 2.xxx"连着写），一刀切歪了得逐条删。
+       先把"认出来的是哪几条、各接第几号"摆出来让她看一眼再点，
+       比入库之后回来收拾便宜得多。
+
+     出口只有一个：左栏那张粘贴卡和顶栏「粘贴导入」按钮都走这里 ——
+     解析规则只有 segmentation.parse_paste 一处，预览和入库调的是
+     同一个函数，所以"预览里看到几条，库里就进几条"。 -->
+<div class="mask" id="mkClPaste">
+  <div class="modal">
+    <header>
+      <div class="htitle">
+        <h2>粘贴导入 · 确认入库</h2>
+      </div>
+      <button class="x" data-close="mkClPaste">&times;</button>
+    </header>
+    <div class="content">
+      <div class="field">
+        <label>放到哪个分类</label>
+        <select id="cpCat"></select>
+      </div>
+
+      <div class="field">
+        <label>粘贴内容 <span class="hint">改过之后要点一下「重新识别」</span></label>
+        <textarea id="cpText" spellcheck="false" rows="6"
+          placeholder="1.他伸手把那半截刀接了，指腹压着刃口一路摸到尖上。&#10;2.她把手里的伞往他那半边倾了倾，自己左肩立刻湿透了一片。"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="cpAgain">重新识别</button>
+          <span class="hint" id="cpRule" style="margin:0"></span>
+        </div>
+      </div>
+
+      <div class="pvlist" id="pasteList" hidden>
+        <div class="pvhead" id="pasteHead"></div>
+        <div class="pvbody" id="pasteBody"></div>
+      </div>
+
+      <div class="authmsg" id="cpMsg"></div>
+    </div>
+    <footer>
+      <span style="flex:1;font-size:11.5px;color:var(--ink-3);line-height:1.5"
+            id="cpNote"></span>
+      <button class="btn" data-close="mkClPaste">取消</button>
+      <button class="btn primary" id="cpSave">确认入库</button>
     </footer>
   </div>
 </div>
@@ -3855,7 +4331,6 @@
     <header>
       <div class="htitle">
         <h2 id="pvTitle">新建剧情零件</h2>
-        <p id="pvSub">把一段具体素材，写成换个角色名还成立的剧情。</p>
       </div>
       <button class="x" data-close="mkPlot">&times;</button>
     </header>
@@ -3953,7 +4428,6 @@
     <header>
       <div class="htitle">
         <h2>挑来源素材</h2>
-        <p>勾上的卡片会成为这条剧情零件的来源 —— 以后点零件就能顺着回到它们的原文。</p>
       </div>
       <button class="x" data-close="mkPickCard">&times;</button>
     </header>
@@ -3982,7 +4456,6 @@
     <header>
       <div class="htitle">
         <h2>这张卡片内化成了哪些剧情零件</h2>
-        <p id="cpSub"></p>
       </div>
       <button class="x" data-close="mkCardPlots">&times;</button>
     </header>
@@ -4005,7 +4478,6 @@
     <header>
       <div class="htitle">
         <h2>世界观库</h2>
-        <p>存过的设定。点「用这份」会填进输入框，你还能随手改。</p>
       </div>
       <button class="x" data-close="mkOlWorld">&times;</button>
     </header>
@@ -4037,8 +4509,6 @@
     <header>
       <div class="htitle">
         <h2 id="olcTitle">角色卡</h2>
-        <p id="olcSub">打勾的就是这次要用的。生成时会写成快照存进大纲 ——
-          以后改卡不影响老大纲。</p>
       </div>
       <button class="x" data-close="mkOlChar">&times;</button>
     </header>
@@ -4080,8 +4550,6 @@
     <header>
       <div class="htitle">
         <h2 id="olnTitle">编辑这一段</h2>
-        <p>空着的就空着 —— 不是每个字段都对每一段有意义。硬凑出来的
-          空话比空着更糟。</p>
       </div>
       <button class="x" data-close="mkOlNode">&times;</button>
     </header>
@@ -4132,14 +4600,10 @@
         <textarea id="olfNote" rows="3" maxlength="500"
           placeholder="例如：这里两个人不该直接对质，中间得先有一次错认。"></textarea>
       </div>
-      <label class="switch">
+      <label class="switch" style="margin-top:5px">
         <input type="checkbox" id="olfEnabled">
         <span>把这条加入学习库，以后生成时参考</span>
       </label>
-      <div class="mdhint" style="margin-top:5px">
-        不勾也照样记下来 —— 只是不会拿去影响以后的生成。
-        你随时能改这个开关。
-      </div>
     </div>
     <footer>
       <span style="flex:1"></span>
@@ -4198,6 +4662,76 @@
   </div>
 </div>
 
+<!-- ---------- 大纲生成：我按这一版改了一版（改写对比） ----------
+     折腰 2026-10-08 的诉求：「我的创作习惯是生成了大纲，然后我会根据
+     生成的大纲为蓝本，或大纲实在不满意，我就会自己写，我想让 ai 对比它
+     跟我的大纲不断学习，但不想一个个在页面上修改。」
+
+     所以这个弹层只做一件事：**收一整份成品**，然后让 AI 去读。
+     不做逐节点标注（那是"一个个在页面上修改"，她明确不要）。
+
+     两段式，因为中间有一步要花时间：
+       第一段 交稿   —— 粘文本、看自动算出的差异
+       第二段 结论   —— AI 总结出来的改写规律，逐条可开关 -->
+<div class="mask" id="mkOlRw">
+  <div class="modal wide">
+    <header>
+      <div class="htitle">
+        <h2>我按这一版改了一版</h2>
+        <p id="olrwSub"></p>
+      </div>
+      <button class="x" data-close="mkOlRw">&times;</button>
+    </header>
+    <div class="content">
+      <div id="olrwHead"></div>
+
+      <!-- ===== 第一段：交稿 ===== -->
+      <div class="field">
+        <label>你的成品大纲 <span class="chip">必填</span></label>
+        <textarea id="olrwText" rows="14" spellcheck="false"
+          placeholder="把你自己改写完（或者完全自己写）的那一份整篇粘进来。&#10;&#10;不用按它的段落格式整理，空行分段就行 —— AI 会自己对着读。&#10;粘进来之后下面会显示「你改了哪些段」，那个是程序按段落位置猜的，仅供参考。"></textarea>
+        <div class="olrow">
+          <button class="mini" id="olrwRead">读取文件</button>
+          <input type="file" id="olrwFile" hidden accept=".txt,.md,.docx,.pdf">
+          <span class="grow"></span>
+          <span class="mdhint" id="olrwCnt">0 字</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>这一份是 <span class="chip gray">选填</span></label>
+        <select id="olrwSource">
+          <option value="adopted">拿上面那一版当蓝本改的</option>
+          <option value="scratch">完全自己写的（没参照它）</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>备注 <span class="chip gray">选填，只给你自己看</span></label>
+        <input id="olrwNote" type="text" maxlength="500"
+               placeholder="例如：这版我把结局整个换了，中间两段合并了。">
+      </div>
+
+      <div id="olrwDiffBox"></div>
+
+      <div class="olrow">
+        <button class="btn primary" id="olrwSave">存下来</button>
+        <button class="btn" id="olrwAnalyze" hidden>让 AI 看看我改了什么</button>
+        <span class="grow"></span>
+        <span class="mdhint" id="olrwState"></span>
+      </div>
+
+      <!-- ===== 第二段：AI 的结论 ===== -->
+      <div id="olrwResult"></div>
+    </div>
+    <footer>
+      <span style="flex:1"></span>
+      <button class="btn danger" id="olrwDel" hidden>删掉这条</button>
+      <button class="btn" data-close="mkOlRw">关掉</button>
+    </footer>
+  </div>
+</div>
+
 <script>
 /* ==================================================================
    前端逻辑
@@ -4213,26 +4747,45 @@
      id     功能的唯一标识，也是右侧页面 id 的后缀（view-<id>）
      name   左侧栏显示的名字
      icon   图标名，对应下面 ICONS 里的某个键
-     ready  做完了吗？没做完的显示"待做"，点进去是占位页
+     ready  做完了吗？没做完的显示"待开发"，点进去是占位页
      desc   一句话说明它是干什么的
+     group  归到哪一组（资料 / 创作）。同一组连续的几项，前面会画一个小标题
+     nav    false = 不进左侧栏（页面还在，但从别处进去，比如人设卡）
+     subs   下挂在它里面的子项（现在只有大纲生成用：
+            同人 / 短篇 / 长篇三个板块）。子项 id 写成 "父id:子名"
+
+   【为什么人设卡不列在导航里】
+   她 2026-10-07 定的：人设卡不是"一个功能"，是写大纲和写正文时
+   随时要翻的表 —— 单独占一栏反而要来回切页。现在它从大纲页头部
+   的「人设卡」按钮进，正文页则在右栏直接管（弹层里建/改，不用离开）。
+   三处读的是同一份 characters 表，不存在两套角色体系。
 ------------------------------------------------------------------ */
 const VIEWS = [
-  { id: "library",  name: "总素材库", icon: "library", ready: true,
+  { id: "library",  name: "总素材库", icon: "library", ready: true, group: "资料",
     desc: "所有素材都在这里" },
-  { id: "search",   name: "素材检索", icon: "search",  ready: false,
-    desc: "按关键词从素材库里捞出最相关的片段，为写稿做准备" },
-  { id: "classify", name: "素材分类", icon: "tag",     ready: true,
+  { id: "classify", name: "素材分类", icon: "tag",     ready: true, group: "资料",
     desc: "把一份文件切成一条一条的素材，逐条看、逐条改、能勾选，每条都能定位回原文" },
-  { id: "infuse",   name: "剧情内化", icon: "wand",    ready: true,
+  { id: "infuse",   name: "剧情内化", icon: "wand",    ready: true, group: "创作",
     desc: "把原始素材提炼成可复用的剧情零件（谁做了什么、动机是什么）" },
-  { id: "outline",  name: "大纲生成", icon: "list",    ready: true,
-    desc: "从剧情库里挑零件，拼出一篇能直接动笔的细纲" },
-  { id: "persona",  name: "人设卡",   icon: "user",    ready: true,
+  /* 大纲生成下面挂三个板块。现在只有同人做完（其余两个点进去是占位页）——
+     这是好几种写法的差异太大，塞在一个表单里只会互相拖累。
+     子项的 id 一律写成 "outline:xxx"，点父项等于点第一个做完的子项。 */
+  { id: "outline",  name: "大纲生成", icon: "list",    ready: true, group: "创作",
+    desc: "从剧情库里挑零件，拼出一篇能直接动笔的细纲",
+    subs: [
+      { id: "outline:fanfic", name: "同人大纲生成", ready: true,
+        desc: "挑零件拼一篇同人细纲：吃原作的设定和人设，落到能直接动笔的段落" },
+      { id: "outline:short",  name: "短篇大纲生成", ready: false,
+        desc: "短篇得一段就见效：开局就进冲突，三千字里收完，不铺不拖" },
+      { id: "outline:long",   name: "长篇大纲生成", ready: false,
+        desc: "分卷分章的长线结构，人物线、伏笔、节奏都要能撑住几十万字" }
+    ] },
+  { id: "persona",  name: "人设卡",   icon: "user",    ready: true, nav: false,
     desc: "角色的性格、关系、说话方式，写对话时随时对照" },
   /* 正文创作：整条链路的终点（零件 → 大纲 → 正文）。
      2026-09-27 她拍板只做「章节」一层（1A）—— 不做参考站那层"作品"分组，
      因为墨阁里"作品"其实就是大纲/书名。 */
-  { id: "chapter",  name: "正文创作", icon: "quill",   ready: true,
+  { id: "chapter",  name: "正文创作", icon: "quill",   ready: true, group: "创作",
     desc: "把大纲和角色卡变成一章一章写出来的正文" }
 ];
 
@@ -4267,7 +4820,7 @@ function svgIcon(name) {
          (ICONS[name] || ICONS.list) + '</svg>';
 }
 
-const S = { view: "library", keyword: "", tag: "", current: null };
+const S = { view: "library", sub: null, keyword: "", tag: "", current: null };
 const A = { mode: "login", user: null, firstTime: false, unclaimed: 0, busy: false };
 
 /* 置信度低于这个数，就算"AI 自己也没把握"，界面上要标出来让人先看。
@@ -4825,26 +5378,56 @@ function liveRetitle(sid, title, sub) {
 
 /* ================== 左导航与功能切换 ================== */
 
-/* 按 VIEWS 画出左侧那一列 */
+/* 按 VIEWS 画出左侧那一列。
+   分组小标题（资料 / 创作）只是个分节提示，不是按钮。
+   子项常显、不折叠 ——「短篇/长篇还没做」这件事，她没点进来也该看得见。 */
 function renderNav() {
   const box = document.getElementById("navlist");
-  box.innerHTML = VIEWS.map(v => {
-    const cls = "navitem" + (v.id === S.view ? " on" : "") + (v.ready ? "" : " off");
-    // 徽标 id 里带上功能 id —— 以前写死成 navCount，
-    // 多点亮一个功能就会出现两个同名 id，取到的是哪一个全看运气。
-    const right = v.ready
-      ? '<span class="badge" id="navCount-' + v.id + '">-</span>'
-      : '<span class="soon">待做</span>';
-    return '<button class="' + cls + '" data-view="' + v.id + '" ' +
-             'title="' + esc(v.name) + '">' +
-             '<span class="ic">' + svgIcon(v.icon) + '</span>' +
-             '<span class="tx">' + esc(v.name) + '</span>' + right +
-           '</button>';
-  }).join("");
+  let html = "";
+  let group = null;
+  VIEWS.forEach(v => {
+    if (v.nav === false) return;          // 不进导航的（人设卡走页面内入口）
+    if (v.group && v.group !== group) {
+      group = v.group;
+      html += '<div class="ngroup">' + esc(group) + '</div>';
+    }
+    html += navItemHtml(v);
+    if (v.subs && v.subs.length) {
+      html += '<div class="nsub">' + v.subs.map(navSubHtml).join("") + '</div>';
+    }
+  });
+  box.innerHTML = html;
 
-  box.querySelectorAll(".navitem").forEach(el => {
+  /* 父项和子项都带 data-view，绑一次就够。
+     用 [data-view] 而不是 .navitem —— 否则子项点了没反应。 */
+  box.querySelectorAll("[data-view]").forEach(el => {
     el.onclick = () => goView(el.dataset.view);
   });
+}
+
+/* 一个导航项。
+   徽标 id 里带上功能 id —— 以前写死成 navCount，
+   多点亮一个功能就会出现两个同名 id，取到的是哪一个全看运气。 */
+function navItemHtml(v) {
+  const cls = "navitem" + (v.id === S.view ? " on" : "") + (v.ready ? "" : " off");
+  const right = v.ready
+    ? '<span class="badge" id="navCount-' + v.id + '">-</span>'
+    : '<span class="soon">待开发</span>';
+  return '<button class="' + cls + '" data-view="' + v.id + '" ' +
+           'title="' + esc(v.name) + '">' +
+           '<span class="ic">' + svgIcon(v.icon) + '</span>' +
+           '<span class="tx">' + esc(v.name) + '</span>' + right +
+         '</button>';
+}
+
+/* 一个子项。没做的挂「待开发」角标，点进去和父项一样走占位页。 */
+function navSubHtml(s) {
+  const cls = "nsubitem" + (s.id === S.sub ? " on" : "") + (s.ready ? "" : " off");
+  const right = s.ready ? "" : '<span class="soon">待开发</span>';
+  return '<button class="' + cls + '" data-view="' + s.id + '" ' +
+           'title="' + esc(s.name) + '">' +
+           '<span class="tx">' + esc(s.name) + '</span>' + right +
+         '</button>';
 }
 
 /* 更新某个功能后面的数字徽标 */
@@ -4853,48 +5436,88 @@ function setNavBadge(viewId, text) {
   if (el) el.textContent = text;
 }
 
-/* 切到某个功能 */
+/* 还没做完的有哪些（占位页上要报给她听）。
+   父项和子项一起算 —— 只算父项的话，点「短篇大纲生成」
+   会看到一个空清单，那比不写还糟。 */
+function pendingNames() {
+  const out = [];
+  VIEWS.forEach(v => {
+    if (v.nav === false) return;
+    if (!v.ready) out.push(v.name);
+    (v.subs || []).forEach(s => { if (!s.ready) out.push(s.name); });
+  });
+  return out;
+}
+
+/* 切到某个功能。
+   传进来的可能是子项 id（"outline:short"）—— 父页由冒号前面那段决定。
+   S.view 永远存父 id（好让所有 if (S.view === "xxx") 照常工作），
+   子项单独记在 S.sub 里。 */
 function goView(id) {
-  const v = VIEWS.find(x => x.id === id);
+  const raw = String(id || "");
+  const cut = raw.indexOf(":");
+  const v = VIEWS.find(x => x.id === (cut >= 0 ? raw.slice(0, cut) : raw));
   if (!v) return;
 
-  S.view = id;
+  const subs = v.subs || [];
+  const sub = subs.find(s => s.id === raw) || null;   // 点的是子项？
+  const ready = sub ? !!sub.ready : !!v.ready;
+
+  S.view = v.id;
+  // 点父项时落在第一个做完的子项上 —— 不然「大纲生成」亮着、
+  // 下面三个子项全灰，看着像点了个空壳。
+  S.sub = sub ? sub.id : ((subs.find(s => s.ready) || {}).id || null);
+
   document.querySelectorAll(".navitem").forEach(el => {
-    el.classList.toggle("on", el.dataset.view === id);
+    el.classList.toggle("on", el.dataset.view === v.id);
+  });
+  document.querySelectorAll(".nsubitem").forEach(el => {
+    el.classList.toggle("on", el.dataset.view === S.sub);
   });
 
   // 做完了的功能有自己的页面；没做完的统一进占位页
-  const target = v.ready ? id : "soon";
+  const target = ready ? v.id : "soon";
   document.querySelectorAll(".view").forEach(el => {
     el.classList.toggle("on", el.id === "view-" + target);
   });
 
-  if (!v.ready) {
-    document.getElementById("soonIcon").innerHTML = svgIcon(v.icon);
-    document.getElementById("soonName").textContent = v.name;
-    document.getElementById("soonDesc").textContent = v.desc;
-    const order = VIEWS.filter(x => !x.ready).map(x => x.name).join(" → ");
+  if (!ready) {
+    const it = sub || v;      // 占位页上显示她点的那一项，不是笼统的父项
+    document.getElementById("soonIcon").innerHTML = svgIcon(it.icon || v.icon);
+    document.getElementById("soonName").textContent = it.name;
+    document.getElementById("soonDesc").textContent = it.desc || v.desc;
     document.getElementById("soonNote").innerHTML =
       '这个功能还没动手做。<b>左侧栏从上到下的顺序，就是开发顺序</b>，' +
       '做完一个点亮一个。<br><br>' +
-      '排在它前面的还有：' + esc(order);
+      '还没做完的还有：' + esc(pendingNames().join(" → "));
   }
+
+  /* 吸顶块的高度要在"这一页已经显示出来"之后才量得到 ——
+     藏着的时候量出来是 0，会把下面左栏的吸顶线算到 0，
+     表现是"左栏从屏幕最顶上冒出来"。所以每切一次页就重量一次。 */
+  syncVtop();
 
   document.querySelector(".stage").scrollTop = 0;
 
   // 离开总素材库就停掉分类进度轮询 —— 看别的页面时没必要一直问
-  if (id !== "library") clsStopPoll();
+  if (v.id !== "library") clsStopPoll();
 
   // 素材分类要在第一次进来时才拉数据（省得每次登录都白拉一遍）
-  if (id === "classify") loadClassify(false);
-  if (id === "infuse") loadPlots(false);
+  if (v.id === "classify") {
+    // 搜索框里的字和结果条要跟 C.f.kw 对上 ——
+    // 上次搜的词还在（切走再回来卡片流仍是那个搜索结果），
+    // 框里却空着的话，她会以为搜索没生效。
+    clSyncSearchBox();
+    loadClassify(false);
+  }
+  if (v.id === "infuse") loadPlots(false);
   // 大纲页同理。离开时不停轮询 —— 生成任务可能还在跑，
   // 她要能切去看别的页，回来时进度还是新的（见 OL.poll 的说明）。
-  if (id === "outline") loadOutline(false);
+  if (v.id === "outline") loadOutline(false);
   // 人设卡和正文创作同理：进来时才拉（省得每次登录都白拉一遍）。
   // 正文页尤其要这样 —— 它要拉章节列表 + 角色卡 + 模型清单三样。
-  if (id === "persona") loadPersona(false);
-  if (id === "chapter") loadChapters(false);
+  if (v.id === "persona") loadPersona(false);
+  if (v.id === "chapter") loadChapters(false);
   else {
     // 离开正文页就把浮窗和下拉都收起来。
     // 不收的话浮窗会跟着跑到别的页面上 —— 它 position:fixed，
@@ -4902,6 +5525,41 @@ function goView(id) {
     chCharClosePick();
     chFloatHide();
   }
+}
+
+/* ================== 吸顶块高度：量出来，别猜 ==================
+   `.vtop`（功能头 + 统计 + 筛选）钉在顶部，下面那些吸顶的东西
+   （素材库的标签栏 `.tagside`、分类页的主分类栏 `.clrail`、
+   分类页的筛选块 `.clstick`）必须从它**底下**开始吸顶。
+
+   为什么不能在 CSS 里写死一个 top：
+   写死就等于赌"这块永远是这么高"。而它的高度会随三件事变 ——
+   窗口宽度（窄了会折行）、搜索条出现与否、模型提示那行文字长短。
+   赌错的表现是那一栏被压在吸顶块底下（看着像"顶部少了半截"）,
+   或者反过来留出一条空缝。
+
+   所以：量 `.vtop` 的实际高度，写进它所在那一页的 `--vtop`，
+   下面所有吸顶元素都读这一个值。只有一处定义，改哪儿都对得上。 */
+function measureVtop(el) {
+  const sec = el.closest("section.view");
+  if (!sec) return;
+  const h = el.offsetHeight;
+  // 页面藏着的时候量出来是 0：绝不能拿它去覆盖上一次量好的值
+  if (!h) return;
+  const v = Math.round(h) + "px";
+  if (sec.style.getPropertyValue("--vtop") !== v) {
+    sec.style.setProperty("--vtop", v);
+  }
+}
+function syncVtop() {
+  document.querySelectorAll(".vtop").forEach(measureVtop);
+}
+/* 窗口宽度一变就要重量（会折行）；模型提示那行字由 paintClsHint 填，
+   填完高度会变 —— 与其在每个改动点手动喊一次，不如让浏览器自己报。 */
+window.addEventListener("resize", syncVtop);
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(es => es.forEach(e => measureVtop(e.target)));
+  document.querySelectorAll(".vtop").forEach(el => ro.observe(el));
 }
 
 /* 解析时留下的提示信息，只在列表里露出真正需要注意的那几条。
@@ -5028,7 +5686,9 @@ async function doLogout() {
   document.getElementById("list").innerHTML = "";
   document.getElementById("tagbar").innerHTML = "";
   document.getElementById("listhead").innerHTML = "";
-  ["sMat", "sChar", "sTag"].forEach(id => document.getElementById(id).textContent = "-");
+  const tagCnt = document.getElementById("tagCnt");
+  if (tagCnt) tagCnt.textContent = "";
+  clearStats();
   setNavBadge("library", "-");
   // 换账号时要把它自己的分类状态一起清掉，否则会看到上一个账号的卡片
   C.ready = false;
@@ -5088,10 +5748,129 @@ async function loadStats() {
     // 左侧栏「总素材库」后面那个数字，跟统计是同一个来源
     setNavBadge("library", fmtNum(s.materials));
   } catch (e) { /* 统计失败不打断主流程 */ }
+  // 后三格跟 /api/stats 无关，它靠 S.cls。这里也叫一次是为了让
+  // "统计先回来、分类状态后回来"这个顺序下，前三个数一到位其余的也一起补上。
+  paintLibStats();
+}
+
+/* 统计条上那三格「流程状态」。
+   数来自 S.cls —— 每份素材一条，跟卡片上那条状态条是同一份数据。
+   绝不另算一套：两张嘴说同一件事，迟早会对不上（她 2026-09-27 就被
+   "历史任务状态"和"现在卡片状态"打架坑过一次）。
+
+   取不到状态时显示 "-" 并压暗，**不留一个看起来像 0 的假数** ——
+   "0 份待分类"和"还没读出来"对她来说是两件完全不同的事。 */
+function paintLibStats() {
+  const S3 = ["sClsNever", "sClsRun", "sClsErr"];
+  const boxes = ["sClsNeverBox", "sClsRunBox", "sClsErrBox"];
+  if (!S.clsOk) {
+    S3.forEach(id => { const el = document.getElementById(id); if (el) el.textContent = "-"; });
+    return;
+  }
+  let never = 0, run = 0, err = 0;
+  for (const k of Object.keys(S.cls)) {
+    const st = (S.cls[k] || {}).state || "never";
+    if (st === "running") run++;
+    else if (st === "partial" || st === "failed") err++;
+    else if (st === "never" || st === "cancelled") never++;
+  }
+  document.getElementById("sClsNever").textContent = fmtNum(never);
+  document.getElementById("sClsRun").textContent = fmtNum(run);
+  document.getElementById("sClsErr").textContent = fmtNum(err);
+  // 是 0 就压暗。一个灰着的 0 能自己说明"这块没事"，
+  // 一个黑着的 0 反而像个待办。
+  document.getElementById("sClsNeverBox").className = "stat" + (never ? " act" : " dim");
+  document.getElementById("sClsRunBox").className = "stat" + (run ? " warn act" : " dim");
+  document.getElementById("sClsErrBox").className = "stat" + (err ? " err act" : " dim act");
+}
+
+/* 退出登录时把统计条清回"-"。不清的话，换账号进来会先看到上一个账号的数。 */
+function clearStats() {
+  ["sMat", "sChar", "sTag", "sClsNever", "sClsRun", "sClsErr"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = "-";
+  });
+  const cls = { sClsNeverBox: "stat dim", sClsRunBox: "stat dim",
+                sClsErrBox: "stat dim act" };
+  for (const k in cls) {
+    const el = document.getElementById(k);
+    if (el) el.className = cls[k];
+  }
+  S.clsOk = false;
+}
+
+/* 点「待分类 / 分类中 / 有失败项」那三格 → 滚到第一份对得上的文件，闪一下。
+   为什么要做这一步：看见「有失败项 3」之后，她的下一个动作必然是"哪三个"。
+   没有这一步，这个数就只是装饰 —— 而她最烦"点了没反应"。
+   【数是 0 也要说话】点了一个 0 的格子必须给回应，静默不动会被当成卡死。 */
+function libJumpTo(kind) {
+  if (!S.clsOk) { toast("分类状态还没读出来，稍等一下再点"); return; }
+  const want = { never: ["never", "cancelled"],
+                 run: ["running"],
+                 err: ["partial", "failed"] }[kind] || [];
+  let hit = null;
+  document.querySelectorAll("#list .card").forEach(el => {
+    if (hit) return;
+    if (want.indexOf(el.dataset.cls || "never") >= 0) hit = el;
+  });
+  if (!hit) {
+    // 【分两种说法，不能混成一句】"整个库里没有"和"我现在筛选着，筛选结果里没有"
+    // 是两件事。前者说明活干完了，后者只是她把范围收窄了 ——
+    // 混成一句她会以为活干完了，其实只是没看见。
+    const narrowed = !!(S.keyword || S.tag);
+    const what = kind === "run" ? "正在分类的"
+               : kind === "err" ? "分类失败的"
+                                : "待分类的";
+    toast(narrowed
+      ? "当前筛选里没有" + what + "文件 —— 列表上方点「清除筛选」再看整个库"
+      : (kind === "run" ? "现在没有正在分类的文件"
+        : kind === "err" ? "现在没有分类失败的文件"
+                         : "所有文件都跑过分类了，没有待办的"));
+    return;
+  }
+  libScrollTo(hit);
+  hit.classList.add("flash");
+  setTimeout(() => hit.classList.remove("flash"), 1400);
+}
+
+/* 把某张卡挪到眼前。
+   【为什么不能只 scrollIntoView 一下】落点在**点击那一刻**就算死了，
+   而且会被"最大滚动位置"截断。可是页面顶部那块 AI 实时区是**异步长出来**的
+   —— 实时流接上之前它是空的，接上之后突然高出一百多像素（116 + 10 的间距），
+   底下所有东西整体下移。这两件事撞在一起，结果就是她看到
+   「滚过去了，可是停在半张卡上，还差一截」（实测差 126px，正好是那一块的高度）。
+
+   所以动画走完之后再核几次，偏了就用不带动画的方式补到位。
+   只核到 1.5 秒就收手：真在持续抖动时，来回拉扯比偏几十像素更难受。 */
+function libScrollTo(hit) {
+  const fit = (smooth) => hit.scrollIntoView({
+    block: "center", behavior: smooth ? "smooth" : "auto",
+  });
+  fit(true);
+  [900, 1400].forEach(ms => {
+    setTimeout(() => {
+      const b = hit.getBoundingClientRect();
+      const vh = window.innerHeight || 0;
+      if (b.top < 8 || b.bottom > vh - 8) fit(false);
+    }, ms);
+  });
+}
+
+/* 一行标签：名字占满，中间一条细横杠表示比例，右边计数。
+   横杠的长度按"最多的那个标签"归一 —— 拿绝对数当百分比是错的：
+   一份 300 条的库和一份 3 条的库会长得一模一样，而她想看的是"相对谁更多"。 */
+function tagRow(val, name, count, ratio, on) {
+  const pc = Math.round(Math.max(0, Math.min(1, ratio || 0)) * 100);
+  return '<button class="tag' + (on ? " on" : "") +
+    '" data-tag="' + esc(val) + '">' +
+    '<span class="tn">' + esc(name) + '</span>' +
+    '<span class="bar2" aria-hidden="true"><b style="width:' + pc + '%"></b></span>' +
+    '<i>' + fmtNum(count) + '</i></button>';
 }
 
 async function loadTags() {
   const box = document.getElementById("tagbar");
+  const cnt = document.getElementById("tagCnt");
   let items = [], total = 0;
   try {
     const r = await api("/api/tags");
@@ -5099,15 +5878,21 @@ async function loadTags() {
     total = r.total_materials;
   } catch (e) { }
 
-  let html = '<button class="tag' + (S.tag === "" ? " on" : "") +
-             '" data-tag="">全部 <i>' + total + '</i></button>';
+  if (cnt) cnt.textContent = items.length ? "共 " + items.length + " 个" : "";
+
+  /* 【分母是"全部"的份数，不是"最大的那个标签"】
+     拿最大标签当分母的话，「全部 20」和「垫底 15」会长得一样长
+     （都是满格）—— 两个数不一样、两根杠一样，那根杠就等于什么也没说。
+     以全库为分母，"杠长 = 这个标签覆盖了全库的几成"，一眼可比。 */
+  const base = total > 0 ? total : 1;
+
+  let html = tagRow("", "全部", total, total > 0 ? 1 : 0, S.tag === "");
   for (const t of items) {
-    html += '<button class="tag' + (S.tag === t.name ? " on" : "") +
-            '" data-tag="' + esc(t.name) + '">' + esc(t.name) +
-            ' <i>' + t.count + '</i></button>';
+    html += tagRow(t.name, t.name, t.count, (t.count || 0) / base,
+                   S.tag === t.name);
   }
   if (!items.length) {
-    html += '<div class="empty-tip">还没有标签，导入素材后会自动生成。</div>';
+    html += '<div class="empty-tip">还没有标签。</div>';
   }
   box.innerHTML = html;
 
@@ -5150,7 +5935,7 @@ async function loadList() {
 
   if (!data.items.length) {
     box.innerHTML = '<div class="blank"><b>这里还没有素材</b>' +
-      '点右上角的「上传文件」，把你的 txt / docx 拖进来试试。</div>';
+      '点右上角的「上传文件」。</div>';
     maybeOfferAdopt();
     return;
   }
@@ -5161,7 +5946,11 @@ async function loadList() {
     const warn = warnOf(m.note);
     const warnChip = warn ? '<span class="chip warn">' + esc(warn) + '</span>' : "";
     const src = m.source_path ? esc(m.source_path.split("\\").pop()) : "";
-    return '<div class="card">' +
+    // data-cls 是统计条那三格的跳转依据：点「有失败项」要能直接滚到这一份。
+    // 状态从 S.cls 取，跟下面状态条同一份数据，不另算（两张嘴说同一件事
+    // 迟早会对不上）。
+    const st = (S.cls[m.id] || {}).state || "never";
+    return '<div class="card" data-cls="' + esc(st) + '">' +
       '<div class="body">' +
         '<span class="title" data-id="' + m.id + '">' + esc(m.title) + '</span>' +
         '<div class="meta">' +
@@ -5255,6 +6044,7 @@ async function maybeOfferAdopt() {
 */
 
 S.cls = {};        // material_id -> 后端给的分类状态
+S.clsOk = false;   // 分类状态到底读出来没有（空对象≠读不到，统计条要分得清）
 S.clsMeta = null;  // 接口顺带返回的分类器信息 + 模型清单（选模型要用）
 S.models = [];     // 模型设置面板里的那几条配置（密钥是打码的）
 /* 接入点（地址 + 密钥，填一次）。模型底下挂着它 —— 这是"一个 Key 调
@@ -5279,53 +6069,25 @@ async function loadClsStates() {
     const d = await api("/api/classification-states");
     S.cls = d.items || {};
     S.clsMeta = d;
-    paintClsHint();
+    // clsOk 单独记一笔：空对象既可能是"还没有素材"，也可能是"接口挂了"。
+    // 统计条上那三格必须分得清这两种 —— 前者该显示 0，后者该显示"-"。
+    S.clsOk = true;
   } catch (e) {
     // 取不到就当作"没有状态"，按钮不显示 —— 但绝不能因此让素材库打不开。
     S.cls = {};
+    S.clsOk = false;
   }
+  paintLibStats();
   return S.cls;
 }
 
-/* 把说明行补全。
-   按"有没有配模型"给两种说法 —— 这不是文案小事：
-   配了模型之后，素材片段真的会离开这台电脑，她有权在点按钮之前就知道。
-
-   只在拿到接口数据后改一次，之后不再动（免得轮询把这行刷来刷去）。
-   改配置之后要重画，就传 force。 */
-function paintClsHint(force) {
-  const el = document.getElementById("clsHint");
-  if (!el || !S.clsMeta) return;
-  if (!force && el.dataset.filled === "1") return;
-  const m = S.clsMeta;
-  const usable = m.usable_models || [];
-  let txt;
-  if (m.llm_ready) {
-    txt = '自动分类现在能用<b>大模型</b>了，已配好 <b>' + usable.length + '</b> 个：' +
-      // 真模型名也写上（「qwen3.7-plus（通义千问 Plus / 阿里云百炼）」）。
-      // 她 2026-09-27 问"列表里没有 qwen3.7-plus"，
-      // 2026-09-29 又说"标上哪个模型，别只给个平台名" —— 光看她自己起的
-      // 中文标签确实看不出来，而两条「中转站」的标签还是一模一样的。
-      // 拼法收敛在 modelOptName 一处，见它的注释。
-      esc(usable.map(modelOptName).join("、")) +
-      '。点「自动分类」时可以自己挑用哪个。<br>' +
-      '先把一件事说清楚：<b>被分类的素材片段会发到模型服务商那边</b>，' +
-      '换来的才是「读得懂句子」的判断。原文只存在你电脑上，分类不会改动它一个字；' +
-      '不想发出去，就别点自动分类 —— 手动归类一样能用。';
-  } else {
-    txt = '自动分类还没配模型。点右边「模型设置」填一个 API Key（比如通义千问的），' +
-      '它就能读懂句子的意思来判。<br>' +
-      '现在只有<b>本地占位规则</b>可用 —— 不联网、不花钱，' +
-      '但只认得出「引号里是对话」这类形式特征，读不懂语义，所以判不出的会明显偏多。' +
-      '它只给建议，不覆盖你分好的类，也不改原文。';
-  }
-  el.innerHTML = '<span class="clshintxt">' + txt + '</span>' +
-    '<button class="btn" id="btnModels">模型设置' +
-    (usable.length ? "" : "（还没配）") + '</button>';
-  el.dataset.filled = "1";
-  const b = document.getElementById("btnModels");
-  if (b) b.onclick = openModels;
-}
+/* 【2026-10-07 删掉的一段】
+   这里原来有个 paintClsHint()，在统计条底下渲染一长段「现在能不能用大模型、
+   已配好哪几个、会把片段发到服务商那边」的说明，末尾挂一个「模型设置」按钮。
+   折腰的要求是界面上不许再放解释文字（都写进操作手册），所以整块拿掉了；
+   按钮挪到顶栏跟搜索框一排，绑定见文件末尾的初始化区。
+   S.clsMeta 还留着 —— 它不是文案，是"有哪些模型可用"的真数据，
+   开始自动分类那个弹层要用（openClsRun）。 */
 
 /* 一张文档卡片底下的状态条。没状态就整块不画。 */
 function clsBarHtml(mid) {
@@ -5925,11 +6687,20 @@ document.getElementById("search").addEventListener("input", e => {
   searchTimer = setTimeout(() => { S.keyword = e.target.value.trim(); loadList(); }, 280);
 });
 
+/* 统计条上那三格「流程状态」：点一下跳到第一份对得上的文件。
+   绑在格子上而不是数字上 —— 数字那一格只有十几个像素高，不好点。 */
+document.getElementById("sClsNeverBox").onclick = () => libJumpTo("never");
+document.getElementById("sClsRunBox").onclick = () => libJumpTo("run");
+document.getElementById("sClsErrBox").onclick = () => libJumpTo("err");
+
 document.getElementById("btnUpload").onclick = () => {
   document.getElementById("upPreview").innerHTML = "";
   document.getElementById("upMsg").textContent = "";
   openMask("mkUpload");
 };
+/* 「模型设置」现在钉在顶栏（原来是统计条底下那行说明的尾巴）。
+   面板本身没变，openModels 就是原来那个。 */
+document.getElementById("btnModels").onclick = openModels;
 document.getElementById("btnPickFiles").onclick = () =>
   document.getElementById("fileInput").click();
 document.getElementById("upClear").onclick = () => {
@@ -6089,8 +6860,13 @@ const C = {
      为什么要它：文件行上会报「失败 124 张」，她真正想干的是
      "把这 124 张找出来自己归个类"。后端一直支持 material_id
      这个参数，但前端从来没传过，这条路就一直是断的。
-     mat 存成字符串（跟 select 的 value 一致），空串 = 不按文件筛。 */
-  f: { cat: "", tag: "", status: "", exclude: false, bad: false, dup: false, order: "category", mat: "" }
+     mat 存成字符串（跟 select 的 value 一致），空串 = 不按文件筛。
+
+     f.kw = 关键词（2026-10-07，「素材检索」并进这一页）。
+     以前这个参数后端收了却没用（静默失效），前端也没有搜索框，
+     所以没人发现 —— 见 classify_db.list_cards 里那段说明。 */
+  f: { cat: "", tag: "", status: "", exclude: false, bad: false,
+       dup: false, order: "category", mat: "", kw: "" }
 };
 
 function fill(id, txt) {
@@ -6143,6 +6919,7 @@ async function loadClassify(force) {
       C.ready = true;
       renderClFilters();
       renderClCatBar();
+      renderClPasteCard();     // 左栏那张卡要知道"要放进哪一类、下一个号是几"
     }
     // 这里不再"读文件清单"了：卡片是全部素材汇总的，没有"当前这份文件"。
     // 文件那一层（含切分）在「总素材库」，见 openSplit()。
@@ -7289,18 +8066,11 @@ function renderGroups() {
 }
 
 function groupHeadHtml(pend) {
-  const what = C.gOpen
-    ? "AI 觉得这几段合起来才算一条完整素材。" +
-      "点「合并这一组」才会真的合成一条，随时能撤销。"
-    : (pend
-        ? "有 " + fmtNum(pend) + " 组还等着你定，点「展开」看看。"
-        // 收起时正好把话说到她心坎上：她那天问的就是
-        // "我已经点了合并了就直接入库呀" —— 这里正面回答：是，进库了。
-        : "这些建议都处理过了 —— 合并出来的卡已经进素材库，" +
-          "忽略的不再提。");
+  // 这里原来跟着两句"这是什么、合并了会怎样"的解释（展开/收起各一句）。
+  // 2026-10-07 删掉：这一块现在只有标题 + 题目自带的摘要状态 + 两个按钮。
   return '<div class="ghead"><b>' +
     (pend ? "有 " + fmtNum(pend) + " 组素材等着你定" : "逻辑素材组") + "</b>" +
-    "<span>" + esc(what) + summaryHint() + "</span>" +
+    "<span>" + summaryHint() + "</span>" +
     '<button class="mini" data-gfold>' + (C.gOpen ? "收起" : "展开") + "</button>" +
     summaryBtn() + "</div>";
 }
@@ -7332,9 +8102,9 @@ function groupDoneHtml(dones, nMerge, nIgn) {
 
 function groupFoldHintHtml(nDone) {
   if (!nDone) return "";
-  return '<div class="gfold">已收起 ' + fmtNum(nDone) +
-    " 组已经处理完的记录。合并出来的卡早就进素材库了，这页往下就能搜到；" +
-    "想看合并的是哪几段、或要撤销合并，点上面的「展开」。</div>";
+  // 原来这句后面还跟了一长串解释（合并出来的卡进库了、想撤销点哪里）。
+  // 2026-10-07 按折腰的要求删干净 —— 界面上只说状态，怎么做查操作手册。
+  return '<div class="gfold">已收起 ' + fmtNum(nDone) + " 组已经处理完的记录。</div>";
 }
 
 function groupCardHtml(g) {
@@ -7499,6 +8269,10 @@ async function loadCards(append) {
   if (C.f.exclude) q.set("include_excluded", "true");
   if (C.f.bad) q.set("verify_error", "true");
   if (C.f.dup) q.set("duplicate", "true");
+  /* 关键词。以前这个参数传了等于没传（后端不进 where），
+     所以界面上从来没敢放搜索框。2026-10-07 数据层补上了，
+     这里才真的能搜。 */
+  if (C.f.kw) q.set("keyword", C.f.kw);
   q.set("order", C.f.order);
   q.set("limit", C.limit);
   q.set("offset", append ? C.offset : 0);
@@ -7516,12 +8290,22 @@ async function loadCards(append) {
     r.items.forEach(x => { C.cMap[x.id] = x; });
     // 类目导航条的计数跟着卡片流一起回来（后端一次算完，不用再多发一个请求）。
     // 它算的是"不含主类筛选"的数字 —— 否则点了「外貌」之后其他类全变 0。
-    if (r.cat_counts) { C.catCounts = r.cat_counts; renderClCatBar(); }
+    //
+    // 【判断写成 !== undefined 而不是直接判真假】空字典 {} 也是假的 ——
+    // 搜索一条都搜不到时，后端回的正是 {}，老写法会跳过重画，
+    // 左栏就停在上一把的计数上，看着像"搜出来了但其实还是旧数"。
+    if (r.cat_counts !== undefined) {
+      C.catCounts = r.cat_counts || {};
+      renderClCatBar();
+    }
     // 「共 N 张」和「撤销上一次」两处跟着数据一起更新。
     // 以前这个数字只在建筛选条的时候写一次，于是永远停在"共 0 张"。
     fill("clCount", "共 " + C.total + " 张");
     const ub = document.getElementById("clUndo");
     if (ub) ub.hidden = !C.lastChange;
+    // 搜索条上那个"命中几条"跟这里同一个数（它数的是当前范围内的）。
+    fill("clQN", fmtNum(C.total));
+    renderClQBar();
     // 卡片上那句「已内化 · 看零件」要用的标记。放在 renderClCards 之前取，
     // 这样只画一次；取不到也照常出卡片（那只是句提示，不该拦住主流程）。
     await loadInfuseStates(r.items.map(x => x.id));
@@ -7553,25 +8337,34 @@ async function loadInfuseStates(ids) {
    为什么标题里要带"这张数是全站的、不是这一屏的"：
    一屏只加载 30 张，如果标的是本屏条数，她会看到"外貌 30 张"、
    点进外貌却有一百多张 —— 数字对不上，就再也信不过这个数字了。 */
+/* 段标题：左边这一类叫什么、这一类里几张卡。
+   2026-10-07 起**不再画分类说明**（原来这里跟一段「什么时候算这一类」
+   的解释，折腰截图点名要删：界面上不放解释文字）。分类的定义留在
+   操作手册里，改分类时那个弹层里也能填。 */
 function clSectionHtml(card) {
   const cid = String(card.primary_category_id || "");
   const cat = C.cats.find(c => c.id === card.primary_category_id) || null;
   const n = (C.catCounts || {})[cid];
-  const desc = cat ? (cat.description || "") : "还没归类的，等你定。";
   return '<div class="clsec">' +
     '<b>' + esc(cat ? cat.name : "未分类") + '</b>' +
     (n === undefined ? "" : '<span class="n">' + fmtNum(n) + ' 张</span>') +
-    '<span class="d">' + esc(desc) + '</span>' +
     '</div>';
 }
 
 function renderClCards() {
   const box = document.getElementById("clCards");
   if (!C.cards.length) {
-    box.innerHTML = '<div class="blank"><b>这里还没有卡片</b>' +
-      '去「总素材库」上传一份文稿，点那份文件上的<b>「切分」</b>，' +
-      '切成一条一条的卡片，它们就会汇总到这里。' +
-      '（当前筛选条件下也可能一条都没有，试试把筛选条件放宽。）</div>';
+    /* 空态要分两种，不能共用一句话 ——
+       "还没切分"和"搜了没搜到"要她做的事完全相反：
+       前者去总素材库切分，后者换个词或者把范围放回整个库。
+       写同一句话她就会去翻总素材库，白跑一趟。 */
+    box.innerHTML = C.f.kw
+      ? '<div class="blank"><b>没搜到「' + esc(C.f.kw) + '」</b>' +
+        '这一把是在<b>' + esc(clScopeName()) + '</b>里找的。<br>' +
+        '换个词试试，或者点左栏「全部命中」把范围放回整个库。</div>'
+      : '<div class="blank"><b>这里还没有卡片</b>' +
+        '去「总素材库」上传一份文稿，点那份文件上的<b>「切分」</b>。' +
+        '（当前筛选条件下也可能一条都没有。）</div>';
     return;
   }
 
@@ -7672,6 +8465,12 @@ function renderClCards() {
           // 这里原来挂的是"来自哪份文件"。去掉了 ——
           // 分类库是"按用途归置好的货架"，不是"按文件分堆的仓库"。
           // 想追这条卡出自哪篇稿子，「对照原文」点进去就到（那里有全文和位置）。
+          //
+          // 「粘贴导入」这个角标是 2026-10-07 加的：粘贴进来的卡，
+          // 编号是她自己排的（paste_seq），跟切分出来的卡不是一套账。
+          // 不标出来的话，她在卡片流里看到一堆编号，分不清哪些是她
+          // 手排的号、哪些是"原文里排第几"，对不上就开始怀疑数字了。
+          (card.is_paste ? '<span class="chip ok">粘贴导入</span>' : '') +
           aiChip + cat + st + tags +
           '<span class="pos">原文 ' + card.start_offset + '–' + card.end_offset +
             '（' + card.chars + ' 字）</span>' +
@@ -7732,10 +8531,10 @@ function renderClMore() {
   }
 }
 
-/* ---------------- 类目导航条 ----------------
+/* ---------------- 类目导航栏（2026-10-07 竖过来钉在左边）----------------
    十一个主类各装了多少张，一眼看完，点一下就筛到那一类。
 
-   为什么要单独做这一排，而不是继续用那个"全部主类"下拉：
+   为什么要单独做这一栏，而不是继续用那个"全部主类"下拉：
        她描述自己的用法是"我有一段素材是描写外貌的，我就把它放进外貌这一类" ——
        在她的模型里，「类」是一个个装东西的桶。
        桶该是抬眼就能看见、伸手就能点的一排入口。
@@ -7744,7 +8543,15 @@ function renderClMore() {
        那种要"先操作才能看到"的东西，等于不存在。
 
    为什么空类也要显示：显示「外貌 0」本身就是信息 ——
-   告诉她这一类还一张都没有，该往这里放了。 */
+   告诉她这一类还一张都没有，该往这里放了。
+
+   【搜索态下这一栏不只是"入口"，还是"范围"】
+   有搜索词时，计数换成"这一类里命中几条"（后端算 cat_counts 时
+   关键词算在内、主类不算，正好是这个意思）。所以：
+     · 最上面给一格「全部命中」= 整个库的命中数，点它把范围放回去；
+     · 下面每一类显示的是"缩到这一类还剩几条"。
+   没有最上面那一格的话，她点了「外貌」就退不回全库了 ——
+   那正是"点了没反应"的亲戚：出不去。 */
 function renderClCatBar() {
   const box = document.getElementById("clCatBar");
   if (!box) return;
@@ -7752,24 +8559,34 @@ function renderClCatBar() {
   let sum = 0;
   Object.keys(cc).forEach(k => { sum += cc[k]; });
 
-  const chip = (key, name, n, extra) => {
+  const chip = (key, name, n, cls) => {
     const on = String(C.f.cat) === String(key);
-    return '<button class="clcat' + (on ? " on" : "") + (extra || "") +
+    return '<button class="clcat' + (cls ? " " + cls : "") + (on ? " on" : "") +
       '" data-cat="' + esc(key) + '">' + esc(name) +
-      ' <span class="n">' + n + '</span></button>';
+      ' <span class="n">' + fmtNum(n) + '</span></button>';
   };
 
-  box.innerHTML =
-    chip("", "全部", sum) +
-    chip("0", "未分类", cc[""] || 0) +
-    (C.cats.length
-      ? '<span class="sep"></span>' +
-        C.cats.map(c => chip(String(c.id), c.name, cc[String(c.id)] || 0)).join("")
-      : '<span class="tip">还没读到分类体系，点右上「刷新」试试。</span>') +
-    // 「＋」跟在最后一个圆钮后面 —— 她想加新类的那一刻，
-    // 眼睛正好在这一排上（"我这段素材哪一类都不是"）。
-    '<button class="mini" id="clNewCat" title="新建一个只有你自己能用的主类">' +
-      '＋ 新建主类</button>';
+  let html = "";
+  if (C.f.kw) {
+    html += '<div class="clgrp">搜索结果</div>' +
+      chip("", "全部命中", sum, "q") +
+      '<div class="clgrp">缩到某一类</div>' +
+      chip("0", "未分类", cc[""] || 0);
+  } else {
+    html += chip("", "全部", sum) + chip("0", "未分类", cc[""] || 0);
+    if (C.cats.length) html += '<div class="clgrp">素材分类库</div>';
+  }
+
+  html += C.cats.length
+    ? C.cats.map(c => chip(String(c.id), c.name, cc[String(c.id)] || 0)).join("")
+    : '<div class="clgrp">还没读到分类体系，点右上「刷新」试试。</div>';
+
+  // 「＋」跟在最后 —— 她想加新类的那一刻，眼睛正好在这一栏上
+  // （"我这段素材哪一类都不是"）。
+  html += '<button class="clcat newcat" id="clNewCat" ' +
+    'title="新建一个只有你自己能用的主类">＋ 新建主类</button>';
+
+  box.innerHTML = html;
 
   box.querySelectorAll("[data-cat]").forEach(b => {
     b.onclick = () => {
@@ -7777,11 +8594,395 @@ function renderClCatBar() {
       const sel = document.getElementById("fCat");
       if (sel) sel.value = C.f.cat;      // 下拉框跟着同步，别一个新值一个旧值
       C.offset = 0;
+      // 左栏这一格同时是"粘贴导入放进哪一类"的那一格，换了类得跟着改口径。
+      renderClPasteCard();
       loadCards();
     };
   });
   const nb = document.getElementById("clNewCat");
   if (nb) nb.onclick = () => openNewCat("cat");
+}
+
+/* 当前在看的是哪个范围 —— 搜索结果条、空态文案、粘贴卡三处都要这句话。
+   为什么要一个函数：三处各写一遍，改一处漏一处，
+   然后屏幕上几个地方各说各的，她就再也不敢信了。 */
+function clScopeName() {
+  if (C.f.cat === "") return C.f.kw ? "整个素材分类库" : "全部卡片";
+  if (C.f.cat === "0") return "未分类";
+  const c = (C.cats || []).find(x => String(x.id) === String(C.f.cat));
+  return c ? ("「" + c.name + "」这一类") : "当前这一类";
+}
+
+/* 只给粘贴卡和确认弹层用的短名字：不要「」、不要"这一类" ——
+   左栏那张卡只有 200px 宽，一行里还要塞下"下一个 #3"。 */
+function clCatShort() {
+  if (C.f.cat === "" || C.f.cat === "0") return "未分类";
+  const c = (C.cats || []).find(x => String(x.id) === String(C.f.cat));
+  return c ? c.name : "当前这一类";
+}
+
+/* 回到这一页时，搜索框里的字要跟 C.f.kw 对上 ——
+   不然出现"结果条上写着搜了『红线』、框里却是空的"，她会以为搜索丢了。 */
+function clSyncSearchBox() {
+  const el = document.getElementById("clSearch");
+  if (el && el.value !== C.f.kw) el.value = C.f.kw;
+}
+
+/* 搜索结果条：只在有搜索词时出现。
+   它的职责是把"你在搜东西 / 命中几条 / 在哪个范围里数的"一次说清 ——
+   少了最后一条，"缩到外貌只剩 3 条"会被读成"库里只有 3 条"。 */
+function renderClQBar() {
+  const bar = document.getElementById("clQBar");
+  if (!bar) return;
+  const on = !!C.f.kw;
+  bar.classList.toggle("on", on);
+  const box = document.getElementById("clSearchBox");
+  if (box) box.classList.toggle("on", on);
+  clSyncSearchBox();
+  if (!on) {
+    fill("clQKw", "");
+    fill("clQWhere", "");
+    fill("clQPlot", "");
+    return;
+  }
+  fill("clQKw", C.f.kw);
+  fill("clQWhere", "范围：" + clScopeName());
+  clFillPlotHits();
+}
+
+/* 「剧情内化库那边还有几条」。
+   为什么要报这个数：她搜一个词，脑子里问的是"我手上有没有这条"，
+   而"手上"是分类库 + 内化库两个库。只报一边，她会以为另一边没有。
+   也正因为如此，这一条必须能点过去 —— 报了个数却点不动，
+   跟没报的区别只是多一次失望。 */
+async function clFillPlotHits() {
+  const el = document.getElementById("clQPlot");
+  if (!el) return;
+  const kw = C.f.kw;
+  if (!kw) { el.textContent = ""; return; }
+  el.textContent = "剧情内化库：正在查…";
+  try {
+    const d = await api("/api/plots?limit=1&keyword=" + encodeURIComponent(kw));
+    if (C.f.kw !== kw) return;              // 她已经换了词，这次结果作废
+    const n = d.total || 0;
+    el.innerHTML = '剧情内化库另有 <b>' + fmtNum(n) + '</b> 条';
+    if (n > 0) {
+      el.innerHTML += ' <span class="lk act" id="clQPlotGo">去那边看</span>';
+      const g = document.getElementById("clQPlotGo");
+      if (g) g.onclick = () => clGoInfuse(kw);
+    }
+  } catch (e) {
+    el.textContent = "";                    // 取不到就不显示，不编一个数
+  }
+}
+
+/* 跳到剧情内化页，并把词带过去。
+   那一页本来就有搜索框（#plKw），只是以前得她再敲一遍。
+   【顺序要紧】先设值再切页 —— goView 里的 loadPlots 会立刻照着
+   PL.f.kw 去拉，设晚一步第一次拉的就是空词，她会看到"刚跳过来是全量的"。 */
+function clGoInfuse(kw) {
+  PL.f.kw = kw || "";
+  goView("infuse");
+}
+
+/* 搜一把。
+   【为什么每次搜索都从"整个库"起】她说的是"弄一个搜索功能就行"，
+   要的答案是"这条东西我库里有吗"。要是沿用她上次点的那一类，
+   答案会变成"在你上次点的那一类里有没有"——那是另一个问题，
+   而且她会以为库里没有。所以搜索一律先把范围放回全部，
+   缩范围是搜完之后的事（左栏点某一类，词还留着）。 */
+function runClSearch() {
+  const el = document.getElementById("clSearch");
+  C.f.kw = ((el && el.value) || "").trim();
+  C.f.cat = "";
+  C.offset = 0;
+  const sel = document.getElementById("fCat");
+  if (sel) sel.value = "";
+  renderClPasteCard();
+  loadCards();
+}
+
+function clSearchClear() {
+  const el = document.getElementById("clSearch");
+  if (el) el.value = "";
+  C.f.kw = "";
+  C.offset = 0;
+  loadCards();
+  if (el) el.focus();
+}
+
+/* ---------------- 左栏那张粘贴导入卡 ----------------
+   卡上写两件事：这次要放进哪一类、下一个编号是几。
+   为什么要显示下一个号 —— 她提的原话就是"素材库该分类下已经有 230 个，
+   直接接到 231 下面"。不显示的话她没法确认接对了没有，
+   只能入库之后回去数。
+
+   分类直接用左栏选中的那一格：她说的就是"选择某一素材分类项目，
+   然后在该地方直接黏贴"，所以"正在看哪一类"和"要放进哪一类"
+   在她心里是同一件事，不该再让她选第二遍。
+   没选（停在「全部」）时明说会进「未分类」，不猜。 */
+async function renderClPasteCard() {
+  const t = document.getElementById("clPasteTarget");
+  const n = document.getElementById("clPasteNo");
+  const sub = document.getElementById("clPasteSub");
+  if (!t || !n) return;
+  const cat = C.f.cat;
+  const short = clCatShort();
+  if (cat === "") {
+    t.innerHTML = "当前目标分类：<br><b>未分类</b>" +
+      '<div style="margin-top:3px">想归到某一类，先在左边点它一下。</div>';
+  } else {
+    t.innerHTML = "当前目标分类：<br><b>" + esc(short) + "</b>";
+  }
+  n.textContent = "下一个编号 …";
+  if (sub) sub.textContent = short + " · 下一个 …";
+  try {
+    // 空文本问一次就是"要下一个编号"，不额外开接口 ——
+    // 预览和入库走同一个解析函数，编号也从同一个地方算，
+    // "两个出口两个数"这种坑就这么绕开了。
+    const d = await post("/api/cards/paste/preview",
+                         { text: "", category_id: cat });
+    if (C.f.cat !== cat) return;            // 她已经换类了，这次结果作废
+    n.textContent = "下一个编号 #" + (d.next_no || 1);
+    if (sub) sub.textContent = short + " · 下一个 #" + (d.next_no || 1);
+  } catch (e) {
+    n.textContent = "下一个编号 —";
+    if (sub) sub.textContent = short + " · 下一个 —";
+  }
+}
+
+/* 粘贴卡展开 / 收起。
+   收起来的那一行已经写了目标分类和下一个号，所以"收着"不等于"藏起来"——
+   什么时候展开她自己定，不替她做主（也不替她记着，下次进来还是收着的
+   样子，因为绝大多数时候她来这一栏是切分类，不是粘东西）。 */
+function clPasteFold(open) {
+  CP.open = !!open;
+  const body = document.getElementById("clPasteBody");
+  if (body) body.hidden = !CP.open;
+  const caret = document.getElementById("clPasteCaret");
+  if (caret) caret.textContent = CP.open ? "▴" : "▾";
+  const t = document.getElementById("clPasteToggle");
+  if (t) t.setAttribute("aria-expanded", CP.open ? "true" : "false");
+  if (CP.open) {
+    const ta = document.getElementById("clPasteTa");
+    if (ta) ta.focus();
+  }
+}
+
+/* ---------------- 粘贴导入：「识别并确认」弹层 ----------------
+   她的原话：「素材分类库增加一个黏贴导入的功能，就放在最左侧，
+   用户可以选择某一素材分类项目，然后在该地方直接黏贴点确认，
+   素材直接放入相应素材库的分类。（用户素材是 1.xxx 2.xxx，
+   需要识别并接上素材库，比如素材库该分类下已经有 230 个素材了，
+   直接接到 231 下面）」
+
+   【为什么要一张确认表，不粘完直接入库】
+   粘进来的文字是原样切开的，切歪一刀就是一条错素材。
+   她的素材是连着写的（"1.xxx 2.xxx"），一刀切歪得逐条删。
+   先把"认出来哪几条、各接第几号"摆出来让她过一眼，
+   比入库之后再回来收拾便宜得多。
+
+   【为什么删掉一条真的不会进库】
+   确认时发的不是粘贴框里那一坨原文，而是把"还留着的那几条"
+   重新拼回去。所以预览里删掉的那条真的不会进去 ——
+   "界面上删了、库里还是进去了"是最伤人的一种假动作。 */
+const CP = { items: [], next: 1, busy: false, raw: "", open: false };
+
+function cpMsg(s, bad) {
+  const m = document.getElementById("cpMsg");
+  if (!m) return;
+  m.textContent = s || "";
+  m.style.color = bad ? "var(--danger)" : "";
+}
+
+function cpReset() {
+  CP.raw = "";
+  const l = document.getElementById("pasteList");
+  if (l) l.hidden = true;
+  const b = document.getElementById("pasteBody");
+  if (b) b.innerHTML = "";
+  const h = document.getElementById("pasteHead");
+  if (h) h.textContent = "";
+  fill("cpSummary", "把粘进来的文字切成一条条素材，放进你选的分类。");
+  fill("cpRule", "");
+  fill("cpNote", "");
+  cpMsg("");
+  const btn = document.getElementById("cpSave");
+  if (btn) { btn.disabled = true; btn.textContent = "确认入库"; }
+}
+
+function cpCatOptions() {
+  return '<option value="">（未分类）</option>' +
+    (C.cats || []).map(c => '<option value="' + c.id + '">' +
+      esc(c.name) + '</option>').join("");
+}
+
+/* 打开弹层。text / cat 由调用方给：
+   · 左栏那张粘贴卡 —— 带着她粘好的文字和当时选中的类；
+   · 顶栏「粘贴导入」按钮 —— 空文字，类默认跟着当前选中的走。 */
+function openClPaste(text, cat) {
+  const ta = document.getElementById("cpText");
+  const sel = document.getElementById("cpCat");
+  if (sel) {
+    sel.innerHTML = cpCatOptions();
+    const want = (cat === undefined || cat === null) ? C.f.cat : cat;
+    sel.value = String(want === null || want === undefined ? "" : want);
+  }
+  if (ta) ta.value = text || "";
+  CP.items = [];
+  CP.next = 1;
+  cpReset();
+  show("mkClPaste");
+  if (ta && ta.value.trim()) cpPreview();     // 从左栏进来的：直接先识别一遍
+  else if (ta) ta.focus();
+}
+
+/* 识别。preview 只算不写 ——
+   她点多少次「重新识别」都不会往库里落东西。 */
+async function cpPreview() {
+  const ta = document.getElementById("cpText");
+  const sel = document.getElementById("cpCat");
+  const raw = (ta && ta.value) || "";
+  const cat = sel ? sel.value : "";
+  if (!raw.trim()) {
+    cpReset();
+    cpMsg("粘贴框是空的 —— 先粘一段进来。", true);
+    return;
+  }
+  const again = document.getElementById("cpAgain");
+  if (again) again.disabled = true;
+  cpMsg("正在识别…");
+  try {
+    const d = await post("/api/cards/paste/preview",
+                         { text: raw, category_id: cat });
+    if (!d.items || !d.items.length) {
+      cpReset();
+      cpMsg("没认出任何一条素材 —— 检查一下是不是只有编号、没有正文。", true);
+      return;
+    }
+    CP.items = d.items.map(x => ({ text: x.text, exists: !!x.exists,
+                                   gone: false }));
+    CP.next = d.next_no || 1;
+    /* 记下"这一次识别看的是哪一版文字"。
+       她要是识别完又去改了粘贴框，那张表就跟文本框对不上了 ——
+       按着旧表入库 = 入的不是她眼前看到的东西。见 cpCommit。 */
+    CP.raw = raw;
+    const nm = cat === "" ? "未分类" : clCatShort();
+    fill("cpSummary", "已识别 " + d.count + " 条，将放入「" + nm +
+      "」，编号从 #" + d.next_no + " 接到 #" + d.will_seq_to + "。");
+    fill("cpRule", d.mode === "numbered"
+      ? "按「数字.」分条，没编号的行并进上一条"
+      : "整段没有编号，按每个非空行各算一条");
+    cpRenderList();
+    cpMsg("");
+  } catch (e) {
+    cpReset();
+    cpMsg(e.message, true);
+  } finally {
+    const b = document.getElementById("cpAgain");
+    if (b) b.disabled = false;
+  }
+}
+
+/* 画识别结果。号是**当场重排**的：她去掉第 2 条之后，
+   第 3 条就顶上来接第 2 条那个号 —— 跟入库时的算法完全一样
+   （后端也是按"实际要建的那几条"顺序发号）。
+   不重排的话屏幕上会出现 #231 #233 中间空一个，
+   跟库里真实编号对不上，她以后就对不上账了。 */
+function cpRenderList() {
+  const box = document.getElementById("pasteList");
+  const body = document.getElementById("pasteBody");
+  const head = document.getElementById("pasteHead");
+  if (!box || !body || !head) return;
+  box.hidden = false;
+  let seq = CP.next, dup = 0, live = 0;
+  body.innerHTML = CP.items.map((it, i) => {
+    if (it.gone) {
+      return '<div class="pvrow">' +
+        '<span class="pno gone">已去掉</span>' +
+        '<span class="ptx" style="text-decoration:line-through">' +
+          esc(it.text) + '</span>' +
+        '<button class="pdel" data-i="' + i + '" title="恢复这一条">↺</button>' +
+        '</div>';
+    }
+    it.seq = seq; seq += 1; live += 1;
+    if (it.exists) dup += 1;
+    return '<div class="pvrow">' +
+      '<span class="pno">#' + it.seq + '</span>' +
+      '<span class="ptx">' + esc(it.text) + '</span>' +
+      '<button class="pdel" data-i="' + i + '" title="去掉这一条">✕</button>' +
+      '</div>';
+  }).join("");
+  head.innerHTML = '识别结果 <b>' + live + '</b> 条' +
+    (dup ? ' · <span style="color:var(--warn)">其中 ' + dup +
+           ' 条库里已经有，入库时会跳过</span>' : '') +
+    ' · 点右边的 ✕ 可以去掉某一条';
+  body.querySelectorAll(".pdel").forEach(b => {
+    b.onclick = () => {
+      const i = Number(b.dataset.i);
+      if (CP.items[i]) CP.items[i].gone = !CP.items[i].gone;
+      cpRenderList();
+    };
+  });
+  const save = document.getElementById("cpSave");
+  if (save) {
+    save.disabled = live === 0;
+    save.textContent = live ? ("确认入库 " + live + " 条") : "确认入库";
+  }
+  fill("cpNote", live
+    ? ("编号接在这一类现有的最大号后面，不会覆盖已有素材。")
+    : "一条都没剩下 —— 点 ↺ 可以恢复。");
+}
+
+async function cpCommit() {
+  if (CP.busy) return;
+  const ta = document.getElementById("cpText");
+  const now = (ta && ta.value) || "";
+  /* 识别完又改了粘贴框 —— 那张结果表已经不是眼前这段字了。
+     这时候按旧表入库，入的就不是她看到的那些条。
+     重识别一遍，并明说"请再确认一次"，不替她做主。 */
+  if (now !== CP.raw) {
+    await cpPreview();
+    cpMsg("粘贴内容改过了，已经照新的重新识别一遍 —— 请再确认一次。", true);
+    return;
+  }
+  const keep = CP.items.filter(it => !it.gone);
+  if (!keep.length) {
+    cpMsg("一条都没剩下 —— 点 ↺ 可以恢复，或者「重新识别」。", true);
+    return;
+  }
+  const sel = document.getElementById("cpCat");
+  /* 发的是**原样的粘贴文本** + "去掉哪几条"的下标。
+     不把保留的几条拼成新文本再发：那样入库的正文就不是她粘的
+     那一坨了（编号被重写、空行会没掉），以后"原文定位"点回去
+     看到的东西跟她粘的不是同一份。
+     后端收 skip 之后自己按同一套规则切、跳掉那几条。 */
+  const skip = [];
+  CP.items.forEach((it, i) => { if (it.gone) skip.push(i); });
+  const btn = document.getElementById("cpSave");
+  const old = btn ? btn.textContent : "";
+  CP.busy = true;
+  if (btn) { btn.disabled = true; btn.textContent = "正在入库…"; }
+  cpMsg("正在入库，稍等…");
+  try {
+    const r = await post("/api/cards/paste",
+                         { text: now, category_id: sel ? sel.value : "",
+                           skip: skip });
+    hide("mkClPaste");
+    toast(r.message || ("已导入 " + r.count + " 条"));
+    const rail = document.getElementById("clPasteTa");
+    if (rail) rail.value = "";             // 左栏那张卡上的字也清掉，免得她再点一次
+    await loadCards();                     // 卡片流 + 左栏计数一起刷新
+    renderClPasteCard();                   // 下一个编号要跟着往后走
+  } catch (e) {
+    cpMsg(e.message, true);
+  } finally {
+    CP.busy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = old || "确认入库";
+    }
+  }
 }
 
 function renderClFilters() {
@@ -8471,11 +9672,7 @@ function renderProviders() {
   if (!box) return;
   if (!S.providers.length) {
     box.innerHTML = '<div class="blank" style="padding:10px;line-height:1.8">' +
-      '还没有接入点。<br>' +
-      '在下面「＋ 添加一个模型」里把地址和密钥填好、点「保存」，' +
-      '这里就会自动多出一个接入点 —— 那时能一次勾一堆模型进来。<br>' +
-      '想先看一家认哪些模型，不用等保存：在下面那一行的「模型名」' +
-      '旁边点「拉模型列表」就行。</div>';
+      '还没有接入点。在下面「＋ 添加一个模型」里填好地址和密钥，点「保存」。</div>';
     return;
   }
   box.innerHTML = S.providers.map((p, i) =>
@@ -9394,7 +10591,6 @@ async function loadModelStats() {
 
 async function refreshClsMeta() {
   await loadClsStates();
-  paintClsHint(true);
 }
 
 /* ---------------- 弹窗：开始自动分类（先定"用谁判"） ----------------
@@ -9954,12 +11150,7 @@ function renderMap() {
       '<td><button class="mini" data-act="sample">抽样</button> ' +
         '<button class="mini" data-act="suggest">采纳建议</button> ' +
         '<button class="mini" data-act="confirm">批量确认</button></td>' +
-    '</tr>').join("") + '</tbody></table>' +
-    '<div class="why" style="margin-top:12px">' +
-    '「采纳建议」只写主类，状态仍是待确认；「批量确认」才写成已确认 —— ' +
-    '它只该用在来源名本身就等于主类的那些（比如来源名叫「环境描写」，主类就是「场景氛围」）。' +
-    '来源名和主类对不上的（来源名是一种"效果评价"或"写作状态"的那种），必须逐条看，不能批量确认。' +
-    '</div>';
+    '</tr>').join("") + '</tbody></table>';
 
   body.querySelectorAll("tr[data-i]").forEach(tr => {
     const i = Number(tr.dataset.i);
@@ -10086,8 +11277,43 @@ document.getElementById("clReload").onclick = async () => {
   await refreshPreview(false);
   await loadCards();
   renderClFilters();
+  renderClPasteCard();
   toast("已刷新");
 };
+
+/* ---- 搜索（原「素材检索」并进这一页，2026-10-07）----
+   回车才搜，不做"打一个字搜一次"：她的库是几万字的稿子，
+   每敲一个字母去全库 LIKE 一遍会卡；而且她要的是"这个词有没有"，
+   不是边打边猜。 */
+document.getElementById("clSearch").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); runClSearch(); }
+  if (e.key === "Escape") clSearchClear();
+};
+document.getElementById("clQClear").onclick = clSearchClear;
+
+/* ---- 粘贴导入 ----
+   两个入口：左栏那张卡（带着她已经粘好的字）+ 顶栏那个按钮（空着开）。
+   左栏那张平时是收着的，点标题那一行才摊开。 */
+document.getElementById("clPasteToggle").onclick = () => clPasteFold(!CP.open);
+document.getElementById("clPasteTop").onclick = () => openClPaste("", C.f.cat);
+document.getElementById("clPasteGo").onclick = () => {
+  const ta = document.getElementById("clPasteTa");
+  const raw = (ta && ta.value) || "";
+  if (!raw.trim()) {
+    // 空着就点 —— 与其弹一句"不能为空"，不如把弹层开出来让她直接在里面粘，
+    // 反正两个入口最终是同一张表。
+    openClPaste("", C.f.cat);
+    return;
+  }
+  openClPaste(raw, C.f.cat);
+};
+document.getElementById("clPasteClr").onclick = () => {
+  const ta = document.getElementById("clPasteTa");
+  if (ta) { ta.value = ""; ta.focus(); }
+};
+document.getElementById("cpAgain").onclick = cpPreview;
+document.getElementById("cpSave").onclick = cpCommit;
+document.getElementById("cpCat").onchange = () => { if (CP.items.length) cpPreview(); };
 
 /* ---- 补充提示词：三个入口切换、计数、保存、清空 ----
    （原来还有个"展开/收起"，搬进弹层之后去掉了 —— 弹层里没有收起来的理由）
@@ -10803,8 +12029,7 @@ async function openPickMat() {
 
   if (!rows.length) {
     box.innerHTML = '<div class="blank"><b>还没有能内化的素材</b>' +
-      'AI 内化吃的是「卡片」。先去<b>【总素材库】</b>，' +
-      '对一份文件点<b>「切分」</b>把它切成卡片，回来这里就出现了。</div>';
+      '先去<b>【总素材库】</b>，对一份文件点<b>「切分」</b>。</div>';
     note.innerHTML = "";
     return;
   }
@@ -10915,28 +12140,32 @@ function renderPlotStats() {
   if (nb) nb.textContent = "＋ 新建剧情零件";
 }
 
-/* 主类分段条：跟素材分类页同一个排法（走 categories.sort，未分类最后） */
+/* 左栏主分类（竖排那一列）。
+   2026-10-07 之前这里是横排的一串药丸（.clcatbar），折腰说要
+   「完全参照素材分类库」—— 于是搬成跟 `renderClCatBar` 同一个排法：
+   竖排格子、选中态白底 + 赭石左条、计数靠右。两页共用 `.clrail`
+   那一套样式，没另写一份。 */
 function renderPlCatBar() {
-  const bar = document.getElementById("plCatBar");
-  if (!bar) return;
+  const box = document.getElementById("plCatBar");
+  if (!box) return;
   const cats = (PL.meta && PL.meta.categories) || [];
-  const all = PL.plots.length;
-  let html = '<button data-pcat=""' + (PL.f.cat === "" ? ' class="on"' : "") +
-             '>全部 <span class="n">' + all + '</span></button>';
-  cats.forEach(c => {
-    const n = PL.counts[String(c.id)] || 0;
-    html += '<button data-pcat="' + c.id + '"' +
-            (String(PL.f.cat) === String(c.id) ? ' class="on"' : "") +
-            '>' + esc(c.name) + (n ? ' <span class="n">' + n + '</span>' : "") +
-            '</button>';
-  });
-  const nNo = PL.counts["0"] || 0;
-  if (nNo) {
-    html += '<button data-pcat="0"' + (PL.f.cat === "0" ? ' class="on"' : "") +
-            '>未分类 <span class="n">' + nNo + '</span></button>';
-  }
-  bar.innerHTML = html;
-  bar.querySelectorAll("button[data-pcat]").forEach(b => {
+  let sum = 0;
+  Object.keys(PL.counts || {}).forEach(k => { sum += PL.counts[k]; });
+
+  const chip = (key, name, n, cls) => {
+    const on = String(PL.f.cat) === String(key);
+    return '<button class="clcat' + (cls ? " " + cls : "") + (on ? " on" : "") +
+      '" data-pcat="' + esc(key) + '">' + esc(name) +
+      ' <span class="n">' + fmtNum(n) + '</span></button>';
+  };
+
+  let html = chip("", "全部", sum) + chip("0", "未分类", PL.counts["0"] || 0);
+  if (cats.length) html += '<div class="clgrp">剧情内化库</div>';
+  html += cats.map(c =>
+    chip(String(c.id), c.name, PL.counts[String(c.id)] || 0)).join("");
+
+  box.innerHTML = html;
+  box.querySelectorAll("[data-pcat]").forEach(b => {
     b.onclick = () => { PL.f.cat = b.dataset.pcat; refreshPlots(); };
   });
 }
@@ -10974,16 +12203,13 @@ function renderPlFilters() {
 
 /* 段标题。跟素材分类页的 clSectionHtml 长得一样，但写在这里 ——
    两边的段含义不同（那边是"这一类有多少张卡"，这边是"这一类有多少条零件"），
-   合并成一个函数会变成到处传开关。 */
+   合并成一个函数会变成到处传开关。
+   跟那边一样：不再画分类说明。 */
 function plSectionHtml(p) {
   const nm = p.category_name || "未分类";
   const n = PL.counts[String(p.primary_category_id || "0")] || 0;
-  const cat = ((PL.meta && PL.meta.categories) || [])
-    .find(c => c.id === p.primary_category_id);
-  const desc = cat && cat.description ? cat.description : "";
   return '<div class="clsec"><b>' + esc(nm) + '</b>' +
-         '<span class="n">' + n + ' 条</span>' +
-         (desc ? '<span class="d">' + esc(desc) + '</span>' : "") + '</div>';
+         '<span class="n">' + n + ' 条</span></div>';
 }
 
 function renderPlList() {
@@ -10991,14 +12217,7 @@ function renderPlList() {
   if (!box) return;
   if (!PL.plots.length) {
     box.innerHTML = '<div class="blank"><b>这里还没有剧情零件</b>' +
-      '要机器提：点右上角<b>「AI 批量内化」</b>——挑一份素材，' +
-      '它会先告诉你这份素材要送出去多少张、大概几次调用，你确认了才开跑。' +
-      '（同样的入口也在<b>【总素材库】</b>每份文件的<b>「AI 内化」</b>按钮上。）' +
-      '跑完的零件会出现在这里，标着<b>「AI 提的」</b>和它的把握程度，' +
-      '状态是「待确认」，等你逐条看过。<br>' +
-      '要自己写：点右上角<b>「＋ 新建剧情零件」</b>；' +
-      '或者在<b>「素材分类」</b>里勾几张卡片，点<b>「内化为剧情零件」</b>，' +
-      '来源就一起带过来了。</div>';
+      '点右上角「AI 批量内化」挑一份素材跑，或者点「＋ 新建剧情零件」自己写。</div>';
     return;
   }
   const parts = [];
@@ -11678,13 +12897,14 @@ const OL = {
   poolMode: "auto",         // auto | manual
   picked: {},               // 手动模式勾了哪些
   autoPool: null,           // 预览算出来的那一批（自动模式用它显示）
-  models: {},               // 勾了哪些模型： key → true
+  modelKey: "",             // 这次用哪个模型：key（2026-10-07 起从多选改单选）
   promptLoaded: false,
   prompt: "",               // 一直用的那份补充提示词
   runs: [],
   candsFor: 0,              // 已经拉过候选正文的那次任务 id
   candData: {},             // 候选 id → 完整候选
   lib: { total: 0, items: [] },
+  rwLib: [],                // 她交过的改写记录（阶段一E：大纲库下面那一栏）
   work: null,               // 正在看/改的那一份（候选，或库里的大纲）
   fbs: [],                  // 那一份上记过的反馈
   nodeSrc: {},              // 节点编辑弹层里勾的来源零件
@@ -11712,8 +12932,7 @@ const OL_CHOICE = { models: "c:ol.models", chars: "c:ol.chars",
                     useRef: "c:ol.useref" };
 
 function olSaveChoices() {
-  draftPutJSON(OL_CHOICE.models,
-    Object.keys(OL.models).filter(k => OL.models[k]));
+  draftPut(OL_CHOICE.models, OL.modelKey || "");
   draftPutJSON(OL_CHOICE.chars, Object.keys(OL.chars).map(Number));
   draftPut(OL_CHOICE.poolMode, OL.poolMode);
   draftPutJSON(OL_CHOICE.picked,
@@ -11728,8 +12947,11 @@ function olSaveChoices() {
 /* 启动时把上次的勾选摆回 OL 里。角色卡要等 /api/characters 回来之后
    才认得出哪些还有效，所以这里只把 id 记下来（见 olLoadChars）。 */
 function olRestoreChoices() {
+  /* 存的格式变过：老草稿里是一个数组（多选那会儿），新的是单个 key。
+     两种都认 —— 不然她一升级，上次选好的模型就没了。 */
   const ms = draftGetJSON(OL_CHOICE.models, null);
-  if (Array.isArray(ms)) ms.forEach(k => { OL.models[k] = true; });
+  if (Array.isArray(ms)) OL.modelKey = ms.length ? String(ms[0]) : "";
+  else OL.modelKey = draftText(OL_CHOICE.models) || "";
   const pm = draftText(OL_CHOICE.poolMode);
   if (pm === "auto" || pm === "manual") OL.poolMode = pm;
   const pk = draftGetJSON(OL_CHOICE.picked, null);
@@ -11766,6 +12988,9 @@ async function loadOutline(force) {
     await olLoadLib();
     olPaintWorldCnt();
     olPaintPoolNote();
+    // 进页面就算一次「会发出去多少字」—— 它原来是「看看会发出去什么」
+    // 按钮点出来的一屏，现在按钮没了，这一句得自己先出来。
+    olRefreshSendSize();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -11782,93 +13007,52 @@ function olPaintMeta() {
   if (d) d.maxLength = L.design_max || 3000;
   const ww = olEl("olWorld");
   if (ww) ww.maxLength = L.world_max || 30000;
-  olPaintTier();
   olPaintModels();
 }
 
-/* 字数 → 结构规模。这张表在后端（WORD_TIERS），前端只是照着显示 ——
-   自己抄一份"8000 字 = 5～8 段"的话，后端一改这边就永远显示老的了。 */
-function olTierOf(words) {
-  const ts = ((OL.meta || {}).tiers) || [];
-  for (let i = 0; i < ts.length; i++) {
-    if (words >= ts[i].min && words <= ts[i].max) return ts[i];
-  }
-  return ts.length ? ts[ts.length - 1] : null;
-}
+/* 【2026-10-07 删掉的一段】
+   这里原来有 olTierOf 和 olPaintTier 两个函数，把"预期字数"换算成
+   「结构规模：短篇 —— 大概 3～5 段，完整起承转合…」显示在字数框底下。
+   折腰要求界面上不放解释文字，整段撤了。
+   分档表还在后端（WORD_TIERS），生成时照旧按它决定段数，只是不再摆出来。 */
 
-function olPaintTier() {
-  const box = olEl("olTierNote");
-  if (!box) return;
-  const t = olTierOf(Number(olEl("olWords").value || 0));
-  if (!t) { box.textContent = "字数决定结构规模，不是只显示一个数字。"; return; }
-  const ns = t.nodes || [3, 5];
-  box.innerHTML = "结构规模：<b>" + esc(t.label) + "</b> —— 大概 "
-    + ns[0] + "～" + ns[1] + " 段，" + esc(t.hint) + "。";
-}
-
+/* 模型下拉（单选）。
+   折腰 2026-10-07 的原话：「用哪些模型修改成一个方框，点击能下拉
+   显示有哪些模型，一次只能选一个模型」。
+   所以是原生 `<select>`：点一下摊开就是全部模型，选一个。
+   原来那一列复选框（勾几个就并发跑几份候选）连同它底下那句
+   「已勾 N 个…最长等 10 分」一起撤了 —— 界面上不放解释文字。 */
 function olPaintModels() {
   const box = olEl("olModels");
   if (!box) return;
   const ms = ((OL.meta || {}).models) || [];
-  olSeedModel();   // 第一次画的时候替她勾上第一个能用的（只做一次）
+  olSeedModel();   // 第一次进页面时替她选上第一个能用的（只做一次）
   if (!ms.length) {
-    box.innerHTML = '<div class="mdhint" style="flex:none">还没配过模型。' +
-      '去右上角「模型设置」加一个、填上 API Key 才能生成。</div>';
-    olEl("olModelNote").textContent = "";
+    box.innerHTML = '<option value="">（还没配模型）</option>';
+    box.disabled = true;
     return;
   }
+  box.disabled = false;
   /* 【真名在前，跟全站一致】见 modelOptName。她要认的是"哪个模型"，
-     中文名退到第二行的小字里。还没填真名时就把中文名顶上来。 */
+     所以 option 上先写真名、后面用括号带上她自己起的中文标签；
+     只填了中文名时就单写中文名。没填 Key 的那几条置灰、选不中。
+     （原来是两行的复选框，标签能缩在第二行小字里 —— 下拉没有第二行，
+     只能挤成一行，所以用括号。） */
   box.innerHTML = ms.map(m => {
     const real = String(m.model || "").trim();
     const label = String(m.label || m.key || "").trim();
-    return '<label' + (m.usable ? "" : ' class="dead"') + '>' +
-      '<input type="checkbox"' + (OL.models[m.key] ? " checked" : "")
-        + (m.usable ? "" : " disabled") + '>' +
-      '<span>' + esc(real || label)
-        + (m.usable ? "" : ' <span class="chip gray">没填 Key</span>')
-        + (real && label && real !== label
-           ? '<br><span style="color:var(--ink-3);font-size:11.5px">'
-             + esc(label) + '</span>'
-           : '') +
-      '</span></label>';
+    return '<option value="' + esc(m.key) + '"'
+      + (m.usable ? "" : " disabled")
+      + (OL.modelKey === m.key ? " selected" : "")
+      + '>' + esc(real || label)
+      + (real && label && real !== label ? "（" + esc(label) + "）" : "")
+      + (m.usable ? "" : "（没填 Key）") + '</option>';
   }).join("");
-  const cbs = box.querySelectorAll("input");
-  ms.forEach((m, i) => {
-    cbs[i].onchange = () => {
-      const max = (((OL.meta || {}).limits) || {}).max_models || 4;
-      if (cbs[i].checked) {
-        const n = Object.keys(OL.models).filter(k => OL.models[k]).length;
-        if (n >= max) {
-          cbs[i].checked = false;
-          toast("一次最多挑 " + max + " 个模型。再多是并发打同一家的限流，"
-                + "而且你也比分不过来。", true);
-          return;
-        }
-        OL.models[m.key] = true;
-      } else {
-        delete OL.models[m.key];
-      }
-      olSaveChoices();   // 勾选也留着，下次进页面还是这几只
-      olPaintModelNote();
-    };
-  });
-  olPaintModelNote();
-}
-
-function olPaintModelNote() {
-  const box = olEl("olModelNote");
-  if (!box) return;
-  const L = ((OL.meta || {}).limits) || {};
-  const n = Object.keys(OL.models).filter(k => OL.models[k]).length;
-  const cases = (((OL.meta || {}).learning) || {}).cases || 0;
-  if (!n) { box.textContent = "勾一个或几个。勾几个就各出一份候选，你挑。"; return; }
-  // "要等多久"必须先讲在前面：大纲要吐几千字，跟分类那种几秒就回来的活
-  // 不是一个量级。不先说清楚，她跑到第八分钟就会以为卡死了。
-  box.textContent = "已勾 " + n + " 个，会各出一份候选（并发跑，不是排队）。"
-    + "写大纲慢，一般几分钟；单个模型最长等 "
-    + olFmtDur(Number(L.outline_timeout) || 600) + "。"
-    + (cases ? "另外会参考你标过的 " + cases + " 条「不可用」。" : "");
+  box.onchange = () => {
+    OL.modelKey = box.value;
+    olSaveChoices();        // 选谁留着，下次进页面还是它
+    olRefreshSendSize();    // 模型名算进提示词，字数跟着变
+  };
 }
 
 /* 候选卡右上角：除了人话标签，再亮出**真发给服务商的模型名**。
@@ -11933,6 +13117,9 @@ function olPaintChars() {
 function olPaintStats() {
   fill("olStatPlots", fmtNum(OL.plots.length));
   fill("olStatChars", fmtNum(OL.charList.length));
+  // 头部那个「人设卡」按钮上的计数：跟统计条读同一份数（同一个接口），
+  // 不会出现"按钮说 5 张、统计条说 3 张"这种打架。
+  fill("olCharCnt", fmtNum(OL.charList.length));
   fill("olStatOutlines", fmtNum((OL.lib || {}).total || 0));
   fill("olStatLearning", fmtNum((((OL.meta || {}).learning) || {}).cases || 0));
 }
@@ -11988,16 +13175,13 @@ function olPaintPool() {
       box.innerHTML = olPlotRows(OL.autoPool, false);
       return;
     }
-    box.innerHTML = '<div class="blank">点下面的「看看会发出去什么」，'
-      + '这次<b>自动筛出</b>的那几条就会摆在这儿。<br><br>'
-      + '自动筛的规矩：先按<b>主类轮转</b>（每一类先挑一条，'
-      + '不让你最近的兴趣全挤在一两个类里），同类里让<b>参考次数少的先上</b>。'
-      + '次数少的优先只是"排队顺序"，不是硬规矩 —— '
-      + '提示词里写死了不许为了用新鲜零件而牺牲逻辑。</div>';
+    // 「看看会发出去什么」按钮删了之后，这一批是自动算的（见
+    // olRefreshSendSizeNow）。还没算出来时只报状态，不解释算法。
+    box.innerHTML = '<div class="blank">还没算出这次自动筛的零件。</div>';
     return;
   }
   if (!OL.plots.length) {
-    box.innerHTML = '<div class="blank">库里还没有「已确认」或「已编辑」的剧情零件。' +
+    box.innerHTML = '<div class="blank">库里还没有可用的剧情零件。' +
       '先去【剧情内化】确认几条再来。</div>';
     return;
   }
@@ -12083,12 +13267,9 @@ function olRefSizeValue() {
 function olPaintRef() {
   const on = !!olEl("olUseRef").checked;
   olEl("olRefSizeWrap").hidden = !on;
-  const note = olEl("olRefNote");
-  if (on) {
-    note.textContent = "从已合并、已生成摘要的素材组里挑";
-  } else {
-    note.textContent = "";
-  }
+  // 这里原来跟着一句「从已合并、已生成摘要的素材组里挑」，
+  // 2026-10-07 按折腰的要求删了（界面上不放解释文字）。
+  olEl("olRefNote").textContent = "";
 }
 
 /* ---------------- 大纲库 ---------------- */
@@ -12098,6 +13279,7 @@ async function olLoadLib() {
   OL.lib = { total: d.total || 0, items: d.items || [] };
   olPaintLib();
   olPaintStats();
+  olLoadRwLib();
 }
 
 function olPaintLib() {
@@ -12126,15 +13308,79 @@ function olPaintLib() {
     + '</div>'
     + '<div class="acts">'
     +   '<button class="mini primary" data-ollo="' + o.id + '">打开</button>'
+    // ★ 从大纲库也能交改写（折腰第 10 条："从大纲库晚些时候修改也能提交学习"）。
+    //   她要改的常常不是"刚生成的那一版"，而是**存进库以后又动了刀**的那一份。
+    //   带上 run_id，这样 AI 还是能找到当时那一版原稿来对照。
+    +   '<button class="mini" data-olrwwrite="' + o.id + '" data-run="'
+    +     (o.run_id || 0) + '" title="把你自己改完的整篇交进来，'
+    +     '让 AI 学你动了什么">我改了这一版</button>'
     +   '<button class="mini" data-ollocopy="' + o.id + '">复制全文</button>'
     +   '<button class="mini mddel" data-olldel="' + o.id + '">删除</button>'
     + '</div>'
     + '</div>').join("");
 }
 
+/* ---------------- 我的改写（她交过的所有成品）----------------
+
+   【为什么单独一块，而不是塞进大纲库列表】两件事不是一回事：
+   大纲库放的是"作品"，我的改写放的是"我那次动刀的记录"。
+   混在一起她会分不清"这个删掉会不会把大纲也删了"。 */
+async function olLoadRwLib() {
+  try {
+    const d = await api("/api/outline-rewrites?limit=100");
+    OL.rwLib = d.items || [];
+  } catch (e) { OL.rwLib = []; }
+  olPaintRwLib();
+}
+
+function olPaintRwLib() {
+  const box = olEl("olRwLib");
+  if (!box) return;
+  const items = OL.rwLib || [];
+  if (!items.length) {
+    box.innerHTML = '<div class="blank">还没交过。生成完一版大纲之后，'
+      + '在候选卡上点「我按这一版改了一版」，或者在上面的库里点'
+      + '「我改了这一版」，把你改完的整篇粘进来就行。</div>';
+    return;
+  }
+  // 状态 → 给她的说法（不写"status=已总结"这种内部词）
+  const stLab = { "待分析": "还没让 AI 看", "分析中": "AI 正在读",
+                  "已总结": "已读完", "失败": "这次没跑成" };
+  box.innerHTML = items.map(r => {
+    const n = Number(r.point_count || 0);
+    const liveN = Number(r.live_count || 0);
+    const st = stLab[r.status] || r.status || "";
+    const where = r.candidate_id
+      ? ("对着候选 #" + r.candidate_id)
+      : (r.run_id ? ("对着任务 #" + r.run_id) : "自己写的");
+    return '<div class="ollibi">'
+      + '<div class="grow">'
+      +   '<div class="t">' + esc(r.note || r.summary_text || "（这条没写备注）")
+      +   '</div>'
+      +   '<div class="m">'
+      +     '<span class="chip gray">' + esc(st) + '</span>'
+      +     (n ? '<span class="chip' + (liveN ? ' ok' : ' gray') + '">'
+              + n + ' 条建议' + (liveN ? ' · ' + liveN + ' 条生效' : '')
+              + '</span>'
+            : '')
+      +     '<span>' + esc(where) + '</span>'
+      +     '<span>' + fmtNum(r.chars || 0) + ' 字</span>'
+      +     '<span>' + esc((r.created_at || "").slice(0, 16)) + '</span>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="acts">'
+      +   '<button class="mini primary" data-olrwopen="' + r.id + '">打开</button>'
+      +   '<button class="mini mddel" data-olrwdel="' + r.id + '">删除</button>'
+      + '</div>'
+      + '</div>';
+  }).join("");
+}
+
 /* ---------------- 提交用的请求体 ---------------- */
 
-function olBody() {
+/* silent: 「会发出去多少字」那行是自动重算的，不能因为"手动选还没勾零件"
+   就弹一个提示出来 —— 她可能只是还在挑。静默模式下直接返回 null。 */
+function olBody(silent) {
   const b = {
     outline_type: ((OL.meta || {}).types || [])[0] || "同人短篇",
     worldview: (olEl("olWorld").value || "").trim(),
@@ -12144,7 +13390,7 @@ function olBody() {
     one_sentence_hook: (olEl("olHook").value || "").trim(),
     plot_design: (olEl("olDesign").value || "").trim(),
     target_words: Number(olEl("olWords").value || 0),
-    model_keys: Object.keys(OL.models).filter(k => OL.models[k]),
+    model_keys: OL.modelKey ? [OL.modelKey] : [],
     pool_size: olPoolSizeValue(),
     use_learning: !!olEl("olUseLearn").checked,
     reference_enabled: !!olEl("olUseRef").checked,
@@ -12153,7 +13399,9 @@ function olBody() {
   if (OL.poolMode === "manual") {
     const ids = Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number);
     if (!ids.length) {
-      toast("你选了「我手动选」，但一条零件都没勾。勾几条，或者切回「自动筛」。", true);
+      if (!silent) {
+        toast("你选了「我手动选」，但一条零件都没勾。勾几条，或者切回「自动筛」。", true);
+      }
       return null;
     }
     b.plot_ids = ids;
@@ -12162,126 +13410,39 @@ function olBody() {
   return Object.assign(b, pfPayload("outline", "olP"));
 }
 
-/* ---------------- 预览 ---------------- */
+/* ---------------- 会发出去多少字 ----------------
+   这一块原来是「看看会发出去什么」按钮 + 它点开的一整屏清单：
+   预期字数 / 世界观 / 角色卡 / 零件 / 没进来 / 分类素材 / 模型 /
+   会发出去多少字 / 拦住没发 / 学习参考 / 隐私说明，外加可展开的正文预览。
+   折腰 2026-10-07 的要求：「看看会发出去什么功能删掉，只写发送给大模型的
+   字数即可」。所以清单整块撤了，接口还照旧调 —— 它顺带把"自动筛出来的
+   那一批"算回前端（零件区要靠它显示），而 send_chars 就是她要的那一个数。
 
-async function olPreview() {
-  const body = olBody();
-  if (!body) return;
-  const btn = olEl("olPreviewBtn");
-  btn.disabled = true;
-  olEl("olPreview").innerHTML = '<div class="mdhint" style="flex:none">正在算…</div>';
+   按钮没了就只能自动算：那几个输入框一改就重算，debounce 900ms。
+   算不出来（网络/服务端错）就空着不写，别拿一句英文报错糊在她眼前 ——
+   真发不出去的时候，点「开始生成」会有明确提示。 */
+let olSendTimer = null;
+
+function olRefreshSendSize() {
+  clearTimeout(olSendTimer);
+  olSendTimer = setTimeout(olRefreshSendSizeNow, 900);
+}
+
+async function olRefreshSendSizeNow() {
+  const box = olEl("olSendNote");
+  if (!box) return;
+  const body = olBody(true);   // true = 静默：自动重算时不许弹提示
+  if (!body) { box.textContent = ""; return; }
   try {
     const pv = await post("/api/outlines/preview", body);
     // 自动模式下把"这次筛出来的那一批"摊到零件区 ——
     // 用的是服务端算的同一份，不是前端自己猜的
     OL.autoPool = (pv.plot_source === "auto") ? pv.plots : null;
     olPaintPool();
-    olPaintPreview(pv);
+    box.textContent = "会发出去 约 " + fmtNum(pv.send_chars) + " 字";
   } catch (e) {
-    olEl("olPreview").innerHTML = "";
-    toast(e.message, true);
-  } finally {
-    btn.disabled = false;
+    box.textContent = "";
   }
-}
-
-function olPaintPreview(pv) {
-  const box = olEl("olPreview");
-  const ps = pv.problems || [];
-  const bad = ps.filter(p => p.level !== "warn");
-  const tier = pv.tier || {};
-  let h = '<div class="olpv">';
-  h += '<div class="pvh">' + (bad.length ? "还差点东西" : "可以开始了")
-    + ' <span class="chip gray">提示词：'
-    + (pv.prompt_src === "file" ? "你自己那份" : "通用版")
-    + (pv.prompt_version ? " " + esc(pv.prompt_version) : "") + '</span>'
-    + (pv.prompt_warning ? ' <span class="chip warn">模板缺槽位，退回通用版</span>' : "")
-    + '</div>';
-  if (ps.length) {
-    h += '<ul class="warns">' + ps.map(p =>
-      '<li class="' + (p.level === "warn" ? "warn" : "bad") + '">'
-      + esc(p.message) + '</li>').join("") + '</ul>';
-  }
-  h += '<div class="kv"><b>预期字数</b><span>' + fmtNum(pv.target_words) + ' 字 · '
-    + esc(tier.label || "") + ' · 约 ' + ((tier.nodes || []).join("～")) + ' 段</span></div>';
-  h += '<div class="kv"><b>世界观</b><span>' + fmtNum(pv.worldview_chars) + ' 字'
-    + (pv.world_name ? "（" + esc(pv.world_name) + "）" : "") + '</span></div>';
-  h += '<div class="kv"><b>角色卡</b><span>'
-    + (pv.characters || []).map(c => esc(c.name) + "（填了 " + c.filled + "/"
-      + c.field_total + " 项）").join("、") + '</span></div>';
-  h += '<div class="kv"><b>零件</b><span>' + (pv.plots || []).length + ' 条（'
-    + (pv.plot_source === "manual" ? "你手动挑的" : "自动筛的") + '）'
-    + (pv.usable_total ? ' · 库里可用 ' + pv.usable_total + ' 条' : '')
-    + '</span></div>';
-  // 「想多参考一些」这件事必须在花钱之前能看见：
-  // 池子有上限，可用零件又比上限多的时候，剩下的那些这次不会被参考。
-  // 不报出来她只会觉得"AI 又没好好参考我的库"。
-  if (pv.plot_source !== "manual" && pv.usable_total > (pv.plots || []).length) {
-    h += '<div class="kv"><b>没进来</b><span>库里还有 '
-      + (pv.usable_total - (pv.plots || []).length) + ' 条可用零件这次没进池子'
-      + '（一次参考上限 ' + pv.pool_max + ' 条，'
-      + '把左边的「一次参考 N 条」调大可以多带一些）</span></div>';
-  }
-  // 卡在状态上的零件要**连名字一起摊开**：只报一个数，
-  // 她还得自己回【剧情内化】翻是哪几条 —— 报名字她才认得出。
-  if ((pv.stuck_plots || []).length) {
-    const sp = pv.stuck_plots;
-    h += '<div class="kv"><b>卡在状态上</b><span>'
-      + sp.slice(0, 8).map(x => esc(x.title || "（没起名字）")
-                          + "（" + esc(x.status || "?") + "）").join("、")
-      + (sp.length > 8 ? " 等 " + sp.length + " 条" : "")
-      + '</span></div>';
-  }
-  // ---- 分类素材参考（开了才显示；显示的是按一句话梗粗筛的预计值）----
-  if (pv.reference_enabled) {
-    const rc = pv.reference_cards || [];
-    h += '<div class="kv"><b>分类素材</b><span>'
-      + (rc.length
-          ? '预计参考 ' + rc.length + ' 条摘要'
-            + '（上限 ' + pv.reference_limit + '，实际以规划后按节点需求检索的为准）'
-          : '开着，但库里还没有可参考的素材 ——'
-            + '去【素材分类】合并逻辑素材组并点「生成摘要」')
-      + '</span></div>';
-    if (rc.length) {
-      h += '<div class="kv"><b>素材清单</b><span>'
-        + rc.slice(0, 6).map(x =>
-            '#' + x.ref_card_id
-            + (x.category_name ? '（' + esc(x.category_name) + '）' : ''))
-          .join('、')
-        + (rc.length > 6 ? ' 等 ' + rc.length + ' 条' : '')
-        + '</span></div>';
-    }
-  }
-  h += '<div class="kv"><b>模型</b><span>'
-    /* 真模型名要写出来（见 modelOptName）。她 2026-09-29 的要求：
-       「所有能选择模型的地方都标上是哪个模型而不是一个笼统的平台名」。
-       这一屏就是"发给谁"的交代，只写中文标签等于没交代。 */
-    + (pv.models || []).map(m => esc(modelOptName(m))
-      + (m.usable ? "" : '（用不了' + (m.reason ? "：" + esc(m.reason) : "") + '）')
-    ).join("、") + '</span></div>';
-  h += '<div class="kv"><b>会发出去</b><span>约 ' + fmtNum(pv.send_chars)
-    + ' 字</span></div>';
-  if ((pv.blocked_plots || []).length) {
-    h += '<div class="kv"><b>拦住没发</b><span>'
-      + pv.blocked_plots.map(p => esc(p.title)).join("、")
-      + '（来自标了「仅本地」的素材）</span></div>';
-  }
-  if (pv.learning_cases) {
-    h += '<div class="kv"><b>学习参考</b><span>' + pv.learning_cases
-      + ' 条你标过的「不可用」</span></div>';
-  }
-  h += '<div class="pvnote">' + esc(pv.privacy || "") + '</div>';
-  h += '<div class="olrow"><button class="mini" id="olPvMsg">展开要发出去的正文</button>'
-    + '<span class="mdhint" style="flex:1 1 auto">这一屏只是说明，'
-    + '还没有花一分钱。</span></div>';
-  h += '<pre id="olPvPre" hidden>' + esc(pv.messages_preview || "") + '</pre>';
-  h += '</div>';
-  box.innerHTML = h;
-  olEl("olPvMsg").onclick = () => {
-    const pre = olEl("olPvPre");
-    pre.hidden = !pre.hidden;
-    olEl("olPvMsg").textContent = pre.hidden ? "展开要发出去的正文" : "收起正文";
-  };
 }
 
 /* ---------------- 生成与轮询 ---------------- */
@@ -12479,15 +13640,11 @@ function olPaintRuns() {
   const box = olEl("olRuns");
   if (!OL.runs.length) { box.innerHTML = ""; return; }
   const finished = OL.runs.filter(r => !olIsActive(r.status)).length;
-  let h = '<div class="olsec"><h3>生成任务</h3>' +
-    '<div class="mdhint">可以切去看别的页，回来进度还是新的 —— ' +
-    '任务在服务端跑，不是挂在这个页面上。</div>';
+  let h = '<div class="olsec"><h3>生成任务</h3>';
   // 历史堆得多了她嫌乱。给一个"清掉已结束的"，正在跑的不动。
   if (finished) {
     h += '<div class="olrow"><button class="mini" data-olact="clear" data-id="0">'
-      + '清掉已结束的任务</button>'
-      + '<span class="mdhint" style="flex:1 1 auto">'
-      + '正在跑的那个不会被清掉；已经推进大纲库的大纲也不受影响。</span></div>';
+      + '清掉已结束的任务</button></div>';
   }
   OL.runs.forEach(run => {
     const total = run.total_models || 0;
@@ -12636,6 +13793,12 @@ function olCandCard(c) {
   if (c.status === "已完成") {
     acts = '<button class="mini primary" data-olcand="' + c.id + '" data-run="'
       + c.run_id + '">把这一版做成大纲</button>';
+    // 折腰 2026-10-08：她常拿 AI 这版当蓝本改写，或者不满意就自己重写。
+    // 这个按钮就是那条路的入口 —— 交一整份成品进来，让 AI 学她的改法。
+    // 刻意放在「把这一版做成大纲」**旁边**：两件事是同一个岔路口的两条路
+    // （照着它改 / 在页面上改），摆一起她才选得清。
+    acts += '<button class="mini" data-olrw="' + c.id + '" data-run="'
+      + c.run_id + '">我按这一版改了一版</button>';
   }
   return '<div class="olcand' + (c.adopted ? " on" : "") + '">' + ch
     + '<div class="cb">' + body + '</div>'
@@ -12910,8 +14073,7 @@ function olPaintNodes() {
   }
   if (OL.editing) {
     h += '<div class="olrow"><button class="mini primary" data-oln="add" data-i="-1">'
-      + '＋ 加一段</button><span class="mdhint">加出来的是空段，'
-      + '自己写。改完记得点最上面的「保存改动」。</span></div>';
+      + '＋ 加一段</button></div>';
   }
   box.innerHTML = h;
   // 收起 / 展开：把每个节点里除标题行以外的部分藏掉。
@@ -12973,13 +14135,565 @@ function olPaintDiff() {
     + "<ul>" + L.map(x => "<li>" + x + "</li>").join("") + "</ul></div>";
 }
 
+/* ======================================================================
+   改写对比：我按这一版改了一版
+   ======================================================================
+   折腰 2026-10-08：「我会根据生成的大纲为蓝本，或大纲实在不满意，我就会
+   自己写，我想让 AI 对比它跟我的大纲不断学习，但不想一个个在页面上修改。」
+
+   所以这里**不做一个字段一个字段的编辑界面**。她粘一整份进来，
+   AI 读完给出「她怎么写」的规律，那些规律进以后的生成提示词。
+
+   三个状态一个对象管，别散到 DOM 上猜：
+     RW.work  当前正在编辑的那条（还没存 / 刚存的）
+     RW.rec   服务端存着的那条（有 id、有差异、有结论）
+   为什么要分两个：她改到一半关掉弹层，不该把没保存的东西
+   顺手变成服务端的一条记录。
+   ====================================================================== */
+const RW = {
+  work: null,     // {candidate_id, run_id, user_text, source, note}
+  rec: null,      // 服务端返回的那一条（含 diff / status）
+  cand: null,     // 对比用的那一版 AI 原稿（只用来显示，不参与提交）
+  // ★ 阶段一D：建议是**单独一张表**里的，不在 rec 上。
+  //   分开的理由：一条改写记录有 N 条建议，界面要逐条给按钮，
+  //   塞进 rec.points 会跟"记录整体"混成一坨。
+  points: [],
+  // 三个轴的取值 → 中文标签。**只有后端一个来源**（接口响应里下发），
+  // 前端绝不写死"长期偏好/情境适用/仅本篇"这几个词
+  // —— 写死了以后后端加档位，界面就静默显示不准。
+  scopeLabels: {},
+  confLabels: {},
+  live_rule: "",
+  busy: false
+};
+
+function rwEl(id) { return document.getElementById(id); }
+
+/* 打开弹层。参数有两种来源：
+     · 候选卡点进来：给 {id, run_id, model_name, ...} —— "对着哪一版候选"
+     · 大纲库点进来：给 {outline: {...}}        —— "对着哪一版大纲"
+   两种都要能定位"AI 原稿是哪一份"，这是这一条记录以后能追溯的锚点。
+
+   【为什么要多这一条支路】以前只有候选卡一个入口。生成任务被她清掉
+   之后，她之前交过的改写记录就**再也找不到了** —— 而记录本身还在库里。
+   折腰第 10 条要求"从大纲库晚些时候修改也能提交学习"，指的就是这条。 */
+function olOpenRewrite(cand, runId) {
+  // 归一：大纲库那条支路把 outline 包在对象里传进来。
+  // ★ 库里的大纲给的是 `id`（不是 `outline_id`）—— 这里用"有没有 outline
+  //   这个包"来判断来源，比认字段名可靠：字段名是后端内部的事，
+  //   哪天换个返回形状，这里就会静默走错支路（实测踩过一次）。
+  let src = cand || null;
+  const isOutline = !!(src && src.outline);
+  if (isOutline) src = src.outline;
+  const candId = (src && !isOutline) ? (src.id || 0) : 0;
+  const outlineId = isOutline ? (src.id || 0) : 0;
+  RW.work = {
+    candidate_id: candId,
+    outline_id: outlineId,
+    run_id: runId || (src ? (src.run_id || 0) : 0) || 0,
+    model_name: src ? (src.model_name || src.model_key || "") : "",
+    user_text: "",
+    source: "adopted",
+    note: ""
+  };
+  RW.rec = null;
+  RW.cand = src || null;
+  RW.points = [];
+  RW.busy = false;
+
+  rwEl("olrwSub").textContent = candId
+    ? ("对着 " + ((src && (src.model_name || src.model_key)) || "那一版")
+       + "。你把改完的整篇粘进来就行。")
+    : (isOutline
+       ? ("对着大纲库里《" + (src.title || "没起标题")
+          + "》这一版。你把改完的整篇粘进来就行。")
+       : "没挂任何 AI 原稿 —— 这份是你完全自己写的。");
+  rwEl("olrwText").value = "";
+  rwEl("olrwNote").value = "";
+  rwEl("olrwSource").value = "adopted";
+  rwEl("olrwCnt").textContent = "0 字";
+  rwEl("olrwDiffBox").innerHTML = "";
+  rwEl("olrwResult").innerHTML = "";
+  rwEl("olrwState").textContent = "";
+  rwEl("olrwAnalyze").hidden = true;
+  rwEl("olrwDel").hidden = true;
+  // 锚点（选填）只在真挂着 AI 原稿/show 时才画 —— 两端都不挂时它没意义。
+  const hasAnchor = candId || outlineId || RW.work.run_id;
+  rwEl("olrwSource").parentElement.style.display = hasAnchor ? "" : "none";
+  rwPaintHead();
+  show("mkOlRw");
+  const c = document.querySelector("#mkOlRw .content");
+  if (c) c.scrollTop = 0;
+}
+
+function rwPaintHead() {
+  const box = rwEl("olrwHead");
+  if (!box) return;
+  if (RW.rec) {
+    // 已经存过了：这一条是什么、什么时候交的
+    const r = RW.rec;
+    box.innerHTML = '<div class="oldiff"><b>这一条已经存下了。</b>'
+      + '<br>交了 ' + fmtNum(r.chars || 0) + ' 字'
+      + ' · ' + esc((r.created_at || "").slice(0, 16))
+      + (r.note ? ' · 备注：' + esc(r.note) : "")
+      + '</div>';
+  } else {
+    box.innerHTML = "";
+  }
+}
+
+/* 字数跟着输入走。**不加防抖** —— 这里只是数自己的字，
+   不发请求、不花钱，实时反馈反而更让人放心。 */
+function rwCount() {
+  const t = rwEl("olrwText").value || "";
+  rwEl("olrwCnt").textContent = fmtNum(t.replace(/\s/g, "").length) + " 字";
+}
+
+/* 把"程序认出来的差异"画出来。
+   跟大纲详情页那份差异**同一套渲染**（复用 .oldiff 的样式），
+   因为她看的是同一件事。这里多一句"仅供参考"——
+   按文本认段会出错，不说清楚她会把认错的地方当成事实。 */
+function rwPaintDiff(d) {
+  const box = rwEl("olrwDiffBox");
+  if (!box) return;
+  if (!d || !d.by_text) {
+    box.innerHTML = RW.cand
+      ? '<div class="oldiff">还没算出差异。存下来之后就有了。</div>'
+      : '<div class="oldiff">这份没挂 AI 原稿，没有可比对的差异。'
+        + 'AI 会读你这一份本身。</div>';
+    return;
+  }
+  if (!d.changed) {
+    box.innerHTML = '<div class="oldiff"><b class="same">'
+      + '跟那一版几乎一样。</b><br>（不是你没改 —— 是这一次真的没怎么动。）'
+      + '</div>';
+    return;
+  }
+  const L = [];
+  if (d.nodes_before != null) {
+    L.push("段落：" + fmtNum(d.nodes_before) + " 段 → " + fmtNum(d.nodes_after) + " 段");
+  }
+  if ((d.removed_nodes || []).length) {
+    L.push("删掉了 " + d.removed_nodes.length + " 段："
+      + d.removed_nodes.map(n => esc(n.node_title || n.node_id)).join("、"));
+  }
+  if ((d.added_nodes || []).length) {
+    L.push("加了 " + d.added_nodes.length + " 段："
+      + d.added_nodes.map(n => esc(n.node_title || n.node_id)).join("、"));
+  }
+  if ((d.changed_nodes || []).length) {
+    L.push("改了 " + d.changed_nodes.length + " 段："
+      + d.changed_nodes.map(n => esc(n.node_title || n.node_id)
+        + "（像 " + Math.round((n.similarity || 0) * 100) + "%）").join("；"));
+  }
+  if (d.reordered) L.push("段落的先后顺序变了。");
+  L.push("字数：" + fmtNum(d.words_before || 0) + " → " + fmtNum(d.words_after || 0));
+  box.innerHTML = '<div class="oldiff"><b>跟那一版比，你动了这些：</b>'
+    + "<ul>" + L.map(x => "<li>" + x + "</li>").join("") + "</ul>"
+    + '<div style="margin-top:6px;color:var(--ink-3)">'
+    + '这几行是程序按段落顺序自动认的，你改动大的时候它可能认错。'
+    + '以 AI 读过全文之后的结论为准。</div></div>';
+}
+
+/* AI 的结论。**每条建议一个独立的审核区** ——
+   折腰第 1 条：确认状态 / 使用状态 / 适用范围是三个分开的决定，
+   不能塞进一个下拉框。第 10 条要求她能亲自走：
+   接受一条、拒绝一条、把一条限制为仅本篇、停用一条。 */
+function rwPaintResult() {
+  const box = rwEl("olrwResult");
+  if (!box || !RW.rec) { box && (box.innerHTML = ""); return; }
+  const r = RW.rec;
+  const head = '<div class="olsec"><h3>AI 总结出的改写取向</h3>';
+
+  if (r.status === "分析中") {
+    box.innerHTML = head + '<div class="oldiff">正在读这两份……'
+      + '跑完这里会自己出现结论。</div></div>';
+    return;
+  }
+  if (r.status === "失败") {
+    box.innerHTML = head + '<div class="oldiff" style="color:var(--danger)">'
+      + esc(r.error || "这次没跑成。") + '</div>'
+      + '<div class="olrow" style="margin-top:8px"><span class="grow"></span>'
+      + '<button class="mini" id="olrwRetry">再试一次</button></div></div>';
+    const rb = rwEl("olrwRetry");
+    if (rb) rb.onclick = () => rwAnalyze(true);
+    return;
+  }
+  const pts = (RW.points && RW.points.length) ? RW.points : (r.points || []);
+  if (r.status !== "已总结" || !pts.length) {
+    box.innerHTML = head + '<div class="oldiff">'
+      + (r.status === "已总结"
+         ? 'AI读完了，说这一次没看出明显的改写规律 —— 这种情况是有的，'
+           + '两份差别太小时它不会硬凑。'
+         : '还没让 AI 看。点上面的「让 AI 看看我改了什么」。')
+      + '</div></div>';
+    return;
+  }
+
+  let h = head + '<div class="olrow"><span class="grow"></span>'
+    + '<button class="mini" id="olrwBulkOff">全部标为停用</button>'
+    + '<button class="mini" id="olrwBulkReopen">全部打回待确认</button>'
+    + '</div>';
+  if (r.summary) {
+    h += '<div class="oldiff"><b>' + esc(r.summary) + '</b></div>';
+  }
+  h += '<div class="mdhint" style="margin:6px 0">'
+    + esc(RW.live_rule || "")
+    + '　—— 三条都对上才会进生成。</div>';
+  const liveN = pts.filter(p => p.live).length;
+  h += '<div class="mdhint">这 ' + pts.length + ' 条里，现在有 '
+    + liveN + ' 条会进生成。</div>';
+  h += pts.map((p, i) => rwPointCard(p, i)).join("");
+  h += '</div>';
+  box.innerHTML = h;
+  rwBindPoints();
+}
+
+/* 一条建议的完整卡片 —— 三个轴各一组按钮，互不影响。
+   ★ 每次动作**只改它自己那个轴**：她说"停用"不会顺手把审核状态也改了。 */
+function rwPointCard(p, i) {
+  const live = !!p.live;
+  const scope = p.scope || "this";
+  const scopeLab = RW.scopeLabels[scope] || scope;
+  const confLab = RW.confLabels[p.confidence] || "";
+  const kind = p.kind ? '<span class="chip gray">' + esc(p.kind) + '</span> ' : "";
+  // 状态判据只有一处：后端给的 live。
+  const badge = live
+    ? '<span class="chip green">生效中</span>'
+    : '<span class="chip">不生效</span>';
+  let body = "";
+  // 8 项证据：有内容才显示，空的一律不出（免得一排"（空）"）
+  if (p.problem) {
+    body += '<div class="m"><span>原稿的问题：' + esc(p.problem) + '</span></div>';
+  }
+  if (p.change) {
+    body += '<div class="m"><span>她改成了：' + esc(p.change) + '</span></div>';
+  }
+  if (p.evidence) {
+    body += '<div class="m"><span>证据：' + esc(p.evidence) + '</span></div>';
+  }
+  if (p.improved) {
+    body += '<div class="m"><span>改善：' + esc(p.improved) + '</span></div>';
+  }
+  if (p.method || p.how) {
+    body += '<div class="m"><span>怎么做：' + esc(p.method || p.how) + '</span></div>';
+  }
+  if (p.applies_when) {
+    body += '<div class="m"><span>适用：' + esc(p.applies_when) + '</span></div>';
+  }
+  if (p.not_when) {
+    body += '<div class="m"><span>不适用：' + esc(p.not_when) + '</span></div>';
+  }
+  if (p.uncertain) {
+    body += '<div class="m warnline"><span>它自己也拿不准：'
+      + esc(p.uncertain) + '</span></div>';
+  }
+  if (p.user_suggest) {
+    body += '<div class="m"><span>你改过的说法：' + esc(p.user_suggest) + '</span></div>';
+  }
+  if (p.user_note) {
+    body += '<div class="m"><span>你的说明：' + esc(p.user_note) + '</span></div>';
+  }
+  // 三个轴，各一个按钮组。用 data 属性，一个委托 handler 全接住。
+  const b = (act, val, label, on, title) =>
+    '<button class="mini' + (on ? " on" : "") + '" data-rwp="' + p.id
+    + '" data-act="' + act + '"' + (val ? ' data-val="' + val + '"' : "")
+    + (title ? ' title="' + esc(title) + '"' : "") + '>' + esc(label) + '</button>';
+  const reviewBtns = b("accept", "", "接受", p.review === "已接受")
+    + b("accept_edited", "", "改后接受", false)
+    + b("reject", "", "拒绝", p.review === "已拒绝")
+    + (p.review !== "待确认" ? b("reopen", "", "打回待确认", false) : "");
+  const scopeBtns = ["long", "case", "this"].map(v =>
+    b("set_scope", v, RW.scopeLabels[v] || v, scope === v)).join("");
+  const activeBtns = p.active === "启用"
+    ? b("disable", "", "停用", false)
+    : b("enable", "", "启用", false);
+  return '<div class="ollibi col' + (live ? " live" : "") + '">'
+    + '<div class="grow">'
+    +   '<div class="t">' + kind + esc(p.point || "") + ' ' + badge
+    +   (confLab ? ' <span class="chip gray">' + esc(confLab) + '</span>' : "")
+    +   ' <span class="chip gray">' + esc(scopeLab) + '</span></div>'
+    +   body
+    +   '<div class="olrow wrap" style="margin-top:6px">'
+    +     '<span class="mdhint">审核</span>' + reviewBtns
+    +     '<span class="mdhint" style="margin-left:6px">用在哪</span>' + scopeBtns
+    +     '<span class="mdhint" style="margin-left:6px">使用</span>' + activeBtns
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function rwBindPoints() {
+  const box = rwEl("olrwResult");
+  if (!box) return;
+  const off = rwEl("olrwBulkOff");
+  if (off) off.onclick = () => rwBulk("disable");
+  const re = rwEl("olrwBulkReopen");
+  if (re) re.onclick = () => rwBulk("reopen");
+  box.querySelectorAll("[data-rwp]").forEach(btn => {
+    btn.onclick = () => rwAct(btn);
+  });
+}
+
+/* 一条建议上的三个轴，各走各的动作。 */
+async function rwAct(btn) {
+  const pid = Number(btn.dataset.rwp);
+  const act = btn.dataset.act;
+  const val = btn.dataset.val || undefined;
+  if (act === "accept_edited") {
+    const cur = (RW.points || []).find(x => x.id === pid) || {};
+    const s = prompt("把它改成你想说的那句话（以后生成按你这条来）：",
+                     cur.user_suggest || cur.point || "");
+    if (s === null) return;
+    if (!s.trim()) { toast("没写内容，没改。"); return; }
+    return rwSendPoint(pid, act, { suggest: s.trim() });
+  }
+  return rwSendPoint(pid, act, val ? { scope: val } : {});
+}
+
+async function rwSendPoint(pid, action, extra) {
+  try {
+    const body = Object.assign({ action: action }, extra || {});
+    const d = await post("/api/outline-rewrite-points/" + pid + "/review", body);
+    RW.points = (RW.points || []).map(p => p.id === pid ? d.point : p);
+    rwPaintResult();
+    // ★ 回话按动作说清楚"现在到底生效没有"，不能让她以为点了就生效
+    toast(d.message || "记下了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function rwBulk(action) {
+  if (!RW.rec) return;
+  if (action === "reopen"
+      && !confirm("把这一批全部打回「待确认」？打回之后它们都不再生效。")) return;
+  if (action === "disable"
+      && !confirm("把这一批全部标为「停用」？停用之后它们都不再生效。")) return;
+  try {
+    const d = await post("/api/outline-rewrites/" + RW.rec.id + "/points/bulk",
+                         { action: action });
+    RW.points = d.items || [];
+    rwPaintResult();
+    toast(d.message || "处理好了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 存。存完把那一条拿回来 —— 差异是服务端算的，
+   前端不自己再算一份（两处各算一份迟早对不上）。 */
+async function rwSave() {
+  if (RW.busy) return;
+  const txt = (rwEl("olrwText").value || "").trim();
+  if (!txt) { toast("先把你的成品大纲粘进来。", true); return; }
+  RW.busy = true;
+  rwEl("olrwState").textContent = "存中…";
+  try {
+    const body = {
+      user_text: txt,
+      candidate_id: RW.work.candidate_id || undefined,
+      outline_id: RW.work.outline_id || undefined,
+      run_id: RW.work.run_id || undefined,
+      source: rwEl("olrwSource").value,
+      note: (rwEl("olrwNote").value || "").trim()
+    };
+    const d = await post("/api/outline-rewrites", body);
+    RW.rec = d.rewrite;
+    RW.points = [];
+    rwEl("olrwState").textContent = "";
+    rwEl("olrwAnalyze").hidden = false;
+    rwEl("olrwAnalyze").textContent = "让 AI 看看我改了什么";
+    rwEl("olrwDel").hidden = false;
+    rwPaintHead();
+    rwPaintDiff(RW.rec.diff);
+    rwPaintResult();
+    if (typeof olPaintStats === "function") olPaintStats();
+    toast(d.message || "收下了。");
+  } catch (e) {
+    rwEl("olrwState").textContent = "";
+    toast(e.message, true);
+  } finally {
+    RW.busy = false;
+  }
+}
+
+/* 让 AI 读一遍。后台跑，所以这里要**轮询** ——
+   不轮询的话她只能自己关掉再打开，那叫"没做完"。 */
+async function rwAnalyze(force) {
+  if (!RW.rec) { toast("先点「存下来」。", true); return; }
+  if (RW.rec.status === "分析中") return;
+  if (force && !confirm("再让 AI 读一遍？这会重新花一次模型的钱。")) return;
+  try {
+    await post("/api/outline-rewrites/" + RW.rec.id + "/analyze", {});
+    RW.rec.status = "分析中";
+    rwPaintResult();
+    rwEl("olrwAnalyze").hidden = true;
+    rwPollAnalyze(0);
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 拉这条改写记录下的建议 + 三个轴的中文标签。
+   标签**从接口拿**：后端加了新的适用范围，界面自动跟上，
+   前端不写死那几个中文词（写死了就会出现"库里是新档位、
+   界面还显示旧词"这种静默不一致）。 */
+async function rwLoadPoints() {
+  if (!RW.rec) return;
+  try {
+    const d = await api("/api/outline-rewrites/" + RW.rec.id + "/points");
+    RW.points = d.items || [];
+    RW.live_rule = d.live_rule || "";
+    (d.scope_options || []).forEach(o => { RW.scopeLabels[o.value] = o.label; });
+    (d.confidence_options || []).forEach(o => { RW.confLabels[o.value] = o.label; });
+  } catch (e) {
+    RW.points = [];
+  }
+}
+
+/* 等结果。每 3 秒问一次，最多问 100 次（5 分钟）——
+   超时就停下并说清楚，不无限转圈。 */
+async function rwPollAnalyze(n) {
+  if (!RW.rec) return;
+  if (n > 100) {
+    RW.rec.status = "失败";
+    RW.rec.error = "等了五分多钟还没出结果。可能模型那边卡住了，"
+      + "可以再点一次「让 AI 看看我改了什么」。";
+    rwPaintResult();
+    return;
+  }
+  try {
+    const d = await api("/api/outline-rewrites/" + RW.rec.id);
+    if (d.rewrite && d.rewrite.status !== "分析中") {
+      RW.rec = d.rewrite;
+      await rwLoadPoints();
+      rwPaintResult();
+      rwEl("olrwAnalyze").hidden = false;
+      rwEl("olrwAnalyze").textContent = "重新看一遍";
+      if (RW.rec.status === "已总结") {
+        toast("AI 总结好了，看下面。");
+      } else if (RW.rec.status === "失败") {
+        toast(RW.rec.error || "这次没跑成。", true);
+      }
+      if (typeof olPaintStats === "function") olPaintStats();
+      return;
+    }
+  } catch (e) { /* 网络抖一下不该中断等待，下一轮继续问 */ }
+  setTimeout(() => rwPollAnalyze(n + 1), 3000);
+}
+
+async function rwDelete() {
+  if (!RW.rec) return;
+  try {
+    const d = await send("/api/outline-rewrites/" + RW.rec.id, "DELETE", {});
+    RW.rec = null;
+    RW.points = [];
+    rwEl("olrwAnalyze").hidden = true;
+    rwEl("olrwDel").hidden = true;
+    rwEl("olrwDiffBox").innerHTML = "";
+    rwEl("olrwResult").innerHTML = "";
+    rwPaintHead();
+    if (typeof olPaintStats === "function") olPaintStats();
+    if (typeof olLoadRwLib === "function") olLoadRwLib();
+    toast(d.message || "删掉了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 打开一条**以前交过**的改写记录（从"我的改写"列表点进来）。
+   跟新交一份走的是同一个弹层，区别只是 RW.rec 一上来就有值 ——
+   所以逐条确认区、差异块、重跑分析按钮全都现成。 */
+async function rwOpenSaved(rid) {
+  try {
+    const d = await api("/api/outline-rewrites/" + rid);
+    RW.rec = d.rewrite;
+    RW.cand = null;
+    RW.work = { candidate_id: RW.rec.candidate_id || 0,
+                outline_id: RW.rec.outline_id || 0,
+                run_id: RW.rec.run_id || 0,
+                model_name: RW.rec.model_name || "",
+                user_text: "", source: RW.rec.source || "adopted", note: "" };
+    RW.points = [];
+    RW.busy = false;
+    rwEl("olrwText").value = RW.rec.user_text || "";
+    rwEl("olrwNote").value = RW.rec.note || "";
+    rwEl("olrwSource").value = RW.rec.source || "adopted";
+    rwCount();
+    rwEl("olrwState").textContent = "";
+    // 交过之后：能重新让 AI 读、能看差异、也能删
+    rwEl("olrwAnalyze").hidden = false;
+    rwEl("olrwAnalyze").textContent = "再让 AI 读一遍";
+    rwEl("olrwDel").hidden = false;
+    const hasAnchor = RW.work.candidate_id || RW.work.outline_id
+                      || RW.work.run_id;
+    rwEl("olrwSource").parentElement.style.display = hasAnchor ? "" : "none";
+    const where = RW.rec.outline_id
+      ? ("对着大纲库 #" + RW.rec.outline_id + " 那一版")
+      : (RW.rec.candidate_id
+         ? ("对着候选 #" + RW.rec.candidate_id)
+         : "这一份是你自己写的");
+    rwEl("olrwSub").textContent = where
+      + "。这一条是 " + String(RW.rec.created_at || "").slice(0, 16) + " 交的。";
+    await rwLoadPoints();
+    rwPaintHead();
+    rwPaintDiff(RW.rec.diff);
+    rwPaintResult();
+    show("mkOlRw");
+    const c = document.querySelector("#mkOlRw .content");
+    if (c) c.scrollTop = 0;
+  } catch (e) { toast(e.message, true); }
+}
+
+function rwBind() {
+  const t = rwEl("olrwText");
+  if (!t) return;
+  t.oninput = rwCount;
+  rwEl("olrwSave").onclick = rwSave;
+  rwEl("olrwAnalyze").onclick = rwAnalyze;
+  rwEl("olrwDel").onclick = rwDelete;
+  rwEl("olrwRead").onclick = () => rwEl("olrwFile").click();
+  rwEl("olrwFile").onchange = async () => {
+    const f = rwEl("olrwFile").files[0];
+    if (!f) return;
+    const btn = rwEl("olrwRead");
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      // 跟世界观那个读文件走同一个接口（后端那套解析器认 txt/md/docx/pdf）。
+      // 上限跟后端 REWRITE_TEXT_MAX 对齐，超了会被后端挡下来（报错不静默截断）。
+      const r = await api("/api/worldview-read", { method: "POST", body: fd });
+      rwEl("olrwText").value = r.text || "";
+      rwCount();
+      toast("读进来了 " + fmtNum(r.chars || (r.text || "").length) + " 字。");
+    } catch (e) {
+      toast("读不了这个文件：" + e.message, true);
+    } finally {
+      btn.disabled = false;
+      rwEl("olrwFile").value = "";
+    }
+  };
+  rwBindCand();
+}
+
+/* 候选卡上那个「我按这一版改了一版」的按钮是**动态画出来的** ——
+   候选卡每刷新一次就重建一遍，所以事件不能绑在具体节点上，
+   得挂在容器上做委托（跟这页其它表格/列表一个路子）。 */
+function rwBindCand() {
+  const runs = olEl("olRuns");
+  if (!runs || runs.dataset.rwBound) return;
+  runs.dataset.rwBound = "1";
+  runs.addEventListener("click", ev => {
+    const btn = ev.target.closest("[data-olrw]");
+    if (!btn) return;
+    ev.preventDefault();
+    const cid = Number(btn.dataset.olrw);
+    const runId = Number(btn.dataset.run || 0);
+    const c = OL.candData[cid];
+    olOpenRewrite(c ? { id: cid, run_id: runId, model_name: c.model_name,
+                        model_key: c.model_key } : { id: cid, run_id: runId });
+  });
+}
+
 function olPaintFbs() {
   const box = olEl("oloFbs");
   const list = (OL.fbs || []).filter(f => f.kind === "node_unusable");
   if (!list.length) {
-    box.innerHTML = '<div class="mdhint" style="flex:none">还没标过。'
-      + '哪一段不合适，就在那一段上点「这一段不行」—— '
-      + '标了就留着痕，以后能让下一次生成避开同样的坑（得你勾上才算）。</div>';
+    box.innerHTML = '<div class="mdhint" style="flex:none">还没标过。</div>';
     return;
   }
   box.innerHTML = list.map(f =>
@@ -12999,16 +14713,12 @@ function olPaintFbs() {
     '</div>').join("");
 }
 
-/* 全文那一块：只有存过才有（服务端渲染好的那份）。
-   刚推入、还没保存时留空，并说清楚为什么。 */
+/* 全文那一块：只有存过才有（服务端渲染好的那份），没存过就整块空着。
+   原来这里跟着一句"保存之后才会出现一份可直接复制的全文"，
+   2026-10-07 按折腰的要求删了（界面上不放解释文字）。 */
 function olPaintText() {
-  const w = OL.work;
   const box = olEl("oloTextWrap");
-  box.innerHTML = w.outline_id
-    ? ""
-    : '<div class="mdhint" style="flex:none;margin-top:8px">' +
-      '保存之后这里会出现一份可直接复制的全文（服务端渲染的，' +
-      '跟你屏幕上这份一致）。</div>';
+  box.innerHTML = "";
 }
 
 /* ---------------- 编辑动作 ---------------- */
@@ -13417,9 +15127,9 @@ function olCharForm(c) {
   olEl("olcDel").hidden = !c;
   olEl("olcDel").dataset.id = c ? c.id : "";
   olEl("olcSave").dataset.id = c ? c.id : "";
-  olEl("olcNote").textContent = c
-    ? "改完不会影响已经保存过的大纲（它们存的是当时的快照）。"
-    : "";
+  // 原来这里写「改完不会影响已经保存过的大纲（存的是快照）」——
+  // 2026-10-07 按折腰的要求删了。行为没变，只是不写了。
+  olEl("olcNote").textContent = "";
   olEl("olcForm").hidden = false;
   olEl("olcBar").hidden = true;
   setTimeout(() => olEl("olcName").focus(), 30);
@@ -13503,13 +15213,16 @@ olEl("olWorldSave").onclick = () => {
   show("mkOlWorld");
   setTimeout(() => olEl("olwName").focus(), 30);
 };
-olEl("olCharBtn").onclick = () => {
+/* 头部的【人设卡】：去人设卡页（能搜、能看统计、能停用）。
+   表单那行的「＋ 关联角色卡」才是"挑几张这次用"的弹层 ——
+   两个动作分开，别让同一个按钮既管卡又挑卡。 */
+olEl("olCharBtn").onclick = () => goView("persona");
+olEl("olCharAdd").onclick = () => {
   olEl("olcForm").hidden = true;
   olEl("olcBar").hidden = false;
   olPaintCharList();
   show("mkOlChar");
 };
-olEl("olCharAdd").onclick = olEl("olCharBtn").onclick;
 // 补充提示词那一块就在这一页上，不用弹层 —— 点这个按钮把它滚到眼前
 olEl("olPromptBtn").onclick = () => {
   const box = olEl("olPNote");
@@ -13552,7 +15265,6 @@ olEl("olWipeText").onclick = () => {
   toast("已清空，重新填就行");
 };
 olEl("olWorld").onchange = olPaintWorldCnt;
-olEl("olWords").oninput = olPaintTier;
 olEl("olWorldRead").onclick = () => olEl("olWorldFile").click();
 olEl("olWorldFile").onchange = async () => {
   const f = olEl("olWorldFile").files[0];
@@ -13607,7 +15319,6 @@ olEl("olPool").onclick = e => {
   olPaintPoolNote();
 };
 
-olEl("olPreviewBtn").onclick = olPreview;
 olEl("olGo").onclick = olGo;
 
 /* 任务区与大纲库区都用委托：这两个容器里的东西是 innerHTML 画出来的，
@@ -13672,6 +15383,17 @@ olEl("olLib").onclick = async e => {
     } catch (e2) { toast(e2.message, true); }
     return;
   }
+  // ★ 从大纲库交改写：带上这一版，AI 好去找当时那版原稿来对照。
+  //   库里的大纲只有 outline_id（不是候选 id），所以走"大纲来源"这条支路。
+  const rww = e.target.closest("[data-olrwwrite]");
+  if (rww) {
+    try {
+      const d = await api("/api/outlines/" + rww.dataset.olrwwrite);
+      olOpenRewrite({ outline: d.outline },
+                     Number(rww.dataset.run || 0));
+    } catch (e2) { toast(e2.message, true); }
+    return;
+  }
   const cp = e.target.closest("[data-ollocopy]");
   if (cp) {
     try {
@@ -13683,6 +15405,29 @@ olEl("olLib").onclick = async e => {
   }
   const del = e.target.closest("[data-olldel]");
   if (del) await olDeleteOutline(Number(del.dataset.olldel));
+};
+
+/* 「我的改写」列表：打开一条旧记录 / 删掉一条。
+   打开走 rwOpenSaved —— 同一个弹层，只是 RW.rec 一上来就有值。 */
+olEl("olRwLib").onclick = async e => {
+  const op = e.target.closest("[data-olrwopen]");
+  if (op) { await rwOpenSaved(Number(op.dataset.olrwopen)); return; }
+  const dl = e.target.closest("[data-olrwdel]");
+  if (dl) {
+    if (!confirm("删掉这一条改写记录？\n\n交上去的成品和 AI 读出来的建议"
+      + "都会一起没了，撤不回来。")) return;
+    try {
+      const d = await send("/api/outline-rewrites/"
+                           + Number(dl.dataset.olrwdel), "DELETE", {});
+      toast(d.message || "删掉了。");
+      if (RW.rec && RW.rec.id === Number(dl.dataset.olrwdel)) {
+        RW.rec = null;
+        RW.points = [];
+      }
+      await olLoadRwLib();
+      if (typeof olPaintStats === "function") olPaintStats();
+    } catch (e2) { toast(e2.message, true); }
+  }
 };
 
 function olSetWorkFromOutline(o) {
@@ -13792,6 +15537,10 @@ async function olOpenWorkRefreshFbs() {
 
 /* ---------------- 角色卡弹层里的互动 ---------------- */
 
+// 改写对比弹层。绑在初始化这里（不是被 open 时绑）——
+// 反复开关弹层时不该重复挂事件，那会让一次点击跑两遍。
+rwBind();
+
 olEl("olcNew").onclick = () => { olCharForm(null); olEl("olcTitle").textContent = "新建角色卡"; };
 olEl("olcCancel").onclick = () => {
   olEl("olcForm").hidden = true;
@@ -13895,9 +15644,9 @@ let olModelSeeded = false;
 function olSeedModel() {
   if (olModelSeeded) return;
   olModelSeeded = true;
-  if (Object.keys(OL.models).some(k => OL.models[k])) return;
+  if (OL.modelKey) return;
   const ok = (((OL.meta || {}).models) || []).find(m => m.usable);
-  if (ok) OL.models[ok.key] = true;
+  if (ok) OL.modelKey = ok.key;
 }
 
 /* ---------------- 启动：把草稿接上 ----------------
@@ -13911,12 +15660,15 @@ function olSeedModel() {
 
 olRestoreChoices();
 
-draftBind("olWorld", olPaintWorldCnt);
-draftBind("olHook");
-draftBind("olDesign");
-draftBind("olWords", olPaintTier);
-draftBind("olPoolSize", olPaintPoolNote);
-draftBind("olRefSize");
+/* 这几个框改一下就要重算「会发出去多少字」——
+   「看看会发出去什么」按钮删了，不能再等她点。
+   olRefreshSendSize 自己 debounce，连打字不会真的连发请求。 */
+draftBind("olWorld", () => { olPaintWorldCnt(); olRefreshSendSize(); });
+draftBind("olHook", olRefreshSendSize);
+draftBind("olDesign", olRefreshSendSize);
+draftBind("olWords", olRefreshSendSize);
+draftBind("olPoolSize", () => { olPaintPoolNote(); olRefreshSendSize(); });
+draftBind("olRefSize", olRefreshSendSize);
 draftBind("olPText", () => pfPaintCount("outline", "olP"));
 draftBind("clPText", () => pfPaintCount("classify", "clP"));
 draftBind("ifPText", () => pfPaintCount("infuse", "ifP"));
@@ -14013,8 +15765,9 @@ function pcStats() {
   set("pcStatFull", fmtNum(full));
   set("pcStatThin", fmtNum(thin));
   set("pcStatOff", fmtNum(off));
-  // 左侧栏「人设卡」后面那个数字徽标（跟别的功能一个待遇）
-  setNavBadge("persona", all.length ? fmtNum(all.length) : "-");
+  // 人设卡不进左侧栏了，这个数字改挂在大纲页头部那个「人设卡」按钮上 ——
+  // 不然她得点进去才知道自己攒了几张卡。
+  set("olCharCnt", all.length ? fmtNum(all.length) : "-");
 }
 
 function pcRender() {
@@ -14274,8 +16027,7 @@ function chRenderList() {
   if (!box) return;
   if (cnt) cnt.textContent = fmtNum(CH.list.length) + " 章";
   if (!CH.list.length) {
-    box.innerHTML = '<div class="mdhint" style="padding:10px">还没有章节。' +
-      "点右上角「＋ 新建章节」开始。</div>";
+    box.innerHTML = '<div class="mdhint" style="padding:10px">还没有章节。</div>';
     return;
   }
   box.innerHTML = CH.list.map(c => {
@@ -15998,8 +17750,7 @@ async function chOpenPick(kind, targetId, titleText) {
     return;
   }
   if (!mine.length) {
-    body.innerHTML = '<div class="blank"><b>这一档还没存过东西</b>' +
-      "在页面上那个框里写几句，点「存成我的提示词」，下次就能一键填回来。</div>";
+    body.innerHTML = '<div class="blank"><b>这一档还没存过东西</b></div>';
     return;
   }
   body.innerHTML = '<div class="picksub">我自己存的（点一下填进框，填完还能接着改）</div>' +

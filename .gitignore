@@ -122,6 +122,7 @@ prompts/*
 !prompts/example.outline.txt
 !prompts/example.summarize.txt
 !prompts/example.chapter.txt
+!prompts/example.rewrite.txt
 
 # 提示词的其他可能存放形式，一并兜底
 *.prompt
