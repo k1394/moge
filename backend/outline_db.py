@@ -306,10 +306,11 @@ REWRITE_ACT_ENABLE = "enable"
 REWRITE_ACT_DISABLE = "disable"
 REWRITE_ACT_SCOPE = "set_scope"
 REWRITE_ACT_NOTE = "note"
+REWRITE_ACT_RULE = "set_rule"                  # 改「精炼准则」那一句
 ALL_REWRITE_ACTION = (REWRITE_ACT_ACCEPT, REWRITE_ACT_ACCEPT_EDITED,
                       REWRITE_ACT_REJECT, REWRITE_ACT_REOPEN,
                       REWRITE_ACT_ENABLE, REWRITE_ACT_DISABLE,
-                      REWRITE_ACT_SCOPE, REWRITE_ACT_NOTE)
+                      REWRITE_ACT_SCOPE, REWRITE_ACT_NOTE, REWRITE_ACT_RULE)
 REWRITE_ACTION_LABELS = {
     REWRITE_ACT_ACCEPT: "接受",
     REWRITE_ACT_ACCEPT_EDITED: "改后接受",
@@ -319,6 +320,7 @@ REWRITE_ACTION_LABELS = {
     REWRITE_ACT_DISABLE: "停用",
     REWRITE_ACT_SCOPE: "改适用范围",
     REWRITE_ACT_NOTE: "补充说明",
+    REWRITE_ACT_RULE: "改准则",
 }
 
 
@@ -763,6 +765,23 @@ CREATE TABLE IF NOT EXISTS outline_rewrite_points (
     point           TEXT    NOT NULL DEFAULT '',   -- 一句话说清她倾向什么
     how             TEXT    NOT NULL DEFAULT '',   -- 以后具体怎么做
 
+    -- ---- ★ 精炼准则（2026-10-08 折腰：「送给 AI 的文字有点多了，有点冗余」）----
+    --
+    -- 需求原文：「改成每次对比大纲都让 AI 总结成一条一条的准则，然后可以勾选是否发送」
+    --
+    -- 【它跟 point 的区别】point 是"她倾向什么"的一句话结论，仍带着分析语境；
+    -- rule_text 是**直接发给 AI 当指令**的那一句 —— 「改写时，把 X 写成 Y」。
+    -- 以后生成大纲只发这一行（+ 必要的适用情境），不再把 8 项证据全塞进去。
+    --
+    -- 【为什么单独一列而不覆盖 point】
+    -- 她确认过「就是现有条目的简化版」——**库还是那个库**：point/8 项证据
+    -- 留着给她自己回看"这条是怎么学来的"，rule_text 只管"发给 AI 什么"。
+    -- 覆盖 point 就把证据链断了，审计要求（需求第 1/4 条）不允许。
+    --
+    -- 【旧条目怎么办】空的 rule_text = 还没提炼过。发出去时**兜底取 point**
+    -- （见 outline_ai.rewrite_examples），不重跑 AI、不花她的钱。
+    rule_text       TEXT    NOT NULL DEFAULT '',
+
     -- ---- 8 项证据（需求第 6 条）----
     problem         TEXT    NOT NULL DEFAULT '',
     change_note     TEXT    NOT NULL DEFAULT '',   -- 她那版改成了什么（change 是 SQL 关键字）
@@ -965,6 +984,14 @@ _ADDED_COLUMNS = (
     ("outline_rewrites", "input_frozen", "TEXT NOT NULL DEFAULT ''"),
     # 快照的补齐状态：complete / partial / missing_recovered / missing
     ("outline_rewrites", "snapshot_state", "TEXT NOT NULL DEFAULT ''"),
+
+    # ---- ★ 精炼准则（2026-10-08 折腰：送给 AI 的文字太冗余）----
+    #
+    # 「每次对比大纲都让 ai 总结成一条一条的准则」—— 以后生成只发这一行，
+    # 不再把 8 项证据全塞进提示词。
+    # 老库（包括她的）**补这列就够了**：她的表已经是三轴结构，
+    # 走 _add_missing_columns 补上，历史行 rule_text='' → 发出去时兜底取 point。
+    ("outline_rewrite_points", "rule_text", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -1049,6 +1076,9 @@ def _migrate_rewrite_points_schema(conn, verbose=False):
         "improved", "method", "applies_when", "not_when", "uncertain",
         "user_note", "user_suggest", "source_version", "source_model",
         "superseded_by", "created_at", "updated_at",
+        # ★ 这张清单是**硬编码**的：在 REWRITE_POINT_SCHEMA 里加了列却忘了加到这里，
+        #   旧结构库重建时新列会被静默丢空。加列必须两处同改。
+        "rule_text",
     ]
     placeholders = ",".join("?" * len(NEW_COLS))
     ins = "INSERT INTO outline_rewrite_points (%s) VALUES (%s)" % (
@@ -1080,6 +1110,9 @@ def _migrate_rewrite_points_schema(conn, verbose=False):
             d.get("source_version", ""), d.get("source_model", ""),
             d.get("superseded_by"),
             d.get("created_at", now_str()), d.get("updated_at", now_str()),
+            # 旧结构里没有 rule_text（这列比旧结构晚），搬过来就是空的；
+            # 空 = 还没提炼，发出去时兜底取 point，不重跑 AI。
+            d.get("rule_text", ""),
         ]
         conn.execute(ins, vals)
 
@@ -4435,6 +4468,11 @@ def clean_rewrite_points(points):
             "kind": kind, "point": t[:600], "how": how, "scope": scope,
             "review": review, "active": REWRITE_ACTIVE_ON,
             "confidence": _pt_confidence(p),
+            # ★ 精炼准则：AI 直接总结成"一条一条的准则"（2026-10-08 折腰）。
+            # 解析不到就留空 —— 发的时候兜底取 point，不会因此丢一条。
+            "rule_text": (p.get("rule_text") or p.get("rule") or p.get("准则")
+                          or p.get("精炼准则") or p.get("准则句")
+                          or "").strip()[:REWRITE_PT_FIELD_MAX],
         }
         for key, _col in REWRITE_PT_FIELDS:
             if key == "confidence":
@@ -4504,7 +4542,7 @@ def set_rewrite_summary(owner, rid, points, summary_text="", model_name="",
                 " AND rewrite_id=? AND source_version=?",
                 (owner, int(rid), src_ver))
             cols = ["owner_id", "rewrite_id", "seq", "kind", "review", "active",
-                    "scope", "point", "how"]
+                    "scope", "point", "how", "rule_text"]
             cols += [c for _, c in REWRITE_PT_FIELDS]
             cols += ["uncertain", "source_version", "source_model",
                      "created_at", "updated_at"]
@@ -4512,7 +4550,7 @@ def set_rewrite_summary(owner, rid, points, summary_text="", model_name="",
                    % (", ".join(cols), ", ".join(["?"] * len(cols))))
             for i, c in enumerate(clean, 1):
                 vals = [owner, int(rid), i, c["kind"], c["review"], c["active"],
-                        c["scope"], c["point"], c["how"]]
+                        c["scope"], c["point"], c["how"], c.get("rule_text", "")]
                 vals += [c.get(k, "") for k, _ in REWRITE_PT_FIELDS]
                 vals += [c.get("uncertain", ""), src_ver,
                          (model_name or "")[:120], ts, ts]
@@ -4562,6 +4600,9 @@ def _pt_row(row):
         "confidence": g("confidence", REWRITE_CONF_UNKNOWN),
         "point": g("point", ""),
         "how": g("how", ""),
+        # ★ 精炼准则：以后发进提示词的就是这一句（旧的空 → 发的时候兜底取 point）。
+        # 在这里露出来，界面才有得显示、有得改。
+        "rule_text": g("rule_text", ""),
         "uncertain": g("uncertain", ""),
         "user_note": g("user_note", ""),
         "user_suggest": g("user_suggest", ""),
@@ -4621,7 +4662,7 @@ def list_rewrite_actions(owner, rid, limit=100):
 
 
 def review_point(owner, pid, action, user_note=None, user_suggest=None,
-                 scope=None):
+                 scope=None, rule_text=None):
     """对一条建议做一次审核动作。**这是唯一改这三个轴的入口。**
 
     action ∈ ALL_REWRITE_ACTION。语义：
@@ -4632,7 +4673,13 @@ def review_point(owner, pid, action, user_note=None, user_suggest=None,
       enable/disable → active=启用/停用（**不动 review**）
       set_scope      → 只改 scope
       note           → 只加补充说明
+      set_rule       → 只改「精炼准则」那一句（rule_text）
     每次都会写一行日志（她改后说了什么、从什么状态到什么状态）。
+
+    【rule_text 为什么跟三个轴并列当参数】
+    折腰 2026-10-08：学习库要"可修改"——她在大纲页「我的改写准则」栏里
+    直接改那句准则。这不属于审核（不动 review）、不属于开关（不动 active）、
+    也不是范围（不动 scope），就是**改发给 AI 的那句话本身**，所以单开。
     """
     if action not in ALL_REWRITE_ACTION:
         raise ValueError("没有这个审核动作：%s" % action)
@@ -4680,6 +4727,14 @@ def review_point(owner, pid, action, user_note=None, user_suggest=None,
         sets.append("user_note=?")
         vals.append(nt)
         detail = detail or nt
+    # ★ 改准则：只动 rule_text，不动三个轴，也不动其它任何证据。
+    # 空串也算一次改动 —— 她可能就是想把那句准则删掉/清空（清空后
+    # 发的时候兜底退回 point）。所以判据是 `is not None`，不是 `or 兜底`。
+    if rule_text is not None:
+        rt = _txt(rule_text, REWRITE_PT_FIELD_MAX, "精炼准则")
+        sets.append("rule_text=?")
+        vals.append(rt)
+        detail = detail or rt
 
     sets.append("updated_at=?")
     vals.append(now_str())
@@ -4879,9 +4934,40 @@ def rewrite_points_using(owner, rid=None, limit=50):
     return [_pt_row(r) for r in rows]
 
 
-# ----------------------------------------------------------------------
-# ★ 阶段二：从"够格"的一批里挑出"这次最该用"的那几条
-# ----------------------------------------------------------------------
+def list_all_rewrite_points(owner, limit=500):
+    """把她的**全部**准则列出来（跨所有改写记录）。
+
+    ★ 2026-10-08 折腰：大纲页要新增「我的改写准则」一栏，能看见整个
+    学习库、能改内容、能逐条勾选发不发。所以这个查询**不过滤任何状态** ——
+    待确认的、停用的、仅本篇的、被同类盖住的，全都要列出来（各带自己的
+    状态标记），否则"学习库"就不完整，她会以为那些条目丢了。
+
+    跟 rewrite_points_using 的分工：
+      rewrite_points_using   只给"现在会进生成"的那批（手册/生效视图）
+      list_all_rewrite_points 给"整个库"（编辑视图），一个都不少
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM outline_rewrite_points WHERE owner_id=?"
+            " ORDER BY id DESC LIMIT ?", (owner, int(limit))).fetchall()
+    return [_pt_row(r) for r in rows]
+
+
+def delete_rewrite_point(owner, pid):
+    """删一条准则（她在大纲页「我的改写准则」栏里点了删除）。
+
+    【为什么是"删"而不是"再停用一次"】
+    review_point 已经有 disable（停用）。但她在学习库里明确要"可修改"，
+    看到一条彻底没用的，删掉比留着一条永远不启用的死条目更干净。
+    **只有她自己点的删除才走这里** —— AI 重跑分析从不调它（重跑是
+    整批停用 + 写新的，不是删）。
+    """
+    with db.connect() as conn:
+        n = conn.execute(
+            "DELETE FROM outline_rewrite_points WHERE id=? AND owner_id=?",
+            (int(pid), owner)).rowcount
+    return n > 0
+
 #
 # 【阶段一和阶段二的分工，别混】
 #   阶段一（资格）：已接受 + 启用 + 不是仅本篇 —— 这是**硬条件**，
@@ -5193,7 +5279,8 @@ def record_learning_use(owner, run_id, points, batch="", stage="all",
                 (owner, (int(run_id) if run_id else None),
                  (int(candidate_id) if candidate_id else None), batch, stage,
                  p.get("id"), p.get("rewrite_id"),
-                 (p.get("method") or p.get("point") or "")[:600],
+                 (p.get("rule_text") or p.get("method") or p.get("point")
+                  or "")[:600],
                  p.get("scope") or "", p.get("confidence") or "",
                  p.get("source_version") or "", ts))
             n += 1

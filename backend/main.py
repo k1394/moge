@@ -3074,12 +3074,13 @@ class OutlineRewritePointIn(BaseModel):
 
     action 取值见 odb.ALL_REWRITE_ACTION：
       accept / accept_edited / reject / reopen / enable / disable /
-      set_scope / note
+      set_scope / note / set_rule
     """
     action: str = ""
     scope: Optional[str] = None        # 适用范围（长期偏好/情境适用/仅本篇）
     note: Optional[str] = None         # 她补充的一句说明
     suggest: Optional[str] = None      # 改后接受：她改过的说法
+    rule: Optional[str] = None         # set_rule：她改后的「精炼准则」那句
 
 
 class OutlineRewriteBulkIn(BaseModel):
@@ -4139,7 +4140,8 @@ def api_review_rewrite_point(pid: int, req: OutlineRewritePointIn,
     if not action:
         raise HTTPException(status_code=400, detail="没说要做哪个动作。")
     pt = _odb_call(odb.review_point, user["owner"], pid, action,
-                   body.get("note"), body.get("suggest"), body.get("scope"))
+                   body.get("note"), body.get("suggest"), body.get("scope"),
+                   body.get("rule"))
     if not pt:
         raise HTTPException(status_code=404, detail="没有这一条建议")
     return {"ok": True, "point": pt,
@@ -4180,6 +4182,8 @@ def _review_message(action, pt):
         return ("适用范围改成「%s」。%s"
                 % (lab, "它现在会进生成。" if live
                    else "它现在不会进生成。"))
+    if action == odb.REWRITE_ACT_RULE:
+        return "准则改好了。以后生成发的就是这一句。"
     return "记下了。"
 
 
@@ -4268,6 +4272,28 @@ def api_live_rewrite_points(rid: int = Query(0, ge=0),
     """
     return {"items": odb.rewrite_points_using(user["owner"], rid or None,
                                               limit)}
+
+
+@app.get("/api/rewrite-points")
+def api_all_rewrite_points(limit: int = Query(500, ge=1, le=1000),
+                           user: dict = Depends(auth.current_user)):
+    """整个「改写准则」学习库（跨所有改写记录，一个都不少）。
+
+    ★ 2026-10-08 折腰：大纲页新增「我的改写准则」栏 —— 要能看见全部、
+    能改内容、能逐条勾选发不发。跟 /live 的区别是这个**不过滤状态**。
+    """
+    items = odb.list_all_rewrite_points(user["owner"], limit)
+    return {"items": items, "stats": odb.learning_stats(user["owner"])}
+
+
+@app.delete("/api/rewrite-points/{pid}")
+def api_delete_rewrite_point(pid: int,
+                             user: dict = Depends(auth.current_user)):
+    """删一条准则（她在大纲页「我的改写准则」栏里点了删除）。"""
+    if not odb.delete_rewrite_point(user["owner"], pid):
+        raise HTTPException(status_code=404, detail="没有这一条准则")
+    return {"ok": True, "message": "删掉了。",
+            "stats": odb.learning_stats(user["owner"])}
 
 
 # ----------------------------------------------------------------------

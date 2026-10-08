@@ -1930,6 +1930,11 @@
     flex: 0 0 auto; display: flex; gap: 5px; flex-wrap: wrap;
     justify-content: flex-end; max-width: 220px;
   }
+  .ollibi .olrule-chk {
+    flex: 0 0 auto; align-self: center; cursor: pointer;
+    padding: 4px 2px;
+  }
+  .ollibi .olrule-chk input { width: 16px; height: 16px; cursor: pointer; }
 
   /* ---- 节点编辑器 ---- */
   .olnodes { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -2939,7 +2944,6 @@
           <!-- 这个按钮通往【人设卡】页（不再是导航里的一项）。
                只挑卡、不管卡的动作在下面表单那行的「＋ 关联角色卡」上。 -->
           <button class="btn" id="olCharBtn">人设卡<span class="badge" id="olCharCnt">-</span></button>
-          <button class="btn" id="olPromptBtn">补充提示词</button>
           <button class="btn" id="olWipeText">清空输入</button>
           <button class="btn" id="olReload">刷新</button>
         </div>
@@ -3132,6 +3136,17 @@
                     style="margin-left:6px"></span>
             </div>
             <div id="olRwLib"></div>
+          </div>
+
+          <!-- ============ 我的改写准则 ============
+               折腰 2026-10-08：「送给 AI 的文字有点多、有点冗余」——
+               以前生成时把每条建议的 8 项证据整个塞进去，改成只发一句
+               「准则」。这一栏就是整个准则库：能看到全部、能勾发不发、
+               能改那句准则、能删。跟「大纲库」一样是一栏，不占导航位。 -->
+          <div class="olsec">
+            <h3>我的改写准则</h3>
+            <div class="mdhint" style="margin:0 0 8px" id="olRuleNote"></div>
+            <div id="olRuleLib"></div>
           </div>
         </div>
       </div>
@@ -12906,6 +12921,7 @@ const OL = {
   poolMode: "auto",         // auto | manual
   picked: {},               // 手动模式勾了哪些
   autoPool: null,           // 预览算出来的那一批（自动模式用它显示）
+  autoExclude: {},          // 自动模式「勾掉的」哪些（默认全选，勾掉=排除）
   modelKey: "",             // 这次用哪个模型：key（2026-10-07 起从多选改单选）
   promptLoaded: false,
   prompt: "",               // 一直用的那份补充提示词
@@ -12914,6 +12930,7 @@ const OL = {
   candData: {},             // 候选 id → 完整候选
   lib: { total: 0, items: [] },
   rwLib: [],                // 她交过的改写记录（阶段一E：大纲库下面那一栏）
+  rules: [],                // 改写准则库（「我的改写准则」栏，跨所有记录）
   work: null,               // 正在看/改的那一份（候选，或库里的大纲）
   fbs: [],                  // 那一份上记过的反馈
   nodeSrc: {},              // 节点编辑弹层里勾的来源零件
@@ -12937,6 +12954,7 @@ function olEl(id) { return document.getElementById(id); }
    草稿里那份还是旧的，她就会看着一张已经不存在的卡去生成。 */
 const OL_CHOICE = { models: "c:ol.models", chars: "c:ol.chars",
                     poolMode: "c:ol.poolmode", picked: "c:ol.picked",
+                    autoExclude: "c:ol.autoexclude",
                     worldId: "c:ol.worldid", worldName: "c:ol.worldname",
                     useRef: "c:ol.useref" };
 
@@ -12946,6 +12964,8 @@ function olSaveChoices() {
   draftPut(OL_CHOICE.poolMode, OL.poolMode);
   draftPutJSON(OL_CHOICE.picked,
     Object.keys(OL.picked).filter(k => OL.picked[k]).map(Number));
+  draftPutJSON(OL_CHOICE.autoExclude,
+    Object.keys(OL.autoExclude).filter(k => OL.autoExclude[k]).map(Number));
   draftPut(OL_CHOICE.worldId, OL.worldId ? String(OL.worldId) : "");
   draftPut(OL_CHOICE.worldName, OL.worldName || "");
   // 素材参考开关也记住 —— 开不开是她的判断，刷新就该回来
@@ -12965,6 +12985,8 @@ function olRestoreChoices() {
   if (pm === "auto" || pm === "manual") OL.poolMode = pm;
   const pk = draftGetJSON(OL_CHOICE.picked, null);
   if (Array.isArray(pk)) pk.forEach(id => { OL.picked[id] = true; });
+  const ax = draftGetJSON(OL_CHOICE.autoExclude, null);
+  if (Array.isArray(ax)) ax.forEach(id => { OL.autoExclude[id] = true; });
   OL.worldId = Number(draftText(OL_CHOICE.worldId)) || 0;
   OL.worldName = draftText(OL_CHOICE.worldName) || "";
   OL.charIds = draftGetJSON(OL_CHOICE.chars, null);
@@ -12995,6 +13017,7 @@ async function loadOutline(force) {
     await olLoadPlots();
     await olLoadRuns();
     await olLoadLib();
+    await olLoadRules();
     olPaintWorldCnt();
     olPaintPoolNote();
     // 进页面就算一次「会发出去多少字」—— 它原来是「看看会发出去什么」
@@ -13181,7 +13204,8 @@ function olPaintPool() {
   const box = olEl("olPool");
   if (OL.poolMode === "auto") {
     if (OL.autoPool) {
-      box.innerHTML = olPlotRows(OL.autoPool, false);
+      // 自动筛也逐条可勾（2026-10-08 折腰）：默认全选，勾掉 = 排除。
+      box.innerHTML = olPlotRows(OL.autoPool, true, true);
       return;
     }
     // 「看看会发出去什么」按钮删了之后，这一批是自动算的（见
@@ -13197,9 +13221,10 @@ function olPaintPool() {
   box.innerHTML = olPlotRows(OL.plots, true);
 }
 
-function olPlotRows(list, checkable) {
+function olPlotRows(list, checkable, autoMode) {
   return list.map(p => {
-    const on = !!OL.picked[p.id];
+    // auto 模式默认全选（勾掉 = 排除），manual 模式默认未选（勾上 = 选用）
+    const on = autoMode ? !OL.autoExclude[p.id] : !!OL.picked[p.id];
     const rc = p.ref_count || 0;
     const cls = rc === 0 ? "fresh" : (rc >= 3 ? " hot" : "");
     return '<div class="olplot' + (on ? " on" : "") + '" data-olplot="' + p.id + '">'
@@ -13237,7 +13262,9 @@ function olPaintPoolNote() {
     // 「库里可用 N 条」必须要她知道：她手上到底有多少条能用，
     // 直接决定她该不该把上面那个数字调大。
     const usable = (OL.plots || []).length;
-    note.textContent = "库里可用 " + usable + " 条 · 一次最多能参考 " + max + " 条";
+    const excl = Object.keys(OL.autoExclude).filter(k => OL.autoExclude[k]).length;
+    note.textContent = "库里可用 " + usable + " 条 · 一次最多能参考 " + max + " 条"
+      + (excl ? (" · 已勾掉 " + excl + " 条") : "");
   } else {
     const n = Object.keys(OL.picked).filter(k => OL.picked[k]).length;
     chip.textContent = "手动选";
@@ -13329,6 +13356,128 @@ function olPaintLib() {
     + '</div>').join("");
 }
 
+/* ---------------- 我的改写准则（跨所有改写记录的准则库）----------------
+
+   折腰 2026-10-08：「送给 AI 的文字有点多、有点冗余」—— 以前生成时把
+   每条建议的 8 项证据整个塞进去，改成只发一句「准则」。这一栏就是整个
+   准则库：能看见全部、能勾发不发、能改那句准则、能删。 */
+async function olLoadRules() {
+  try {
+    const d = await api("/api/rewrite-points");
+    OL.rules = d.items || [];
+  } catch (e) { OL.rules = []; }
+  olPaintRules();
+}
+
+function olPaintRules() {
+  const box = olEl("olRuleLib");
+  const note = olEl("olRuleNote");
+  if (!box) return;
+  const items = OL.rules || [];
+  const liveN = items.filter(p => p.live).length;
+  if (note) {
+    note.textContent = items.length
+      ? ("共 " + items.length + " 条 · 现在有 " + liveN + " 条会发进生成")
+      : "";
+  }
+  if (!items.length) {
+    box.innerHTML = '<div class="blank">还没有准则。先在「我的改写」里交一版、'
+      + '让 AI 总结，这里就会多出一条条「发给 AI 的准则」。</div>';
+    return;
+  }
+  box.innerHTML = items.map(olRuleCard).join("");
+  olBindRules();
+}
+
+function olRuleCard(p) {
+  const rule = (p.rule_text || p.point || "").trim();
+  const kind = p.kind ? '<span class="chip gray">' + esc(p.kind) + '</span>' : "";
+  const scopeLab = OL_SCOPE_LAB[p.scope] || p.scope || "";
+  const scopeChip = scopeLab
+    ? ' <span class="chip gray">' + esc(scopeLab) + '</span>' : "";
+  const rv = p.review;
+  const rvChip = (rv && rv !== "已接受")
+    ? ' <span class="chip' + (rv === "已拒绝" ? " gray" : "") + '">'
+      + esc(rv) + '</span>' : "";
+  const superBadge = (p.superseded_by && p.superseded_by !== 0)
+    ? ' <span class="chip gray" title="说的跟它一样，这条先不发了">被同类盖住</span>'
+    : "";
+  const liveBadge = p.live ? '<span class="chip green">会发</span>'
+                           : '<span class="chip">不发</span>';
+  const on = p.active === "启用";
+  return '<div class="ollibi">'
+    + '<label class="olrule-chk" title="勾上 = 发给 AI（停用 / 启用）">'
+    +   '<input type="checkbox" data-rulechk="' + p.id + '"'
+    +     (on ? " checked" : "") + '>'
+    + '</label>'
+    + '<div class="grow"><div class="t">' + kind + esc(rule) + ' '
+    +   liveBadge + rvChip + scopeChip + superBadge + '</div></div>'
+    + '<div class="acts">'
+    +   '<button class="mini" data-ruledit="' + p.id
+    +     '" title="改这句准则">改</button>'
+    +   '<button class="mini mddel" data-ruldel="' + p.id + '">删</button>'
+    + '</div>'
+    + '</div>';
+}
+
+function olBindRules() {
+  const box = olEl("olRuleLib");
+  if (!box) return;
+  box.querySelectorAll("[data-rulechk]").forEach(chk => {
+    chk.onchange = () => olRuleToggle(chk);
+  });
+  box.querySelectorAll("[data-ruledit]").forEach(b => {
+    b.onclick = () => olRuleEdit(b);
+  });
+  box.querySelectorAll("[data-ruldel]").forEach(b => {
+    b.onclick = () => olRuleDel(b);
+  });
+}
+
+async function olRuleToggle(chk) {
+  const pid = Number(chk.dataset.rulechk);
+  const act = chk.checked ? "enable" : "disable";
+  try {
+    const d = await post("/api/outline-rewrite-points/" + pid + "/review",
+                         { action: act });
+    OL.rules = (OL.rules || []).map(p => p.id === pid ? d.point : p);
+    olPaintRules();
+    toast(d.message || "记下了。");
+  } catch (e) {
+    chk.checked = !chk.checked;      // 失败弹回，别让她以为存上了
+    toast(e.message, true);
+  }
+}
+
+async function olRuleEdit(btn) {
+  const pid = Number(btn.dataset.ruledit);
+  const cur = (OL.rules || []).find(x => x.id === pid) || {};
+  const s = prompt("把这条准则改成你想发给 AI 的那句话：",
+                    cur.rule_text || cur.point || "");
+  if (s === null) return;
+  if (!s.trim()) { toast("没写内容，没改。"); return; }
+  try {
+    const d = await post("/api/outline-rewrite-points/" + pid + "/review",
+                         { action: "set_rule", rule: s.trim() });
+    OL.rules = (OL.rules || []).map(p => p.id === pid ? d.point : p);
+    olPaintRules();
+    toast(d.message || "准则改好了。");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function olRuleDel(btn) {
+  const pid = Number(btn.dataset.ruldel);
+  const cur = (OL.rules || []).find(x => x.id === pid) || {};
+  const txt = (cur.rule_text || cur.point || "").slice(0, 40);
+  if (!confirm("删掉这条准则？\n\n" + txt + "\n\n删了就没了（撤销不了）。")) return;
+  try {
+    const d = await send("/api/rewrite-points/" + pid, "DELETE", {});
+    OL.rules = (OL.rules || []).filter(p => p.id !== pid);
+    olPaintRules();
+    toast(d.message || "删掉了。");
+  } catch (e) { toast(e.message, true); }
+}
+
 /* ---------------- 我的改写（她交过的所有成品）----------------
 
    【为什么单独一块，而不是塞进大纲库列表】两件事不是一回事：
@@ -13416,6 +13565,21 @@ function olBody(silent) {
       return null;
     }
     b.plot_ids = ids;
+  } else if (OL.poolMode === "auto" && OL.autoPool && OL.autoPool.length) {
+    // 自动筛默认全选、勾掉=排除（2026-10-08 折腰）。排除过至少一条时，
+    // 把「保留的这批」当手动指定发出去 —— 后端就不再重新筛，用她留的。
+    // ★ 只在「真正生成」（非 silent）时才传：预览（silent）要是传了，
+    //   后端会回 plot_source=manual，前端就把 autoPool 换成保留子集，
+    //   她"恢复"一条时那条已经不在这批里、恢复失效。预览字数差几条
+    //   零件影响不大（反正写的是「约」），别为它把排除逻辑搞坏。
+    const keep = OL.autoPool.filter(p => !OL.autoExclude[p.id]).map(p => p.id);
+    if (!silent && keep.length && keep.length < OL.autoPool.length) {
+      b.plot_ids = keep;
+    } else if (!silent && !keep.length) {
+      // 全勾掉了。传 [] 会被后端当成「没传」→ 又自动筛全发，等于白勾。
+      // 所以这里不传，只提醒一句，别让她以为"一条都不发"。
+      toast("你把自动筛出来的零件全勾掉了。留几条吧 —— 现在会退回「全发」。", true);
+    }
   }
   // 补充提示词：挑中库里某条时只带 id（内容服务端去取），否则带框里那串
   return Object.assign(b, pfPayload("outline", "olP"));
@@ -15318,13 +15482,6 @@ olEl("olCharAdd").onclick = () => {
   show("mkOlChar");
 };
 // 补充提示词那一块就在这一页上，不用弹层 —— 点这个按钮把它滚到眼前
-olEl("olPromptBtn").onclick = () => {
-  const box = olEl("olPNote");
-  if (box) box.scrollIntoView({ block: "center", behavior: "smooth" });
-  pfSetTab("outline", "olP", "edit", pfOpts("olP"));
-  setTimeout(() => olEl("olPText").focus(), 260);
-};
-
 olEl("olWorld").oninput = olPaintWorldCnt;
 
 /* 「清空这框」：世界观是这几块里最长的，误点一次代价大 —— 先问一句。 */
@@ -15402,11 +15559,16 @@ olEl("olPoolRefresh").onclick = async () => {
 olEl("olPool").onclick = e => {
   const row = e.target.closest("[data-olplot]");
   if (!row) return;
-  if (OL.poolMode !== "manual") {
-    toast("现在是「自动筛」。想自己挑，先点「我手动选」。");
+  const id = Number(row.dataset.olplot);
+  if (OL.poolMode === "auto") {
+    // 自动筛默认全选，点一下 = 排除 / 恢复（2026-10-08 折腰：可勾选是否发送）
+    if (OL.autoExclude[id]) delete OL.autoExclude[id];
+    else OL.autoExclude[id] = true;
+    olSaveChoices();
+    olPaintPool();
+    olPaintPoolNote();
     return;
   }
-  const id = Number(row.dataset.olplot);
   if (OL.picked[id]) delete OL.picked[id]; else OL.picked[id] = true;
   olSaveChoices();
   olPaintPool();

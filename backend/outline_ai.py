@@ -515,6 +515,7 @@ GENERIC_REWRITE_PROMPT = """你是"墨阁"的写作习惯分析师。
     {
       "kind": "这条属于哪一类。只能是：新增事件、删除事件、顺序调整、动机改变、冲突处理改变、信息揭露时机改变、铺垫回收变化、结局关系变化、仅措辞格式标题",
       "point": "她做了什么。用『她习惯…』『她倾向…』这种说法，不许出现具体人名地名。",
+      "rule": "把上面这条压成一句「以后直接发给 AI 当指令」的准则。要短、要能照着执行，例如『开场不要一次给全背景，留一半到第二段再说』。同样不许出现具体人名地名。",
       "problem": "原稿的问题。有原文证据才写，写清是原稿哪一处、缺了什么；没有就填空字符串。",
       "change": "她这一处的具体做法（说手法，不带具体人名地名）。",
       "evidence": "你根据什么这么判断 —— 指出是 AI 版第几段 / 她那版第几段之间发生了什么。",
@@ -541,6 +542,12 @@ scope 说的是"这条以后用在哪"，confidence 说的是"你现在有多确
 一条完全可能是"仅本篇 + 判断充分"，也可能是"长期偏好 + 判断一般"。
 如果你觉得"这条还需要她解释一下才说得清"，
 就把 confidence 填「不足」，并在 uncertain 里写明你想问什么。
+
+【rule 跟 method 不是一回事】
+method 是"以后具体怎么做"的完整交代，可能好几句话；
+rule 是把同一条压成**一句话**、专门给"以后生成时塞给 AI"用的精简版。
+两条都说的是同一件事，rule 就是 method 的一行版 ——
+不要写成两个不同的意思。
 
 · points 最多 8 条，**只写你真有把握的**。
   两份大纲看下来只看出 3 条，就写 3 条 —— 凑数的结论比没有更坏，
@@ -925,36 +932,51 @@ def _learning_block(examples, rewrites=None):
                      "（她还没交过改写对比，这一块暂时是空的。）")
     else:
         lines = ["【她的改写取向】她拿 AI 的稿子自己改写过，"
-                 "下面是**她确认过**的规律。这些说的是「她想要什么」，"
-                 "尽量照做 —— 但**一样不许把任何具体人名、地名、桥段搬过来**，"
+                 "下面是**她确认过、并且勾了「发送」**的准则。"
+                 "这些说的是「她想要什么」，尽量照做 —— "
+                 "但**一样不许把任何具体人名、地名、桥段搬过来**，"
                  "它们只是从那些稿子里归纳出来的写法："]
         for r in rw:
             if r.get("summary"):
                 lines.append("· （%s）" % r["summary"])
             for p in r["points"]:
-                k = p.get("kind") or ""
-                sc = odb.REWRITE_SCOPE_LABELS.get(p.get("scope") or "", "")
-                t = p.get("point") or ""
-                # 【发出来的是哪些字段】method（可复用的做法）优先 ——
-                # 没有 method 才退回 how。做法才是能照着执行的那一句，
-                # "她做了什么"（point）只是这条规则的来历。
-                h = p.get("method") or p.get("how") or ""
-                tag = ("[%s]" % k) if k else ""
-                if sc:
-                    tag = ("%s[%s]" % (tag, sc)) if tag else ("[%s]" % sc)
-                line = "   - " + tag + " " + t
-                if h:
-                    line += "　→ 具体怎么做：%s" % h
-                # 适用情境 / 不适用 —— 需求第 6 条要的是"可复用方法 + 适用条件"，
-                # 少了这两个，模型会把它当"哪篇都得照做"的硬规矩。
-                if p.get("applies_when"):
-                    line += "　（适用：%s）" % p["applies_when"]
-                if p.get("not_when"):
-                    line += "　（不适用：%s）" % p["not_when"]
-                lines.append(line)
+                lines.extend(_rewrite_rule_lines(p))
         lines.append("注意：上面这几条**不许压过**当前的设定和这次的具体要求 —— "
-                     "情境不沾边就别硬套。")
+                     "情境不沾边就别硬套；没有写明「适用情境」的就是普遍适用。")
         parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def _rewrite_rule_lines(p):
+    """把一条已确认的改写建议渲染成**发出去的那几行**。纯函数。
+
+    ★ 2026-10-08 折腰：「送给 AI 的文字有点多了，有点冗余」——
+    原来是把 point + method/how + 适用 + 不适用 全铺开，一条占三四行，
+    四条就一大坨。改成**只发一句准则**，行文压到一行。
+
+    【发什么、不发什么】
+    - 发 rule_text（她自己提炼/改过的那句准则）；老条目没有就兜底取
+      **point** —— 不重跑 AI、不花钱（她确认过「新旧共存，旧的不重跑」）。
+    - 发 kind（类别）和 scope（适用范围）当标签：这两个是**算法用来
+      判断"这条该不该在这时候出现"的依据**，去掉模型就分不清
+      "长期偏好"和"仅这一刻适用"。
+    - 保留 applies_when：需求第 6 条要的是"可复用方法 + 适用条件"，
+      少了它模型会把情境性的建议当硬规矩到处套。
+    - **不再发** evidence / improved / problem / change_note 这几项证据 ——
+      那些是给她回看"这条怎么学来的"用的，对模型写东西没有增量。
+    """
+    k = p.get("kind") or ""
+    sc = odb.REWRITE_SCOPE_LABELS.get(p.get("scope") or "", "")
+    rule = (p.get("rule_text") or "").strip() or (p.get("point") or "").strip()
+    if not rule:
+        return []
+    tag = ("[%s]" % k) if k else ""
+    if sc:
+        tag = ("%s[%s]" % (tag, sc)) if tag else ("[%s]" % sc)
+    line = "   - " + tag + " " + rule
+    if (p.get("applies_when") or "").strip():
+        line += "　（适用：%s）" % p["applies_when"].strip()
+    return [line]
     return "\n\n".join(parts)
 
 
