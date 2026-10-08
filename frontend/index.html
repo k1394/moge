@@ -3122,6 +3122,15 @@
                之后就再也找不到自己交过的东西了。 -->
           <div class="olsec">
             <h3>我的改写</h3>
+            <!-- 阶段二：同一件事被总结过好几遍时，发进提示词就成了
+                 "同一句话强调三次"。这里给她一个显式动作去重 ——
+                 **不自动做**，因为她看不见的整理等于没整理。 -->
+            <div class="olrow wrap" style="margin:0 0 8px">
+              <button class="btn" id="olRwDedupe">整理重复建议</button>
+              <button class="btn" id="olRwDedupeUndo">撤销整理</button>
+              <span class="mdhint" id="olRwDedupeHint"
+                    style="margin-left:6px"></span>
+            </div>
             <div id="olRwLib"></div>
           </div>
         </div>
@@ -13329,6 +13338,8 @@ async function olLoadRwLib() {
   try {
     const d = await api("/api/outline-rewrites?limit=100");
     OL.rwLib = d.items || [];
+    // 被同类建议盖住的有几条 —— 让她一眼看到"有东西没在发"
+    olRwDedupeHint(((d.stats || {}).rewrite_superseded) || 0);
   } catch (e) { OL.rwLib = []; }
   olPaintRwLib();
 }
@@ -13728,6 +13739,74 @@ function olVerdictHtml(c, j) {
   return '<div class="olvrd ' + cls + '">' + t + '</div>';
 }
 
+/* ---------------- 这一版参考了你以前的哪几条（阶段三）----------------
+
+   【要回答的那句话】她挑一版不满意时会问："这次的毛病，是我哪条规矩
+   害的？" 或者反过来："我明明接受了 5 条，这次怎么还写成这样？"
+   两种问题都只能靠**这一版的调用记录**回答，不能靠"开关是开着的"。
+
+   【为什么按需拉、不预先拉】一次生成可能有好几个候选，调用记录是每版
+   一样的一份（同一 run 的输入相同）。预先都拉下来会白打好几个请求，
+   而她多数时候根本不展开。所以做成点开才拉。 */
+function olLearnUseHtml(c) {
+  // 还没跑完的版本不显示 —— 这时候记录还不存在，画一个空块会让她以为
+  // "什么都没学到"。
+  if (c.status !== "已完成" || !c.run_id) return "";
+  return '<div style="padding:6px 10px 0">'
+    + '<button class="mini" data-olleuse="' + c.run_id + '">'
+    + '这一版参考了哪几条</button>'
+    + '<div class="mdhint" id="olLearnUse' + c.run_id
+    + '" style="margin-top:6px"></div></div>';
+}
+
+async function olLoadLearnUse(runId) {
+  const box = olEl("olLearnUse" + runId);
+  if (!box) return;
+  box.textContent = "正在查……";
+  try {
+    const d = await api("/api/learning-uses?run_id=" + runId);
+    const items = d.items || [];
+    const rw = items.filter(x => x.stage === "rewrite");
+    const cs = items.filter(x => x.stage === "case");
+    if (!items.length) {
+      box.innerHTML = '<div class="blank">这一版一条都没参考 —— '
+        + '可能你没勾「参考以前学过的」，也可能你还没接受过任何一条建议。'
+        + '</div>';
+      return;
+    }
+    let h = '<div style="line-height:1.9">'
+      + '这一版参考了 <b>' + rw.length + '</b> 条你的改写取向、<b>'
+      + cs.length + '</b> 条你标过不可用的毛病。</div>';
+    if (rw.length) {
+      h += '<div class="m" style="margin-top:4px">'
+        + rw.map((x, i) => {
+          const why = (x.pick_why || []).filter(Boolean).join("、");
+          return '<div style="margin:3px 0">' + (i + 1) + '. '
+            + esc(x.point_text || "（这条没写内容）")
+            + (x.scope ? ' <span class="chip gray">'
+              + esc(OL_SCOPE_LAB[x.scope] || x.scope) + '</span>' : "")
+            + (why ? '<div class="mdhint">为什么挑了它：'
+              + esc(why) + '</div>' : "") + '</div>';
+        }).join("")
+        + '</div>';
+    }
+    if (cs.length) {
+      h += '<div class="m" style="margin-top:6px">标过不可用的毛病：'
+        + cs.map(x => esc(x.point_text || "")).join("；") + '</div>';
+    }
+    h += '<div class="mdhint" style="margin-top:5px">'
+      + '这几条是这一次实际发出去的（存的是注入当时的版本，'
+      + '你后来改了建议也不影响这份记录）。</div>';
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = '<div class="blank">没查到（' + esc(e.message)
+      + '）。这一版可能是很早之前跑的，那时还没有调用记录。</div>';
+  }
+}
+
+// 适用范围的中文名（跟后端 REWRITE_SCOPE_LABELS 保持一致）
+const OL_SCOPE_LAB = { "long": "长期偏好", "case": "情境适用", "this": "仅本篇" };
+
 function olCandCard(c) {
   const full = OL.candData[c.id];
   const j = (full && full.content_json) || null;
@@ -13789,6 +13868,12 @@ function olCandCard(c) {
     ch += '<div style="padding:4px 10px 0;font-size:12px;line-height:1.8;color:#8a5a2c">'
       + c.warnings.map(w => esc(w)).join("<br>") + '</div>';
   }
+  // ★ 阶段三：这一版**实际参考了你以前的哪几条**。
+  //   折腰第 8 条点名："每次生成保存实际采用的学习条目及版本、作用阶段和
+  //   必要的调用记录。不能只记录『学习开关已打开』。"
+  //   放在卡片里而不是另开一页：她看到一版不满意时，第一个想问的就是
+  //   "这次它到底照着我说的哪几条在写" —— 答案必须跟这一版在一起。
+  ch += olLearnUseHtml(c);
   let acts = "";
   if (c.status === "已完成") {
     acts = '<button class="mini primary" data-olcand="' + c.id + '" data-run="'
@@ -14361,6 +14446,14 @@ function rwPointCard(p, i) {
   const badge = live
     ? '<span class="chip green">生效中</span>'
     : '<span class="chip">不生效</span>';
+  // ★ 阶段二B：这条写着"被别的建议盖住了"吗？
+  // 盖住 ≠ 停用 ≠ 删除 —— 她当初接受它的判断没变，只是同一件事
+  // 已经有一条更合适的在说，两条一起发会变成同一件事说两遍。
+  // 所以这里**必须说清楚是哪一条盖的**，否则她会以为东西丢了。
+  const superBadge = (p.superseded_by
+    && p.superseded_by !== 0)
+    ? ' <span class="chip gray" title="说的跟它一样，这条就先不发了；它没被删，随时能放出来">被同类建议盖住</span>'
+    : "";
   let body = "";
   // 8 项证据：有内容才显示，空的一律不出（免得一排"（空）"）
   if (p.problem) {
@@ -14412,7 +14505,8 @@ function rwPointCard(p, i) {
     + '<div class="grow">'
     +   '<div class="t">' + kind + esc(p.point || "") + ' ' + badge
     +   (confLab ? ' <span class="chip gray">' + esc(confLab) + '</span>' : "")
-    +   ' <span class="chip gray">' + esc(scopeLab) + '</span></div>'
+    +   ' <span class="chip gray">' + esc(scopeLab) + '</span>'
+    +   superBadge + '</div>'
     +   body
     +   '<div class="olrow wrap" style="margin-top:6px">'
     +     '<span class="mdhint">审核</span>' + reviewBtns
@@ -15324,6 +15418,13 @@ olEl("olGo").onclick = olGo;
 /* 任务区与大纲库区都用委托：这两个容器里的东西是 innerHTML 画出来的，
    每次重画都会把里面的按钮换成新节点，逐个绑定必然漏。 */
 olEl("olRuns").onclick = async e => {
+  // ★ 阶段三：点「这一版参考了哪几条」→ 现拉调用记录。
+  //   要在两个分支**之前**接住 —— 它不是候选卡按钮也不是任务按钮。
+  const lu = e.target.closest("[data-olleuse]");
+  if (lu) {
+    await olLoadLearnUse(Number(lu.dataset.olleuse));
+    return;
+  }
   const cand = e.target.closest("[data-olcand]");
   if (cand) {
     await olAdopt(Number(cand.dataset.olcand), Number(cand.dataset.run));
@@ -15429,6 +15530,42 @@ olEl("olRwLib").onclick = async e => {
     } catch (e2) { toast(e2.message, true); }
   }
 };
+
+/* ★ 阶段二：整理重复建议 / 撤销整理。
+   【为什么叫"整理"不叫"去重"】去掉会让她以为东西删了。这里一个字都没删 ——
+   只是把"同一件事已经有人说了"标出来，发提示词时不重复发。 */
+async function olRwDedupeDo() {
+  if (!confirm("整理一下重复的建议？\n\n同一件事被总结过好几遍时，"
+    + "发进提示词就成了同一句话反复强调。\n"
+    + "整理不会删掉任何东西 —— 只是把重复的那几条标成"
+    + "「被同类建议盖住」，发的时候只发一条。\n\n随时能撤销。")) return;
+  try {
+    const d = await post("/api/outline-rewrites/dedupe", {});
+    toast(d.message || "整理好了。");
+    olRwDedupeHint(d.marked || 0);
+    if (typeof olLoadRwLib === "function") await olLoadRwLib();
+    if (RW.rec) { await rwLoadPoints(); rwPaintResult(); }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function olRwDedupeUndo() {
+  try {
+    const d = await post("/api/outline-rewrites/dedupe/undo", {});
+    toast(d.message || "放出来了。");
+    olRwDedupeHint(0);
+    if (typeof olLoadRwLib === "function") await olLoadRwLib();
+    if (RW.rec) { await rwLoadPoints(); rwPaintResult(); }
+  } catch (e) { toast(e.message, true); }
+}
+
+function olRwDedupeHint(n) {
+  const el = olEl("olRwDedupeHint");
+  if (!el) return;
+  el.textContent = n > 0 ? ("现在有 " + n + " 条被同类建议盖住") : "";
+}
+
+olEl("olRwDedupe").onclick = olRwDedupeDo;
+olEl("olRwDedupeUndo").onclick = olRwDedupeUndo;
 
 function olSetWorkFromOutline(o) {
   OL.work = {

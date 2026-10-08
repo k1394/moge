@@ -1097,7 +1097,13 @@ def build_ctx(owner, data):
     # 界面上那个勾选写的是「参考以前标过的『不可用』」，但它真实的作用是
     # "这次要不要参考你过去的东西"。两样都归它管，不然屏幕上会多出
     # 一个说不清差别的开关。
-    rewrites = odb.rewrite_examples(owner, limit=2) if data.get("use_learning", True) else []
+    #
+    # ★ 阶段二：不再"固定挑最近 2 条"，改成**按这次要写什么挑最相关的**。
+    # 传 need（这次的一句话梗 + 情节设计 + 你的额外交代）进去，本地打分排序。
+    # 挑出来的那几条还会带上 _pick_why，界面能摊开"为什么用了它"。
+    rewrite_need = odb.rewrite_need(data)
+    rewrites = (odb.rewrite_examples(owner, need=rewrite_need)
+                if data.get("use_learning", True) else [])
 
     user_prompt = (data.get("user_prompt") or "").strip()
 
@@ -1534,18 +1540,12 @@ def create_run(owner, data, background=True, retry_of_run_id=None,
     # 【为什么必须落库】从这里开始，同一份输入哈希的 run 可能被缓存命中，
     # 也可能被重跑；她以后问"我明明接受了 5 条，为什么这次生成没变化"——
     # 只有这条记录能回答"这次只注入了 2 条"或"那 3 条是仅本篇"。
-    # 记的是**真正会被拼进提示词的那几条**，不是"学习开关是开着的"。
-    # 写失败绝不能拖垮生成（它只是审计信息），所以整段兜住。
-    try:
-        used = []
-        for r in (ctx.get("rewrites") or []):
-            for p in (r.get("points") or []):
-                used.append(p)
-        if used:
-            odb.record_learning_use(owner, run_id, used, batch="plan",
-                                    stage="all")
-    except Exception:                                       # pragma: no cover
-        pass
+    #
+    # ★ 阶段三：记录的活儿搬到 _execute 里去做了 ——
+    #   那里才有**真实生成用的那份 ctx**。原来在这个位置记的是
+    #   `build_ctx`（预览）算出来的那一批，跟真正发给模型的对不上：
+    #   预览按 need 挑完是一批、真跑时如果开关被改过又是另一批，
+    #   事后回看就成了一句空话。审计信息必须记"真发出去的那一份"。
 
     if background:
         t = threading.Thread(target=_run_worker, args=(run_id, owner),
@@ -1639,6 +1639,23 @@ def _execute(run_id, owner):
     # 而她以为差别只是模型不同。
     tpl, src, warn = prompt_template()
 
+    # ---- ★ 阶段三：真实生成也要把「她的改写取向」发进去 ----
+    # 【这里曾经是个静默的洞】`_system_block` 一直在读 ctx["rewrites"]，
+    # 但 _execute 造的这个 ctx **从来没有塞过 rewrites** —— 于是
+    # 预览页算得漂漂亮亮、"哪几条会进生成"也说得头头是道，
+    # 真正跑起来却一条改写建议都没发给模型。她只会觉得"学了半天没变化"，
+    # 而屏幕上不会有任何一处报错。
+    # 【为什么用快照里的开关，而不是现读界面】跟世界观快照同一个道理：
+    # 任务发起那一刻她勾没勾「参考以前学过的」，就该按那一刻算 ——
+    # 跑的过程中她改界面不该影响已经跑着的任务。
+    use_learning = input_snapshot.get("use_learning")
+    if use_learning is None:
+        use_learning = True
+    # 相关性挑选要用"这次要写什么"，输入快照里正好有这几样。
+    rewrite_need = odb.rewrite_need(input_snapshot)
+    rewrites = (odb.rewrite_examples(owner, need=rewrite_need)
+                if use_learning else [])
+
     ctx = {
         "owner": owner,     # A 规划后按节点需求检索分类素材要用
         "template": tpl,
@@ -1651,7 +1668,10 @@ def _execute(run_id, owner):
         "tier": odb.word_tier(input_snapshot.get("target_words") or 0),
         "plots": odb.plot_blocks(owner, pool_ids),
         "user_prompt": user_prompt,
-        "learning": odb.learning_examples(owner, limit=3),
+        # ★ 阶段三：不传这块，_system_block 里【她的改写取向】就永远是空的。
+        "learning": (odb.learning_examples(owner, limit=3)
+                     if use_learning else []),
+        "rewrites": rewrites,
         "model_keys": model_keys,
         "prompt_version": prompt_version,
         # input_hash 跟着任务走（补充二.5）：写进候选行，方便对账
@@ -1679,6 +1699,34 @@ def _execute(run_id, owner):
                     status, created_at) VALUES (?,?,?,?,?,?,?)""",
                 (run_id, owner, mk, _model_label(mk), prompt_version,
                  CAND_QUEUED, now_str()))
+
+    # ---- ★ 阶段三：把"这一次真发给模型了哪几条学习条目"落库 ----
+    # 【为什么放在这里，不放 create_run】这里才有**真实生成用的那份 ctx**。
+    # create_run 里能拿到的是 build_ctx（预览）的结果 —— 两者按 need 挑出来
+    # 的那一批不一定相同。审计记录必须记"真发出去的那一份"，否则她事后
+    # 回看会看到一份跟这次输出对不上的清单，比没有记录更坏。
+    # 两块分开记（stage=rewrite / case），界面才能分别说清各发了几条。
+    # 写失败绝不能拖垮生成（它只是审计信息），所以整段兜住。
+    try:
+        used = []
+        for r in (ctx.get("rewrites") or []):
+            for p in (r.get("points") or []):
+                used.append(p)
+        if used:
+            odb.record_learning_use(owner, run_id, used, batch="plan",
+                                    stage="rewrite")
+        cases = ctx.get("learning") or []
+        if cases:
+            odb.record_learning_use(
+                owner, run_id,
+                [{"id": None, "rewrite_id": None,
+                  "point": (c.get("problem") or "")[:200],
+                  "method": (c.get("note") or "")[:400],
+                  "scope": "", "confidence": "",
+                  "source_version": ""} for c in cases],
+                batch="plan", stage="case")
+    except Exception:                                       # pragma: no cover
+        pass
 
     # ---- 多模型并发 ----
     # 为什么并发：她挑四个模型，串行跑要等四倍时间（一次一两分钟），

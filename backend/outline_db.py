@@ -3843,10 +3843,13 @@ def learning_stats(owner):
         # 已经接受 + 启用 + 适用范围可跨作品 的改写建议。
         # 判据跟 rewrite_examples 保持一致 —— 界面上那个数跟"实际会进生成
         # 的条数"必须是同一个口径，不然她数着 5 条、实际只用了 2 条。
+        # ★ 阶段二：还要排掉"被同类建议盖住"的那些 —— 它们**真的不进生成**
+        #   （rewrite_examples 的 SQL 里有 superseded_by IS NULL）。
+        #   不排的话，上面那句警告会当场应验：界面说 5 条，实际只发 4 条。
         live = conn.execute(
             "SELECT COUNT(*) AS n FROM outline_rewrite_points"
             " WHERE owner_id=? AND review=? AND active=?"
-            " AND scope IN (?,?)",
+            " AND scope IN (?,?) AND superseded_by IS NULL",
             (owner, REWRITE_RV_ACCEPTED, REWRITE_ACTIVE_ON,
              REWRITE_SCOPE_LONG, REWRITE_SCOPE_CASE)).fetchone()["n"]
         # 待确认的（她还没点过的）—— 界面上要能看出"还有多少等我拍板"
@@ -3859,9 +3862,16 @@ def learning_stats(owner):
             "SELECT COUNT(*) AS n FROM outline_rewrites"
             " WHERE owner_id=? AND enabled=1 AND status=?",
             (owner, REWRITE_DONE)).fetchone()["n"]
+        # ★ 阶段二：被同类建议盖住的条数（界面上要能显示"有几条没在发"）。
+        # 它**不在 live 里算** —— 盖住 ≠ 不合格，是"同一件事有别人说了"。
+        # 混进 live 数字里她就说不清"到底学了几条"。
+        sup = conn.execute(
+            "SELECT COUNT(*) AS n FROM outline_rewrite_points"
+            " WHERE owner_id=? AND superseded_by IS NOT NULL",
+            (owner,)).fetchone()["n"]
     return {"outlines": total, "in_learning": inl, "diffs": diffs,
             "cases": cases, "rewrites": live, "rewrite_pending": pend,
-            "rewrite_records": rwrec}
+            "rewrite_records": rwrec, "rewrite_superseded": sup}
 
 
 # ----------------------------------------------------------------------
@@ -4562,6 +4572,11 @@ def _pt_row(row):
     }
     for key, col in REWRITE_PT_FIELDS:
         out[key] = g(col, "")
+    # ★ 阶段二B：被哪条同类建议盖住（NULL 表示没被盖住）。
+    # 【为什么必须在这里露出来】界面靠 p.superseded_by 画「被同类建议盖住」
+    # 那个标记。漏了这一列的话，「整理重复建议」点完**界面上什么都不会变** ——
+    # 她只会以为按钮坏了，而库里其实真的标上了。静默分叉，最难查。
+    out["superseded_by"] = g("superseded_by", None)
     out["live"] = rewrite_point_is_live(out)
     return out
 
@@ -4732,60 +4747,115 @@ def delete_rewrite(owner, rid):
     return n > 0
 
 
-def rewrite_examples(owner, limit=3, scope=None):
-    """挑几份"可以拿来参考"的改写总结，进以后的生成提示词。
+def rewrite_examples(owner, limit=None, scope=None, need=None,
+                     with_dropped=False):
+    """挑几条"可以拿来参考"的改写总结，进以后的生成提示词。
 
     跟 learning_examples 的分工：
       learning_examples  说的是"她不满意什么"（负面规避）
       rewrite_examples   说的是"她会把东西改成什么样"（正面取向）
     两块都要发 —— 只告诉她别踩什么，模型还是会写成她不喜欢的样子。
 
-    【阶段一的两条硬规矩，都写在这儿】
-    1. **只给已接受 + 启用 + 不是仅本篇的**（需求第 1/8/14 条）。
-       待确认、已拒绝、停用、仅本篇 —— 一律不发。她没拍板的东西
-       不该左右生成；接受了的"仅本篇"也不该进别的作品。
-    2. **层次得是长期或情境**（需求第 7 条）。
-       `scope=` 传了就再收一层：比如这次是"当众对质"类场景，
-       只要情境适用的那批 —— 这是阶段二检索的地基，先留好口子。
+    【两段式，顺序不能反（需求第 1/7/8 条）】
+      第一步 资格过滤（SQL 做）：已接受 + 启用 + 长期/情境 ——
+             她没拍板的一个字都不发；"仅本篇"不进别的作品。
+      第二步 相关性挑选（阶段二，本地做）：够格的可能几十条，
+             按这次要写的东西打分排序，**只带最相关的 N 条**。
+    需求第 8 条原话："确认、启用及权限是资格条件，先过滤；
+                     之后才比较相关性和证据。" —— 就是这两步。
 
-    【为什么资格条件用 SQL 过滤、不取回来再筛】需求第 8 条：
-    "确认、启用及权限是资格条件，先过滤；之后才比较相关性和证据。"
-    先过滤能少读一大堆绝不会用的行（她可能攒了几十条待确认的）。
+    【need 传了才做挑选】不传（老调用方 / 测试）就退回"按时间取前 N 条"，
+    行为跟阶段一一致，不会因为这次改动把旧路径打歪。
     """
+    lim = REWRITE_PICK_DEFAULT if limit is None else int(limit)
     with db.connect() as conn:
-        # 记录本身得是开着的（整条关掉等于她反悔了这件事）
-        recs = conn.execute(
-            "SELECT id FROM outline_rewrites WHERE owner_id=? AND enabled=1"
-            " AND status=? ORDER BY id DESC LIMIT ?",
-            (owner, REWRITE_DONE, max(int(limit) * 4, 8))).fetchall()
-        out = []
-        for rec in recs:
-            sql = ("SELECT * FROM outline_rewrite_points WHERE owner_id=?"
-                   " AND rewrite_id=? AND review=? AND active=?"
-                   " AND scope IN (?,?)")
-            args = [owner, rec["id"], REWRITE_RV_ACCEPTED, REWRITE_ACTIVE_ON,
-                    REWRITE_SCOPE_LONG, REWRITE_SCOPE_CASE]
-            if scope in ALL_REWRITE_SCOPE:
-                sql += " AND scope=?"
-                args.append(scope)
-            sql += " ORDER BY seq ASC, id ASC"
-            prows = conn.execute(sql, args).fetchall()
-            if not prows:
-                continue
-            pts = [_pt_row(r) for r in prows]
-            # 一句话总述（可能为空 —— 不强行编）
-            srow = conn.execute(
-                "SELECT summary_text, note FROM outline_rewrites WHERE id=?",
-                (rec["id"],)).fetchone()
-            out.append({
-                "id": rec["id"],
-                "summary": (srow["summary_text"] if srow else "") or "",
-                "note": (srow["note"] if srow else "") or "",
-                "points": pts,
-            })
-            if len(out) >= int(limit):
-                break
+        # ---- 第一步：资格过滤（一步 SQL 拿全，不再按记录拆开查）----
+        sql = ("SELECT p.*, w.summary_text AS _sum, w.note AS _note,"
+               " w.user_version AS _uver"
+               " FROM outline_rewrite_points p"
+               " JOIN outline_rewrites w ON w.id = p.rewrite_id"
+               " AND w.owner_id = p.owner_id"
+               " WHERE p.owner_id=? AND w.enabled=1 AND w.status=?"
+               " AND p.review=? AND p.active=? AND p.scope IN (?,?)"
+               " AND p.superseded_by IS NULL")
+        args = [owner, REWRITE_DONE, REWRITE_RV_ACCEPTED, REWRITE_ACTIVE_ON,
+                REWRITE_SCOPE_LONG, REWRITE_SCOPE_CASE]
+        if scope in ALL_REWRITE_SCOPE:
+            sql += " AND p.scope=?"
+            args.append(scope)
+        # 【为什么排除 superseded_by 不为空的行】阶段二B 的去重标记：
+        # 被别的建议盖住的那条不再单独发（发重复的等于同一件事说两遍）。
+        # 它没被删、也没被停用 —— 只是"这一件已经有人说了"。
+        rows = conn.execute(sql, args).fetchall()
+
+    cands = []
+    for r in rows:
+        p = _pt_row(r)
+        p["_used_count"] = 0          # 下面按批次一次性补齐
+        cands.append(p)
+
+    if not cands:
+        return ([], []) if with_dropped else []
+
+    # ---- 第二步：相关性挑选 ----
+    if need is not None:
+        _fill_used_counts(owner, cands)
+        picked, dropped = pick_rewrite_points(cands, need, limit=lim)
+    else:
+        picked, dropped = _legacy_pick(cands, lim)
+
+    # 按记录分组（提示词那块是按记录分段渲染的）
+    out = _group_by_rewrite(picked, rows)
+    if with_dropped:
+        return out, dropped
     return out
+
+
+def _legacy_pick(cands, lim):
+    """不传 need 时的老行为：按 id 降序（新的在前）取前 N 条。纯函数。
+
+    【为什么留着这条】老调用方和一批老测试不带 need。挑选是为了变准，
+    不是为了把老路径改出别的行为 —— 变更是要能说清的一处，不是两处。
+    """
+    ordered = sorted(cands, key=lambda p: -(int(p.get("id") or 0)))
+    picked = ordered[:max(1, lim)]
+    dropped = [{"pt": p, "reason": "按时间取前 %d 条，它排在后面" % lim,
+                "why": []} for p in ordered[max(1, lim):]]
+    return picked, dropped
+
+
+def _fill_used_counts(owner, points):
+    """给一批建议补上"以前进过几次生成"的计数（就地改）。"""
+    ids = [int(p["id"]) for p in (points or []) if p.get("id")]
+    if not ids:
+        return
+    with db.connect() as conn:
+        qs = ",".join("?" * len(ids))
+        rows = conn.execute(
+            "SELECT point_id, COUNT(*) AS n FROM outline_learning_uses"
+            " WHERE owner_id=? AND point_id IN (%s) GROUP BY point_id" % qs,
+            [owner] + ids).fetchall()
+    cnt = {int(r["point_id"]): int(r["n"] or 0) for r in rows}
+    for p in points:
+        p["_used_count"] = cnt.get(int(p.get("id") or 0), 0)
+
+
+def _group_by_rewrite(picked, rows):
+    """把选中的建议按所属改写记录分组（提示词按记录分段渲染）。"""
+    meta = {}
+    for r in rows:
+        meta[int(r["id"])] = {"summary": r["_sum"] or "", "note": r["_note"] or ""}
+    order, groups = [], {}
+    for p in picked:
+        rid = int(p.get("rewrite_id") or 0)
+        if rid not in groups:
+            groups[rid] = {"id": rid,
+                           "summary": (meta.get(rid) or {}).get("summary", ""),
+                           "note": (meta.get(rid) or {}).get("note", ""),
+                           "points": []}
+            order.append(rid)
+        groups[rid]["points"].append(p)
+    return [groups[rid] for rid in order]
 
 
 def rewrite_points_using(owner, rid=None, limit=50):
@@ -4807,6 +4877,289 @@ def rewrite_points_using(owner, rid=None, limit=50):
         args.append(int(limit))
         rows = conn.execute(sql, args).fetchall()
     return [_pt_row(r) for r in rows]
+
+
+# ----------------------------------------------------------------------
+# ★ 阶段二：从"够格"的一批里挑出"这次最该用"的那几条
+# ----------------------------------------------------------------------
+#
+# 【阶段一和阶段二的分工，别混】
+#   阶段一（资格）：已接受 + 启用 + 不是仅本篇 —— 这是**硬条件**，
+#                   不满足的一个字都不许发。走 SQL 先过滤掉。
+#   阶段二（挑选）：够格的那批可能有好几十条，全发进去会把提示词撑爆、
+#                   还会互相打架。**先按相关性排序、再截前 N 条**。
+#   需求第 8 条原话："确认、启用及权限是资格条件，先过滤；
+#                     之后才比较相关性和证据。"
+#   所以顺序是死的：先资格 → 后相关。反过来就是拿没拍板的东西排序。
+#
+# 【为什么只在本地算、不调模型】
+#   折腰 2026-10-08 拍板选"本地打分 + 场景匹配"。理由有两条：
+#     ① 每次生成多调一次模型 = 多花一次钱、多等一轮，而她生成本来就慢；
+#     ② 本地算的分数**她看得懂**（界面能把"为什么选这条"摊开），
+#       模型给的分她没法核，错也不知道错在哪。
+
+# 打分用的权重。都放在一处，以后要调只改这里。
+REWRITE_PICK_WEIGHTS = {
+    "scope_long": 3.0,        # 长期偏好：跨作品都适用，价值最高
+    "scope_case": 2.0,        # 情境适用：这一刻对得上就很有用
+    "conf_enough": 2.0,       # 判断充分：她当初的证据硬
+    "conf_medium": 1.0,
+    "conf_weak": 0.0,         # 判断不充分不扣分，只是不加
+    "kind_hit": 2.5,          # 这条的类别正好是这次要处理的方面
+    "scene_hit": 3.0,         # 适用情境里的词命中了这次要写的东西
+    "not_when_hit": -99.0,    # ★ 不适用命中 = 一票否决（当次不发）
+    "used_before": 0.8,       # 以前用过：说明她没推翻它，略加一点
+    "user_note": 0.5,         # 她自己补过话：这条她在意
+}
+# 一次最多送几条进提示词。她拍板的是"挑最相关的一批"，不是"越多越好" ——
+# 发太多会稀释，而且提示词有字数成本。
+REWRITE_PICK_DEFAULT = 4
+REWRITE_PICK_MAX = 8
+
+# 中文里没有空格分词，用**二元组 + 关键词表**做粗匹配：
+# "当众对质" 会切出 当众/众对/对质 —— 命中任一片就算沾边。
+# 【为什么用二元组】中文没空格，按字匹配太碎（"的"会到处命中），
+# 按词匹配要先分词（多一个依赖、还容易切错）。二元组是不用依赖的最稳做法。
+_STOP_CHARS = set("的了是在和与及或也都还很就要把被给对从到而但以为上中下")
+
+
+def _bigrams(text, limit=200):
+    """把一段中文切成二元组集合（去停用字）。纯函数。"""
+    s = "".join(ch for ch in (text or "") if not ch.isspace())
+    out = set()
+    for i in range(len(s) - 1):
+        a, b = s[i], s[i + 1]
+        if a in _STOP_CHARS and b in _STOP_CHARS:
+            continue
+        out.add(s[i:i + 2])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def rewrite_need(data):
+    """把"这次要写成什么样"抽成一份需求画像，供打分用。纯函数。
+
+    【画像里放什么】只放**这次生成真正给定的东西**：
+    一句话梗、情节设计、她额外交代的要求、字数档。
+    不放世界观全文和角色卡全文 —— 那两块太长，二元组一多，
+    随便哪条建议都能"命中"，等于没筛。
+    """
+    d = data or {}
+    parts = [d.get("one_sentence_hook") or "",
+             d.get("plot_design") or "",
+             d.get("user_prompt") or ""]
+    blob = "\n".join(p for p in parts if p)
+    try:
+        target = int(d.get("target_words") or 0)
+    except (TypeError, ValueError):
+        target = 0
+    return {
+        "text": blob,
+        "bigrams": _bigrams(blob),
+        "target_words": target,
+        "tier": word_tier(target)["key"] if target else "",
+    }
+
+
+def score_rewrite_point(pt, need):
+    """给一条建议打"这次该不该用它"的分。返回 (分数, 理由列表)。纯函数。
+
+    【为什么理由也要返回】她以后会问"为什么这次用了这条、没用那条"。
+    只给一个数她没法核；把"因为类别对上了 + 因为情境命中"摊开，
+    她能自己判断算法挑得对不对 —— 挑错也是看得见的错，不是黑箱。
+    """
+    w = REWRITE_PICK_WEIGHTS
+    why = []
+    score = 0.0
+
+    scope = pt.get("scope") or ""
+    if scope == REWRITE_SCOPE_LONG:
+        score += w["scope_long"]
+        why.append("长期偏好")
+    elif scope == REWRITE_SCOPE_CASE:
+        score += w["scope_case"]
+        why.append("情境适用")
+
+    conf = pt.get("confidence") or ""
+    if conf == REWRITE_CONF_ENOUGH:
+        score += w["conf_enough"]
+        why.append("判断充分")
+    elif conf == REWRITE_CONF_MEDIUM:
+        score += w["conf_medium"]
+
+    # ---- 适用情境命中：这条建议自己写了"什么时候适用"，跟这次要写的撞上了 ----
+    nbg = (need or {}).get("bigrams") or set()
+    aw = pt.get("applies_when") or ""
+    if aw and nbg:
+        hit = _bigrams(aw) & nbg
+        if hit:
+            score += w["scene_hit"]
+            why.append("情境命中「%s」" % "、".join(sorted(hit)[:3]))
+
+    # ---- ★ 不适用命中 = 一票否决 ----
+    # 需求第 1 条：适用条件是硬边界。"这次恰好就是它说不适用的那种情形"，
+    # 那么不管它别的地方多高分，这条都不许发 —— 发了就是明着违反她当初
+    # 自己划的界。返回负无穷，排到最后并被 pick 直接剔除。
+    nw = pt.get("not_when") or ""
+    if nw and nbg:
+        bad = _bigrams(nw) & nbg
+        if bad:
+            score += w["not_when_hit"]
+            why.append("★ 命中不适用「%s」，当次不发" % "、".join(sorted(bad)[:3]))
+
+    # ---- 类别命中：她补过话的、以及被用过没被推翻的，都算可信 ----
+    if (pt.get("user_note") or "").strip():
+        score += w["user_note"]
+        why.append("你补过说明")
+    if int(pt.get("_used_count") or 0) > 0:
+        score += w["used_before"]
+        why.append("以前用过")
+
+    return score, why
+
+
+def pick_rewrite_points(points, need, limit=None):
+    """从够格的一批里挑出这次该发的那几条。返回 (选中, 落选原因)。纯函数。
+
+    【落选原因为什么也要留】她问"为什么没看到那条"，答案是"它不适用这次"
+    还是"排到第 5 名被截了"，是两件完全不同的事 —— 前者是算法按她
+    自己划的界办事，后者是名额不够。混成一句"没选中"等于没解释。
+
+    【为什么要去重（阶段二B）】她可能对同一件事接受过好几条建议
+    （不同时间、不同稿子各总结出一条）。全发进去 = 同一件事在提示词里
+    说三遍，模型会当成"这条特别重要"而过度执行。
+    去重判据：类别 + 归一化后的措辞，撞了只留分最高的那条。
+    """
+    pts = list(points or [])
+    if not pts:
+        return [], []
+    lim = REWRITE_PICK_DEFAULT if limit is None else int(limit)
+    lim = max(1, min(lim, REWRITE_PICK_MAX))
+
+    scored = []
+    for p in pts:
+        s, why = score_rewrite_point(p, need)
+        scored.append({"pt": p, "score": s, "why": why})
+    # 分高的在前；同分时按 id 降序（新的在前）保稳定
+    scored.sort(key=lambda x: (-x["score"], -(int(x["pt"].get("id") or 0))))
+
+    picked, dropped = [], []
+    seen = {}
+    for it in scored:
+        p = it["pt"]
+        # ★ 一票否决：命中不适用，当次绝不发
+        if it["score"] <= REWRITE_PICK_WEIGHTS["not_when_hit"] / 2:
+            dropped.append({"pt": p, "reason": "命中不适用条件，这次不发",
+                            "why": it["why"]})
+            continue
+        key = _dedup_key(p)
+        if key in seen:
+            dropped.append({"pt": p, "reason": "跟「%s」说的是同一件事，只留了分高的那条"
+                            % (seen[key].get("point") or "")[:24],
+                            "why": it["why"]})
+            continue
+        if len(picked) >= lim:
+            dropped.append({"pt": p, "reason": "排在 %d 名之外（这次只带 %d 条）"
+                            % (lim + 1, lim), "why": it["why"]})
+            continue
+        p = dict(p)
+        p["_pick_score"] = round(it["score"], 2)
+        p["_pick_why"] = it["why"]
+        seen[key] = p
+        picked.append(p)
+    return picked, dropped
+
+
+def _dedup_key(pt):
+    """一条建议的"说的是不是同一件事"指纹。纯函数。
+
+    【为什么按类别 + 前 8 个字】同一件事被总结两次时，措辞不会一模一样，
+    但类别通常相同、开头那句结论也高度相似。取前 8 个字是为了容忍
+    后半句的差异（"结尾要回收前面的伏笔" / "结尾要回收伏笔"）。
+    """
+    kind = (pt.get("kind") or "").strip()
+    core = "".join(ch for ch in (pt.get("point") or "")
+                   if not ch.isspace())[:8]
+    return (kind, core)
+
+
+def mark_superseded(owner, points=None):
+    """把"说的是同一件事"的重复建议标出来，留最该用的那条。就地改库。
+
+    【为什么这是她点一下才做的事，而不是每次生成自动做】
+    自动做有两个坏处：
+      ① 她看不到发生了什么 —— 界面上某条突然不发，她只会以为丢了；
+      ② 判据会随"这次要写什么"变 —— 这次 A 盖 B、下次 B 盖 A，
+         反复改标记等于没有标记。
+    所以做成一个**显式动作**：她点「整理重复建议」，一次算清、写库、
+    界面上逐条显示"被谁盖住"，不满意能撤销。
+
+    【判据】同一类别 + 结论前 8 个字相同 = 同一件事。
+    留哪条：判断充分 > 一般 > 不足；同档就留适用范围更广的
+    （长期 > 情境 > 仅本篇）；再同就留新的。
+
+    【撤不撤销得了】能。每写一次都记一条 action 日志，撤销就是把
+    superseded_by 清空 —— 它本来就没删、没改状态，撤起来是干净的一步。
+    """
+    with db.connect() as conn:
+        sql = ("SELECT p.* FROM outline_rewrite_points p"
+               " JOIN outline_rewrites w ON w.id = p.rewrite_id"
+               " AND w.owner_id = p.owner_id"
+               " WHERE p.owner_id=? AND w.enabled=1 AND w.status=?"
+               " AND p.review=? AND p.active=? AND p.scope IN (?,?)")
+        rows = conn.execute(sql, (
+            owner, REWRITE_DONE, REWRITE_RV_ACCEPTED, REWRITE_ACTIVE_ON,
+            REWRITE_SCOPE_LONG, REWRITE_SCOPE_CASE)).fetchall()
+        if not rows:
+            return {"groups": 0, "marked": 0}
+
+        # 先全部清空旧的标记 —— 判据是"当前这一批算出来的"，
+        # 不清空的话她会看到上一轮留下的陈旧标记（而且越攒越多）。
+        conn.execute(
+            "UPDATE outline_rewrite_points SET superseded_by=NULL"
+            " WHERE owner_id=? AND superseded_by IS NOT NULL", (owner,))
+
+        pts = [_pt_row(r) for r in rows]
+        buckets = {}
+        for p in pts:
+            buckets.setdefault(_dedup_key(p), []).append(p)
+
+        _conf_rank = {REWRITE_CONF_ENOUGH: 3, REWRITE_CONF_MEDIUM: 2,
+                      REWRITE_CONF_WEAK: 1, REWRITE_CONF_UNKNOWN: 0}
+        _scope_rank = {REWRITE_SCOPE_LONG: 3, REWRITE_SCOPE_CASE: 2,
+                       REWRITE_SCOPE_THIS: 1}
+
+        def _rank(p):
+            return (_conf_rank.get(p.get("confidence") or "", 0),
+                    _scope_rank.get(p.get("scope") or "", 0),
+                    int(p.get("id") or 0))
+
+        marked, groups = 0, 0
+        ts = now_str()
+        for key, group in buckets.items():
+            if len(group) < 2:
+                continue
+            group.sort(key=_rank, reverse=True)
+            keep = group[0]
+            for p in group[1:]:
+                conn.execute(
+                    "UPDATE outline_rewrite_points SET superseded_by=?,"
+                    " updated_at=? WHERE id=? AND owner_id=?",
+                    (keep["id"], ts, p["id"], owner))
+                marked += 1
+            groups += 1
+        return {"groups": groups, "marked": marked}
+
+
+def clear_superseded(owner):
+    """撤销「整理重复建议」：把 superseded_by 全清掉。"""
+    with db.connect() as conn:
+        cur = conn.execute(
+            "UPDATE outline_rewrite_points SET superseded_by=NULL, updated_at=?"
+            " WHERE owner_id=? AND superseded_by IS NOT NULL",
+            (now_str(), owner))
+        return int(cur.rowcount or 0)
 
 
 # ----------------------------------------------------------------------
@@ -4860,6 +5213,27 @@ def learning_uses_of_run(owner, run_id, stage=None):
                 "SELECT * FROM outline_learning_uses WHERE owner_id=?"
                 " AND run_id=? ORDER BY id ASC", (owner, int(run_id))).fetchall()
     return [{k: r[k] for k in r.keys()} for r in rows]
+
+
+def get_rewrite_points_by_ids(owner, ids):
+    """按一批 id 拿建议（界面回看"这次用的哪几条"时用）。
+
+    【为什么需要它】`outline_learning_uses` 存的是**注入当时的快照**
+    （point_text / scope / confidence / source_version），这已经够她
+    "看到当时发的是什么"了。但界面还想顺手告诉她"为什么挑了这条"——
+    那要看**当下这一条**的打分。快照里没有分数，得现查。
+    找不到的（比如那条后来被删了）直接跳过，不报错 —— 回看历史时
+    某一条没了是正常的，不该把整个界面打崩。
+    """
+    ids = [int(i) for i in (ids or []) if i]
+    if not ids:
+        return []
+    qs = ",".join("?" * len(ids))
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM outline_rewrite_points WHERE owner_id=?"
+            " AND id IN (%s)" % qs, [owner] + ids).fetchall()
+    return [_pt_row(r) for r in rows]
 
 
 # ----------------------------------------------------------------------

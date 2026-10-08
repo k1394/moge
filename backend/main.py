@@ -4104,6 +4104,32 @@ def api_list_rewrite_points(rid: int,
     }
 
 
+@app.post("/api/outline-rewrites/dedupe")
+def api_dedupe_rewrite_points(user: dict = Depends(auth.current_user)):
+    """整理重复建议：同一件事有多条时，标记"被谁盖住"。**只管标记，不删。**
+
+    【为什么做成她点一下的动作、而不是自动】（写功能时的取舍）
+    自动标记她看不见 —— 界面某条突然不发，她只会以为东西丢了；
+    而且判据会随"这次要写什么"变，自动来回改等于没有标记。
+    她点一下、界面上逐条显示、不满意能撤销，才是看得见的整理。
+    """
+    r = odb.mark_superseded(user["owner"])
+    if not r.get("marked"):
+        return {"ok": True, "marked": 0, "groups": 0,
+                "message": "没有发现说的是同一件事的建议，不用整理。"}
+    return {"ok": True, "marked": r["marked"], "groups": r["groups"],
+            "message": "整理了 %d 组，%d 条被同类建议盖住（没删，随时能放出来）。"
+                       % (r["groups"], r["marked"])}
+
+
+@app.post("/api/outline-rewrites/dedupe/undo")
+def api_undo_dedupe_rewrite_points(user: dict = Depends(auth.current_user)):
+    """撤销整理：把"被盖住"的标记全清掉。"""
+    n = odb.clear_superseded(user["owner"])
+    return {"ok": True, "cleared": n,
+            "message": ("放出来 %d 条。" % n) if n else "本来就没有被盖住的。"}
+
+
 @app.post("/api/outline-rewrite-points/{pid}/review")
 def api_review_rewrite_point(pid: int, req: OutlineRewritePointIn,
                              user: dict = Depends(auth.current_user)):
@@ -4195,11 +4221,40 @@ def api_learning_uses(run_id: int = Query(0, ge=0),
     她以后一定会问"我明明接受了 5 条，这次生成怎么没变化"。
     有这个记录才能回答"因为这次只注入了 2 条"或者
     "因为那 3 条是仅本篇、这次的任务不是那一篇"。
+
+    ★ 阶段三：顺手把**两块各几条**算出来给她。
+      她最想看的是"这次到底学了几条"这个数，而不是一长串明细 ——
+      明细留在 items 里，她展开再看。
     """
     if not run_id:
         raise HTTPException(status_code=400, detail="要给一个生成任务的编号。")
-    return {"items": odb.learning_uses_of_run(user["owner"], run_id,
-                                              stage or None),
+    items = odb.learning_uses_of_run(user["owner"], run_id, stage or None)
+    # 按阶段分组计数：rewrite=她的改写取向，case=她标过不可用的毛病
+    counts = {}
+    for it in items:
+        k = it.get("stage") or "all"
+        counts[k] = counts.get(k, 0) + 1
+    # 每个建议条目的完整信息（点开能看到"为什么用了它"）——
+    # learning_uses 里存的是**注入当时的快照**，不带 _pick_why，
+    # 所以这里现查一遍建议，把"挑选理由/分数"补上给界面用。
+    point_ids = [int(it["point_id"]) for it in items
+                 if it.get("point_id") and (it.get("stage") == "rewrite")]
+    whys = {}
+    if point_ids:
+        try:
+            for p in odb.get_rewrite_points_by_ids(user["owner"], point_ids):
+                whys[int(p["id"])] = p
+        except Exception:
+            whys = {}
+    for it in items:
+        pid = it.get("point_id")
+        if pid and int(pid) in whys:
+            it["pick_why"] = whys[int(pid)].get("_pick_why") or []
+            it["live_now"] = bool(whys[int(pid)].get("live"))
+    return {"items": items, "counts": counts,
+            "total": len(items),
+            "rewrite_count": counts.get("rewrite", 0),
+            "case_count": counts.get("case", 0),
             "run_id": run_id, "stage": stage or "all"}
 
 
